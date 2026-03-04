@@ -5,15 +5,15 @@ interface GlassCardProps {
   children: ReactNode;
   className?: string;
   hover?: boolean;
-  glow?: boolean;
+  gradient?: boolean;
 }
 
-export function GlassCard({ children, className, hover = true, glow = false }: GlassCardProps) {
+export function GlassCard({ children, className, hover = true, gradient = false }: GlassCardProps) {
   return (
     <div className={cn(
-      "glass-card rounded-xl",
-      hover && "hover-lift",
-      glow && "animate-pulse-glow",
+      "card-3d-elevated rounded-xl",
+      gradient && "gradient-border",
+      !hover && "!transform-none",
       className
     )}>
       {children}

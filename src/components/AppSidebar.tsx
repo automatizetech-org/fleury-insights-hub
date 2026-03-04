@@ -10,7 +10,7 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronRight,
-  Shield,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -58,20 +58,23 @@ export function AppSidebar() {
     item.children?.some((child) => location.pathname === child.path) || location.pathname === item.path;
 
   return (
-    <aside className="fixed left-0 top-0 z-40 h-screen w-64 sidebar-gradient border-r border-sidebar-border flex flex-col">
+    <aside className="fixed left-0 top-0 z-40 h-screen w-64 bg-gradient-to-b from-sidebar to-secondary/30 dark:from-sidebar dark:to-secondary/20 border-r border-sidebar-border flex flex-col">
+      {/* Gradient overlay */}
+      <div className="absolute inset-0 bg-gradient-to-b from-primary/[0.03] to-accent/[0.03] pointer-events-none" />
+
       {/* Logo */}
-      <div className="flex h-16 items-center gap-3 px-6 border-b border-sidebar-border">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg gradient-gold">
-          <Shield className="h-5 w-5 text-accent-foreground" />
+      <div className="relative flex h-16 items-center gap-3 px-6 border-b border-sidebar-border">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-destructive to-primary shadow-md">
+          <BarChart3 className="h-5 w-5 text-primary-foreground" />
         </div>
         <div>
-          <h1 className="text-sm font-bold font-display text-sidebar-primary">Grupo Fleury</h1>
-          <p className="text-[10px] text-sidebar-foreground/60 tracking-wider uppercase">Contabilidade</p>
+          <h1 className="text-sm font-bold font-display text-sidebar-foreground">Fleury Analytics</h1>
+          <p className="text-[10px] text-muted-foreground tracking-wider uppercase">Departamentos</p>
         </div>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+      <nav className="relative flex-1 overflow-y-auto px-3 py-4 space-y-1">
         {navItems.map((item) => (
           <div key={item.path}>
             {item.children ? (
@@ -79,10 +82,10 @@ export function AppSidebar() {
                 <button
                   onClick={() => toggleExpand(item.path)}
                   className={cn(
-                    "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                    "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
                     isParentActive(item)
-                      ? "bg-sidebar-accent text-sidebar-primary"
-                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                      ? "bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-md shadow-primary/20"
+                      : "card-3d bg-card/80 backdrop-blur-sm text-sidebar-foreground hover:shadow-3d-hover"
                   )}
                 >
                   <item.icon className="h-4 w-4" />
@@ -94,16 +97,16 @@ export function AppSidebar() {
                   )}
                 </button>
                 {expandedItems.includes(item.path) && (
-                  <div className="ml-4 mt-1 space-y-0.5 border-l border-sidebar-border pl-3">
+                  <div className="ml-4 mt-1 space-y-0.5 border-l-2 border-primary/20 pl-3">
                     {item.children.map((child) => (
                       <Link
                         key={child.path}
                         to={child.path}
                         className={cn(
-                          "flex items-center rounded-md px-3 py-2 text-xs font-medium transition-all duration-200",
+                          "flex items-center rounded-lg px-3 py-2 text-xs font-medium transition-all duration-200",
                           isActive(child.path)
-                            ? "bg-sidebar-primary/10 text-sidebar-primary"
-                            : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/30"
+                            ? "bg-primary/10 text-primary font-semibold"
+                            : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                         )}
                       >
                         {child.name}
@@ -116,10 +119,10 @@ export function AppSidebar() {
               <Link
                 to={item.path}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                  "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
                   isActive(item.path)
-                    ? "bg-sidebar-accent text-sidebar-primary"
-                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    ? "bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-md shadow-primary/20"
+                    : "card-3d bg-card/80 backdrop-blur-sm text-sidebar-foreground hover:shadow-3d-hover"
                 )}
               >
                 <item.icon className="h-4 w-4" />
@@ -130,15 +133,17 @@ export function AppSidebar() {
         ))}
       </nav>
 
-      {/* Footer */}
-      <div className="border-t border-sidebar-border p-4">
-        <div className="flex items-center gap-3">
-          <div className="h-8 w-8 rounded-full gradient-gold flex items-center justify-center text-xs font-bold text-accent-foreground">
-            GF
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-sidebar-foreground truncate">Admin</p>
-            <p className="text-[10px] text-sidebar-foreground/50 truncate">admin@grupofleury.com</p>
+      {/* Brand Footer */}
+      <div className="relative border-t border-sidebar-border p-4">
+        <div className="rounded-xl bg-gradient-to-r from-primary/5 to-accent/5 border border-border/50 p-3 shadow-inner">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center text-xs font-bold text-primary-foreground">
+              FA
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-foreground truncate">Admin</p>
+              <p className="text-[10px] text-muted-foreground truncate">admin@fleury.com</p>
+            </div>
           </div>
         </div>
       </div>
