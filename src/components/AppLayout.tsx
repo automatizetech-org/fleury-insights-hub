@@ -2,26 +2,11 @@ import { ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
-import { Bell, Search, Command, Moon, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import { useState, useEffect } from "react";
-
-const breadcrumbMap: Record<string, string> = {
-  "/dashboard": "Dashboard",
-  "/fiscal": "Fiscal",
-  "/fiscal/nfs": "Fiscal / NFS",
-  "/fiscal/nfe": "Fiscal / NFE",
-  "/fiscal/nfc": "Fiscal / NFC",
-  "/dp": "Departamento Pessoal",
-  "/financeiro": "Financeiro",
-  "/operacoes": "Operações",
-  "/documentos": "Documentos",
-  "/sync": "Sincronização",
-  "/admin": "Administração",
-};
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
-  const breadcrumb = breadcrumbMap[location.pathname] || "Dashboard";
   const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
 
   useEffect(() => {
@@ -29,44 +14,30 @@ export function AppLayout({ children }: { children: ReactNode }) {
   }, [dark]);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex w-full min-h-[100dvh] overflow-x-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-500">
       <AppSidebar />
       <CommandPalette />
 
-      <div className="pl-64">
-        {/* Header */}
-        <header className="sticky top-0 z-30 backdrop-3d border-b border-border h-14 flex items-center justify-between px-6">
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-medium text-muted-foreground">{breadcrumb}</p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors shadow-sm">
-              <Search className="h-3.5 w-3.5" />
-              <span>Buscar</span>
-              <kbd className="ml-4 flex items-center gap-0.5 rounded border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-medium">
-                <Command className="h-2.5 w-2.5" />K
-              </kbd>
-            </button>
-            <button className="relative rounded-xl p-2 hover:bg-secondary transition-colors">
-              <Bell className="h-4 w-4 text-muted-foreground" />
-              <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-destructive" />
-            </button>
-            <button
-              onClick={() => setDark(!dark)}
-              className="rounded-xl p-2 hover:bg-secondary transition-colors"
-              aria-label="Toggle dark mode"
-            >
-              {dark ? <Sun className="h-4 w-4 text-muted-foreground" /> : <Moon className="h-4 w-4 text-muted-foreground" />}
-            </button>
-          </div>
-        </header>
+      <main className="flex-1 w-full min-w-0 overflow-y-auto overflow-x-hidden relative pt-16 md:pt-0 md:ml-64">
+        {/* Dark Mode Toggle + Sair — top right (WK exact) */}
+        <div className="fixed top-4 right-4 md:top-6 md:right-6 z-50 flex items-center gap-2 md:gap-3">
+          <button
+            onClick={() => setDark(!dark)}
+            className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-all hover:bg-[#2563EB]/10 dark:hover:bg-[#2563EB]/20"
+            aria-label="Toggle dark mode"
+          >
+            {dark ? <Sun className="h-4 w-4 text-amber-500" /> : <Moon className="h-4 w-4 text-gray-600" />}
+          </button>
+          <button className="text-xs md:text-sm text-gray-500 hover:text-[#2563EB] dark:text-gray-400 dark:hover:text-[#2563EB] transition-colors px-2 md:px-3 py-1.5 rounded-lg hover:bg-[#2563EB]/10 touch-manipulation active:scale-95">
+            Sair
+          </button>
+        </div>
 
         {/* Content */}
-        <main className="p-6 animate-fade-in">
+        <div className="p-4 md:p-6 animate-fade-in-up">
           {children}
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   );
 }
