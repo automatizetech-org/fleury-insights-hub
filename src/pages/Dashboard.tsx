@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  BarChart3,
+  Sparkles,
 } from "lucide-react";
 
 const revenueData = [
@@ -51,46 +53,37 @@ const recentEvents = [
 export default function Dashboard() {
   return (
     <div className="space-y-6">
-      {/* Page Title */}
-      <div>
-        <h1 className="text-2xl font-bold font-display tracking-tight">Dashboard</h1>
-        <p className="text-sm text-muted-foreground mt-1">Visão geral consolidada do Grupo Fleury</p>
+      {/* Hero Section */}
+      <div className="relative overflow-hidden rounded-2xl card-3d-elevated p-8">
+        {/* Floating particles */}
+        <div className="absolute top-4 right-8 w-32 h-32 bg-primary/5 rounded-full blur-2xl animate-float" />
+        <div className="absolute bottom-4 left-12 w-24 h-24 bg-accent/5 rounded-full blur-2xl animate-float" style={{ animationDelay: "2s" }} />
+
+        <div className="relative flex items-center gap-6">
+          <div className="relative">
+            <div className="absolute inset-0 rounded-2xl bg-primary/20 blur-xl scale-150 animate-pulse-slow" />
+            <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-accent shadow-lg animate-logo-float">
+              <BarChart3 className="h-8 w-8 text-primary-foreground" />
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <h1 className="text-3xl font-bold font-display text-gradient-animated">Fleury Analytics</h1>
+              <span className="flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-semibold text-primary">
+                <Sparkles className="h-3 w-3" /> Insights em Tempo Real
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground">Plataforma de Análise e Gestão Empresarial</p>
+          </div>
+        </div>
       </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard
-          title="Documentos Processados"
-          value="5.580"
-          change="+12.5% vs mês anterior"
-          changeType="positive"
-          icon={FileText}
-          delay={0}
-        />
-        <StatsCard
-          title="Empresas Ativas"
-          value="142"
-          change="+3 novas este mês"
-          changeType="positive"
-          icon={Users}
-          delay={100}
-        />
-        <StatsCard
-          title="Receita Consolidada"
-          value="R$ 72.4k"
-          change="+7.2% vs mês anterior"
-          changeType="positive"
-          icon={DollarSign}
-          delay={200}
-        />
-        <StatsCard
-          title="Taxa de Sincronismo"
-          value="98.7%"
-          change="2 falhas nas últimas 24h"
-          changeType="negative"
-          icon={Activity}
-          delay={300}
-        />
+        <StatsCard title="Documentos Processados" value="5.580" change="+12.5% vs mês anterior" changeType="positive" icon={FileText} delay={0} />
+        <StatsCard title="Empresas Ativas" value="142" change="+3 novas este mês" changeType="positive" icon={Users} delay={100} />
+        <StatsCard title="Receita Consolidada" value="R$ 72.4k" change="+7.2% vs mês anterior" changeType="positive" icon={DollarSign} delay={200} />
+        <StatsCard title="Taxa de Sincronismo" value="98.7%" change="2 falhas nas últimas 24h" changeType="negative" icon={Activity} delay={300} />
       </div>
 
       {/* Charts Row */}
@@ -119,7 +112,11 @@ export default function Dashboard() {
                   <div
                     className="h-2.5 w-2.5 rounded-full"
                     style={{
-                      backgroundColor: ["hsl(42, 92%, 56%)", "hsl(220, 65%, 18%)", "hsl(152, 60%, 42%)"][i],
+                      backgroundColor: [
+                        "hsl(var(--chart-1))",
+                        "hsl(var(--chart-2))",
+                        "hsl(var(--chart-3))",
+                      ][i],
                     }}
                   />
                   <span className="text-muted-foreground">{item.name}</span>
@@ -140,7 +137,7 @@ export default function Dashboard() {
               <p className="text-xs text-muted-foreground">Volume mensal</p>
             </div>
           </div>
-          <MiniChart data={monthlyDocs} type="bar" color="hsl(220, 65%, 18%)" height={200} />
+          <MiniChart data={monthlyDocs} type="bar" color="hsl(var(--chart-2))" height={200} />
         </GlassCard>
 
         <GlassCard className="p-6">
