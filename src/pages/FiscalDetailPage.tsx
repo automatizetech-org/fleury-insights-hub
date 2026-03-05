@@ -4,6 +4,7 @@ import { MiniChart } from "@/components/dashboard/Charts";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { useParams } from "react-router-dom";
 import { FileText, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
+import { useState, useMemo } from "react";
 
 const mockDocuments = [
   { chave: "35250712345678000190550010001234561001234560", empresa: "Tech Solutions Ltda", cnpj: "12.345.678/0001-90", periodo: "07/2025", status: "validado" as const, data: "2025-07-15" },
@@ -31,7 +32,19 @@ const typeLabels: Record<string, string> = {
 
 export default function FiscalDetailPage() {
   const { type } = useParams<{ type: string }>();
+  const [search, setSearch] = useState("");
   const label = typeLabels[type || "nfs"] || "Documentos Fiscais";
+
+  const filteredDocuments = useMemo(() => {
+    if (!search.trim()) return mockDocuments;
+    const q = search.toLowerCase();
+    return mockDocuments.filter(
+      (d) =>
+        d.empresa.toLowerCase().includes(q) ||
+        d.cnpj.replace(/\D/g, "").includes(q.replace(/\D/g, "")) ||
+        d.chave.includes(q)
+    );
+  }, [search]);
 
   return (
     <div className="space-y-6">
@@ -57,8 +70,10 @@ export default function FiscalDetailPage() {
           <h3 className="text-sm font-semibold font-display">Documentos</h3>
           <div className="flex gap-2">
             <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar por empresa ou chave..."
-              className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-64"
+              className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-48 sm:w-64 max-w-full"
             />
           </div>
         </div>
@@ -75,7 +90,7 @@ export default function FiscalDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {mockDocuments.map((doc, i) => (
+              {filteredDocuments.map((doc, i) => (
                 <tr key={i} className="border-b border-border hover:bg-muted/30 transition-colors cursor-pointer">
                   <td className="px-4 py-3 font-medium">{doc.empresa}</td>
                   <td className="px-4 py-3 text-muted-foreground">{doc.cnpj}</td>

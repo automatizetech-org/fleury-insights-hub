@@ -2,6 +2,7 @@ import { StatsCard } from "@/components/dashboard/StatsCard";
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Users, FileText, CheckSquare, AlertTriangle, Clock } from "lucide-react";
+import { toast } from "sonner";
 
 const checklist = [
   { tarefa: "Folha de pagamento", empresa: "Tech Solutions Ltda", competencia: "07/2025", status: "validado" as const },
@@ -61,7 +62,14 @@ export default function DPPage() {
           </div>
           <div className="divide-y divide-border">
             {guias.map((guia, i) => (
-              <div key={i} className="px-4 py-3 flex items-center justify-between hover:bg-muted/30 transition-colors cursor-pointer">
+              <div
+                key={i}
+                role="button"
+                tabIndex={0}
+                onClick={() => toast.info("Download em breve", { description: guia.nome })}
+                onKeyDown={(e) => e.key === "Enter" && toast.info("Download em breve", { description: guia.nome })}
+                className="px-4 py-3 flex items-center justify-between hover:bg-muted/30 transition-colors cursor-pointer"
+              >
                 <div className="flex items-center gap-3">
                   <div className="h-8 w-8 rounded-lg bg-destructive/10 flex items-center justify-center">
                     <FileText className="h-3.5 w-3.5 text-destructive" />

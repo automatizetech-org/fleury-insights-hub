@@ -12,6 +12,15 @@ dist
 dist-ssr
 *.local
 
+# Environment (nunca commitar chaves)
+.env
+.env.local
+.env.*.local
+
+# Temp / cache (Vite, etc.)
+*.timestamp*
+*.ts.timestamp*.mjs
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

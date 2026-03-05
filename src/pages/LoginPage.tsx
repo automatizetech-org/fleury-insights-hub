@@ -1,69 +1,135 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Lock, Loader2, AlertCircle, Shield, BarChart3 } from "lucide-react";
+import { useState } from "react"
+import { useNavigate } from "react-router-dom"
+import { Lock, Loader2, AlertCircle, Shield } from "lucide-react"
+import { supabase } from "@/services/supabaseClient"
+import { getProfile } from "@/services/profilesService"
+import logoUrl from "@/assets/images/logo.png"
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? ""
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? ""
 
 export default function LoginPage() {
-  const navigate = useNavigate();
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [isAdminTarget, setIsAdminTarget] = useState(false);
+  const navigate = useNavigate()
+  const [loginWithEmail, setLoginWithEmail] = useState(false)
+  const [username, setUsername] = useState("")
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [isAdminTarget, setIsAdminTarget] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-    // Simulate login
-    setTimeout(() => {
-      navigate(isAdminTarget ? "/admin" : "/dashboard");
-      setLoading(false);
-    }, 800);
-  };
+    e.preventDefault()
+    setError("")
+    setLoading(true)
+    try {
+      if (loginWithEmail) {
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        })
+        if (authError) throw authError
+        const userId = authData.user?.id
+        if (!userId) throw new Error("Usuário não retornado")
+        const profile = await getProfile(userId)
+        setLoading(false)
+        if (isAdminTarget || profile.role === "super_admin") {
+          navigate("/admin", { replace: true })
+        } else {
+          navigate("/admin", { replace: true })
+        }
+        return
+      }
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/auth`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({ username: username.trim(), password }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error ?? "Falha no login")
+      }
+      const { access_token, refresh_token } = data
+      if (!access_token || !refresh_token) throw new Error("Sessão inválida")
+      const { error: sessionError } = await supabase.auth.setSession({ access_token, refresh_token })
+      if (sessionError) throw sessionError
+      const { data: { user } } = await supabase.auth.getUser()
+      const userId = user?.id
+      if (!userId) throw new Error("Usuário não retornado")
+      const profile = await getProfile(userId)
+      setLoading(false)
+      if (isAdminTarget || profile.role === "super_admin") {
+        navigate("/admin", { replace: true })
+      } else {
+        navigate("/dashboard", { replace: true })
+      }
+    } catch (err: unknown) {
+      setLoading(false)
+      let message = "Falha no login"
+      if (err && typeof err === "object" && "message" in err) {
+        const msg = String((err as { message: string }).message)
+        if (msg === "Failed to fetch" || msg.includes("fetch")) {
+          message = "Não foi possível contactar o servidor. Confira o .env (VITE_SUPABASE_URL) e publique a Edge Function 'auth' no Supabase."
+        } else {
+          message = msg
+        }
+      }
+      setError(message)
+    }
+  }
 
   return (
     <div className="min-h-[100dvh] flex items-center justify-center relative overflow-hidden p-4">
-      {/* Background animado (WK exact) */}
       <div className="absolute inset-0 bg-gradient-to-br from-red-50 via-white to-blue-50 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_35%,rgba(220,38,38,0.12),transparent_55%),radial-gradient(circle_at_85%_70%,rgba(37,99,235,0.14),transparent_55%),radial-gradient(circle_at_50%_15%,rgba(37,99,235,0.10),transparent_60%)]" />
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik0zNiAzNGMwIDMuMzE0LTIuNjg2IDYtNiA2cy02LTIuNjg2LTYtNiAyLjY4Ni02IDYtNiA2IDIuNjg2IDYgNnoiIGZpbGw9InJnYmEoNTksMTMwLDI0NiwwLjAzKSIvPjwvZz48L3N2Zz4=')] opacity-40 dark:opacity-20" />
       </div>
-
-      {/* Partículas flutuantes (WK exact) */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-72 h-72 bg-red-500/10 rounded-full blur-3xl animate-pulse" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse delay-1000" />
         <div className="absolute top-1/2 right-1/3 w-64 h-64 bg-blue-400/10 rounded-full blur-3xl animate-pulse delay-2000" />
       </div>
 
-      {/* Card de Login (WK exact) */}
       <div className="relative w-full max-w-md bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-2xl md:rounded-3xl shadow-2xl border border-white/20 dark:border-slate-800/50 p-6 md:p-8 animate-in slide-in-from-bottom-4">
-        {/* Logo + Título */}
         <div className="flex items-center justify-center gap-2 md:gap-3 mb-6 md:mb-8">
-          <div className="h-12 w-12 md:h-14 md:w-14 rounded-xl md:rounded-2xl bg-gradient-to-br from-red-600 to-[#2563EB] shadow-lg flex items-center justify-center overflow-hidden ring-2 ring-[#2563EB]/20 zoom-in-anim animate-in flex-shrink-0">
-            <BarChart3 className="h-7 w-7 md:h-8 md:w-8 text-white drop-shadow-sm" />
+          <div className="h-12 w-12 md:h-14 md:w-14 rounded-xl md:rounded-2xl overflow-hidden ring-2 ring-[#2563EB]/20 zoom-in-anim animate-in flex-shrink-0 flex items-center justify-center bg-white/80 dark:bg-slate-800/80">
+            <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
           </div>
           <div className="text-left">
             <div className="text-xs md:text-sm text-gray-500 dark:text-gray-400 font-medium">Fleury • Dashboard Web</div>
-            <h1 className="text-xl md:text-2xl font-extrabold text-gray-900 dark:text-white">
-              Login
-            </h1>
+            <h1 className="text-xl md:text-2xl font-extrabold text-gray-900 dark:text-white">Login</h1>
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3 md:space-y-4">
           <div className="space-y-2.5 md:space-y-3">
-            <input
-              id="username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Usuário"
-              autoFocus
-              autoComplete="username"
-              className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-gray-200 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2563EB]/50 focus:border-[#2563EB] transition-all text-base touch-manipulation"
-              disabled={loading}
-            />
+            {loginWithEmail ? (
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Email"
+                autoComplete="email"
+                className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-gray-200 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2563EB]/50 focus:border-[#2563EB] transition-all text-base touch-manipulation"
+                disabled={loading}
+              />
+            ) : (
+              <input
+                id="username"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Nome de usuário"
+                autoFocus
+                autoComplete="username"
+                className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-gray-200 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2563EB]/50 focus:border-[#2563EB] transition-all text-base touch-manipulation"
+                disabled={loading}
+              />
+            )}
             <input
               id="password"
               type="password"
@@ -102,13 +168,10 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Botão Admin (WK exact) */}
         <div className="mt-5 md:mt-6 flex items-center justify-center">
           <button
             type="button"
-            onClick={() => {
-              setIsAdminTarget(!isAdminTarget);
-            }}
+            onClick={() => setIsAdminTarget(!isAdminTarget)}
             className="group inline-flex items-center gap-2 rounded-full border border-gray-200/80 dark:border-slate-700/70 bg-white/70 dark:bg-slate-800/40 px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-semibold text-gray-800 dark:text-gray-200 shadow-sm hover:shadow-md transition-all hover:border-[#2563EB]/40 hover:text-[#2563EB] touch-manipulation active:scale-95"
           >
             <span className="flex items-center justify-center h-5 w-5 md:h-6 md:w-6 rounded-full bg-gradient-to-br from-red-600 to-[#2563EB] text-white shadow-sm group-hover:shadow flex-shrink-0">
@@ -117,7 +180,17 @@ export default function LoginPage() {
             <span className="break-words">{isAdminTarget ? "Admin (ativado)" : "Admin"}</span>
           </button>
         </div>
+
+        <p className="mt-4 text-center">
+          <button
+            type="button"
+            onClick={() => { setLoginWithEmail(!loginWithEmail); setError(""); }}
+            className="text-xs text-muted-foreground hover:text-primary underline"
+          >
+            {loginWithEmail ? "Voltar ao login por usuário" : "Primeiro acesso? Entrar com email"}
+          </button>
+        </p>
       </div>
     </div>
-  );
+  )
 }

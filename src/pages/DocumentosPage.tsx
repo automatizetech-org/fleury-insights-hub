@@ -16,6 +16,21 @@ const documents = [
 
 const tipoFilters = ["Todos", "NFS", "NFE", "NFC"];
 
+function exportToCsv(data: typeof documents) {
+  const headers = ["Empresa", "CNPJ", "Tipo", "Período", "Status", "Origem", "Data", "Arquivos"];
+  const rows = data.map((d) =>
+    [d.empresa, d.cnpj, d.tipo, d.periodo, d.status, d.origem, d.data, d.arquivos.join("; ")].map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")
+  );
+  const csv = [headers.join(","), ...rows].join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `documentos-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function DocumentosPage() {
   const [filterTipo, setFilterTipo] = useState("Todos");
   const [search, setSearch] = useState("");
@@ -61,7 +76,10 @@ export default function DocumentosPage() {
                 className="rounded-lg border border-border bg-background pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-56"
               />
             </div>
-            <button className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors">
+            <button
+              onClick={() => exportToCsv(filtered)}
+              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
+            >
               <Download className="h-3 w-3" />
               CSV
             </button>
