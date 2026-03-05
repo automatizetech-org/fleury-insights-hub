@@ -1,6 +1,6 @@
 /**
  * Opções de parcelamento para o formulário de Alteração Empresarial.
- * Extraídas do opçoes.html (lista que começa em Parcelamento - FGTS).
+ * Extraídas de referência (Parcelamento - FGTS, etc.).
  */
 
 export const OPCOES_PARCELAMENTO: { value: string; label: string }[] = [
