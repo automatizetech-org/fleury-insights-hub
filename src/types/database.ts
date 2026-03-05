@@ -28,9 +28,9 @@ export type Database = {
         Update: { company_id?: string; user_id?: string; member_role?: string; created_at?: string }
       }
       fiscal_documents: {
-        Row: { id: string; company_id: string; type: string; chave: string | null; periodo: string; status: string; document_date: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; company_id: string; type: string; chave?: string | null; periodo: string; status?: string; document_date?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; company_id?: string; type?: string; chave?: string | null; periodo?: string; status?: string; document_date?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; company_id: string; type: string; chave: string | null; periodo: string; status: string; document_date: string | null; file_path: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; company_id: string; type: string; chave?: string | null; periodo: string; status?: string; document_date?: string | null; file_path?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; company_id?: string; type?: string; chave?: string | null; periodo?: string; status?: string; document_date?: string | null; file_path?: string | null; created_at?: string; updated_at?: string }
       }
       fiscal_pendencias: { Row: { id: string; company_id: string; tipo: string; periodo: string; status: string; created_at: string }; Insert: { id?: string; company_id: string; tipo: string; periodo: string; status: string; created_at?: string }; Update: Partial<{ id: string; company_id: string; tipo: string; periodo: string; status: string; created_at: string }> }
       dp_checklist: { Row: { id: string; company_id: string; tarefa: string; competencia: string; status: string; created_at: string }; Insert: { id?: string; company_id: string; tarefa: string; competencia: string; status?: string; created_at?: string }; Update: Partial<{ id: string; company_id: string; tarefa: string; competencia: string; status: string; created_at: string }> }

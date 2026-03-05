@@ -38,3 +38,31 @@ export async function getRecentFiscalDocuments(companyIds: string[] | null, limi
     companyName: names.get(d.company_id) ?? "",
   }))
 }
+
+export async function getFiscalDocumentsByType(
+  type: "NFS" | "NFE" | "NFC",
+  companyIds: string[] | null
+) {
+  let q = supabase
+    .from("fiscal_documents")
+    .select("id, company_id, type, chave, periodo, status, document_date, file_path, created_at")
+    .eq("type", type)
+    .order("document_date", { ascending: false })
+    .order("created_at", { ascending: false })
+  if (companyIds && companyIds.length > 0) {
+    q = q.in("company_id", companyIds)
+  }
+  const { data, error } = await q
+  if (error) throw error
+  const list = data ?? []
+  const companyIdsList = [...new Set(list.map((d) => d.company_id))]
+  if (companyIdsList.length === 0) return []
+  const { data: companies } = await supabase.from("companies").select("id, name, document").in("id", companyIdsList)
+  const names = new Map((companies ?? []).map((c) => [c.id, c.name]))
+  const documents = new Map((companies ?? []).map((c) => [c.id, c.document]))
+  return list.map((d) => ({
+    ...d,
+    empresa: names.get(d.company_id) ?? "",
+    cnpj: documents.get(d.company_id) ?? "",
+  }))
+}

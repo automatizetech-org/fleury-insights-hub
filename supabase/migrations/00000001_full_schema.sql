@@ -179,6 +179,7 @@ create table public.fiscal_documents (
   periodo text not null,
   status document_status not null default 'novo',
   document_date date,
+  file_path text null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
