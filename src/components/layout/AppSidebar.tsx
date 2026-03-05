@@ -17,6 +17,8 @@ import {
   ChevronsUpDown,
   Building2,
   PanelLeft,
+  Calculator,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/utils";
 import { useState, useEffect } from "react";
@@ -57,20 +59,59 @@ const navItems: NavItem[] = [
       { name: "NFS", path: "/fiscal/nfs" },
       { name: "NFE", path: "/fiscal/nfe" },
       { name: "NFC", path: "/fiscal/nfc" },
+      { name: "Simples Nacional", path: "/fiscal/simples-nacional" },
+      { name: "DIFAL", path: "/fiscal/difal" },
+      { name: "IRRF/CSLL", path: "/fiscal/irrf-csll" },
+      { name: "Certidões", path: "/fiscal/certidoes" },
     ],
   },
-  { name: "Depto. Pessoal", path: "/dp", icon: Users, description: "RH e Folha", panelKey: "dp" },
+  {
+    name: "Depto. Pessoal",
+    path: "/dp",
+    icon: Users,
+    description: "RH e Folha",
+    panelKey: "dp",
+    children: [
+      { name: "Visão Geral", path: "/dp" },
+      { name: "FGTS", path: "/dp/fgts" },
+      { name: "DARF", path: "/dp/darf" },
+      { name: "INSS", path: "/dp/inss" },
+    ],
+  },
+  {
+    name: "Contábil",
+    path: "/contabil",
+    icon: Calculator,
+    description: "Balancete e DRE",
+    panelKey: "contabil",
+    children: [
+      { name: "Visão Geral", path: "/contabil" },
+      { name: "Balancete", path: "/contabil/balancete" },
+      { name: "DRE", path: "/contabil/dre" },
+    ],
+  },
   { name: "Financeiro", path: "/financeiro", icon: DollarSign, description: "Contas e Receita", panelKey: "financeiro" },
   { name: "Operações", path: "/operacoes", icon: Activity, description: "SLA e monitoramento", panelKey: "operacoes" },
   { name: "Documentos", path: "/documentos", icon: FileSpreadsheet, description: "Gestão documental", panelKey: "documentos" },
   { name: "Empresas", path: "/empresas", icon: Building2, description: "Lista e edição de empresas", panelKey: "empresas" },
+  {
+    name: "Alteração Empresarial",
+    path: "/alteracao-empresarial",
+    icon: ClipboardList,
+    description: "Visão geral e contratos",
+    panelKey: "alteracao_empresarial",
+    children: [
+      { name: "Visão Geral", path: "/alteracao-empresarial" },
+      { name: "Contratos", path: "/alteracao-empresarial/contratos" },
+    ],
+  },
   { name: "Sincronização", path: "/sync", icon: RefreshCw, description: "Status de sync", panelKey: "sync" },
   { name: "Administração", path: "/admin", icon: Settings, description: "Usuários e config" },
 ];
 
 export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle?: () => void }) {
   const location = useLocation();
-  const [expandedItems, setExpandedItems] = useState<string[]>(["/fiscal"]);
+  const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const { data: companies = [] } = useCompanies();
   const { selectedCompanyIds, setSelectedCompanyIds } = useSelectedCompanyIds();
@@ -107,7 +148,7 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
             <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
           </div>
           <div className="text-center">
-            <h2 className="wk-sidebar-title dark:text-white font-bold tracking-tight text-sm">Departamentos</h2>
+            <h2 className="wk-sidebar-title dark:text-white font-bold tracking-tight text-sm">Dashboard Fleury</h2>
             <p className="wk-sidebar-subtitle dark:text-slate-400 text-xs mt-0.5">Selecione uma área para começar</p>
             <div className="mt-2 flex items-center gap-1.5">
               <Popover>

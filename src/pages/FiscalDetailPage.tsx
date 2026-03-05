@@ -15,7 +15,13 @@ const typeLabels: Record<string, string> = {
   nfs: "NFS - Notas Fiscais de Serviço",
   nfe: "NFE - Notas Fiscais Eletrônicas",
   nfc: "NFC - Notas Fiscais ao Consumidor",
+  "simples-nacional": "Simples Nacional",
+  difal: "DIFAL",
+  "irrf-csll": "IRRF/CSLL",
+  certidoes: "Certidões",
 };
+
+const OBRIGACOES_FISCAIS = ["simples-nacional", "difal", "irrf-csll", "certidoes"];
 
 const typeToDb = (t: string): "NFS" | "NFE" | "NFC" => {
   const u = t?.toUpperCase();
@@ -39,10 +45,12 @@ export default function FiscalDetailPage() {
   const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
   const dbType = typeToDb(type ?? "");
   const label = typeLabels[type ?? "nfs"] || "Documentos Fiscais";
+  const isObrigacao = type && OBRIGACOES_FISCAIS.includes(type);
 
   const { data: documents = [], isLoading } = useQuery({
     queryKey: ["fiscal-documents", dbType, companyFilter],
     queryFn: () => getFiscalDocumentsByType(dbType, companyFilter),
+    enabled: !isObrigacao,
   });
 
   const filteredDocuments = useMemo(() => {
@@ -75,9 +83,17 @@ export default function FiscalDetailPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold font-display tracking-tight">{label}</h1>
-        <p className="text-sm text-muted-foreground mt-1">Detalhamento de XMLs e status. Baixe o XML pelo servidor quando disponível.</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          {isObrigacao ? (type === "certidoes" ? "Emitir e consultar certidões fiscais e negativas de débito." : "Obrigações e apurações deste tópico") : "Detalhamento de XMLs e status. Baixe o XML pelo servidor quando disponível."}
+        </p>
       </div>
 
+      {isObrigacao ? (
+        <GlassCard className="p-8">
+          <p className="text-sm text-muted-foreground">Conteúdo específico desta obrigação será exibido aqui.</p>
+        </GlassCard>
+      ) : (
+        <>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatsCard title="Total" value={documents.length.toString()} icon={FileText} />
         <StatsCard title="Validados" value={validados.toString()} icon={CheckCircle2} change={documents.length ? `${((validados / documents.length) * 100).toFixed(1)}%` : "0%"} changeType="positive" />
@@ -151,6 +167,8 @@ export default function FiscalDetailPage() {
           )}
         </div>
       </GlassCard>
+        </>
+      )}
     </div>
   );
 }

@@ -6,10 +6,12 @@ export const PATH_TO_PANEL: Record<string, string> = {
   "/dashboard": "dashboard",
   "/fiscal": "fiscal",
   "/dp": "dp",
+  "/contabil": "contabil",
   "/financeiro": "financeiro",
   "/operacoes": "operacoes",
   "/documentos": "documentos",
   "/empresas": "empresas",
+  "/alteracao-empresarial": "alteracao_empresarial",
   "/sync": "sync",
 }
 
@@ -17,10 +19,12 @@ export const PANEL_KEYS = [
   "dashboard",
   "fiscal",
   "dp",
+  "contabil",
   "financeiro",
   "operacoes",
   "documentos",
   "empresas",
+  "alteracao_empresarial",
   "sync",
 ] as const
 
@@ -30,10 +34,12 @@ export const PANEL_LABELS: Record<PanelKey, string> = {
   dashboard: "Dashboard",
   fiscal: "Fiscal",
   dp: "Depto. Pessoal",
+  contabil: "Contábil",
   financeiro: "Financeiro",
   operacoes: "Operações",
   documentos: "Documentos",
   empresas: "Empresas",
+  alteracao_empresarial: "Alteração Empresarial",
   sync: "Sincronização",
 }
 

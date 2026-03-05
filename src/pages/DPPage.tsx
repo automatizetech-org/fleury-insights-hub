@@ -2,6 +2,7 @@ import { StatsCard } from "@/components/dashboard/StatsCard";
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Users, FileText, CheckSquare, AlertTriangle, Clock } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
 const checklist = [
@@ -26,7 +27,24 @@ export default function DPPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold font-display tracking-tight">Departamento Pessoal</h1>
-        <p className="text-sm text-muted-foreground mt-1">Checklist de fechamento, guias e pendências</p>
+        <p className="text-sm text-muted-foreground mt-1">Checklist de fechamento, guias e pendências — FGTS, DARF, INSS</p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {[
+          { label: "Visão Geral", path: "/dp" },
+          { label: "FGTS", path: "/dp/fgts" },
+          { label: "DARF", path: "/dp/darf" },
+          { label: "INSS", path: "/dp/inss" },
+        ].map((item) => (
+          <Link
+            key={item.path}
+            to={item.path}
+            className="rounded-lg border border-border bg-card px-4 py-2 text-xs font-medium hover:bg-muted transition-colors"
+          >
+            {item.label}
+          </Link>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -84,6 +102,23 @@ export default function DPPage() {
             ))}
           </div>
         </GlassCard>
+      </div>
+
+      {/* Atalhos para FGTS, DARF, INSS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {[
+          { titulo: "FGTS", path: "/dp/fgts", descricao: "Guias e recolhimento FGTS", valor: "—" },
+          { titulo: "DARF", path: "/dp/darf", descricao: "Impostos e DARF", valor: "—" },
+          { titulo: "INSS", path: "/dp/inss", descricao: "Guias INSS e folha", valor: "—" },
+        ].map((item) => (
+          <Link key={item.path} to={item.path}>
+            <GlassCard className="p-5 cursor-pointer h-full">
+              <h4 className="text-sm font-semibold font-display">{item.titulo}</h4>
+              <p className="text-xs text-muted-foreground mt-1">{item.descricao}</p>
+              <p className="text-lg font-bold font-display mt-2">{item.valor}</p>
+            </GlassCard>
+          </Link>
+        ))}
       </div>
     </div>
   );

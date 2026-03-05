@@ -1,4 +1,24 @@
-# Logs
+# =============================================================================
+# Dependências e build
+# =============================================================================
+node_modules
+.pnp
+.pnp.js
+dist
+dist-ssr
+*.local
+
+# =============================================================================
+# Ambiente (nunca commitar chaves ou secrets)
+# =============================================================================
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# =============================================================================
+# Logs e debug
+# =============================================================================
 logs
 *.log
 npm-debug.log*
@@ -7,27 +27,70 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Environment (nunca commitar chaves)
-.env
-.env.local
-.env.*.local
-
-# Temp / cache (Vite, etc.)
+# =============================================================================
+# Cache e temporários (Vite, bundlers, etc.)
+# =============================================================================
 *.timestamp*
 *.ts.timestamp*.mjs
+.cache
+.parcel-cache
+.turbo
+.vite
 
-# Editor directories and files
+# =============================================================================
+# WhatsApp (backend) — sessão e cache (muito pesado)
+# =============================================================================
+backend/whatsapp-emissor/.wwebjs_auth/
+backend/whatsapp-emissor/.wwebjs_cache/
+
+# =============================================================================
+# Testes e cobertura
+# =============================================================================
+coverage
+*.lcov
+.nyc_output
+
+# =============================================================================
+# TypeScript / build info
+# =============================================================================
+*.tsbuildinfo
+
+# =============================================================================
+# Editores e IDEs
+# =============================================================================
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# =============================================================================
+# Sistema operacional
+# =============================================================================
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =============================================================================
+# Arquivos pesados / binários (evitar commit acidental)
+# =============================================================================
+# Descomente se não quiser versionar documentos na pasta public:
+# public/contratos/*.docx
+# public/contratos/*.pdf
+*.zip
+*.rar
+*.7z
+*.tar.gz
+*.tgz
+
+# =============================================================================
+# Deploy / plataformas (opcional)
+# =============================================================================
+.vercel
+.netlify

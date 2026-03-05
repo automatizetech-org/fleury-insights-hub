@@ -21,19 +21,35 @@ const pendencias = [
 ];
 
 export default function FiscalPage() {
+  const topicos = [
+    { label: "NFS", path: "/fiscal/nfs" },
+    { label: "NFE", path: "/fiscal/nfe" },
+    { label: "NFC", path: "/fiscal/nfc" },
+    { label: "Simples Nacional", path: "/fiscal/simples-nacional" },
+    { label: "DIFAL", path: "/fiscal/difal" },
+    { label: "IRRF/CSLL", path: "/fiscal/irrf-csll" },
+    { label: "Certidões", path: "/fiscal/certidoes" },
+  ];
+
+  const cardsPorTipo = [
+    { tipo: "NFS", total: 1240, validados: 1180, pendentes: 42, divergentes: 18, path: "/fiscal/nfs" },
+    { tipo: "NFE", total: 3450, validados: 3280, pendentes: 140, divergentes: 30, path: "/fiscal/nfe" },
+    { tipo: "NFC", total: 890, validados: 750, pendentes: 140, divergentes: 0, path: "/fiscal/nfc" },
+    { tipo: "Simples Nacional", path: "/fiscal/simples-nacional", obrigacao: true },
+    { tipo: "DIFAL", path: "/fiscal/difal", obrigacao: true },
+    { tipo: "IRRF/CSLL", path: "/fiscal/irrf-csll", obrigacao: true },
+    { tipo: "Certidões", path: "/fiscal/certidoes", obrigacao: true },
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold font-display tracking-tight">Fiscal</h1>
-          <p className="text-sm text-muted-foreground mt-1">Apuração fiscal por empresa e período</p>
+          <p className="text-sm text-muted-foreground mt-1">Apuração fiscal por empresa e período — NFS, NFE, NFC, Simples Nacional, DIFAL, IRRF/CSLL e Certidões</p>
         </div>
-        <div className="flex gap-2">
-          {[
-            { label: "NFS", path: "/fiscal/nfs" },
-            { label: "NFE", path: "/fiscal/nfe" },
-            { label: "NFC", path: "/fiscal/nfc" },
-          ].map((item) => (
+        <div className="flex flex-wrap gap-2">
+          {topicos.map((item) => (
             <Link
               key={item.path}
               to={item.path}
@@ -77,39 +93,45 @@ export default function FiscalPage() {
         </GlassCard>
       </div>
 
-      {/* Status por tipo */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {[
-          { tipo: "NFS", total: 1240, validados: 1180, pendentes: 42, divergentes: 18, path: "/fiscal/nfs" },
-          { tipo: "NFE", total: 3450, validados: 3280, pendentes: 140, divergentes: 30, path: "/fiscal/nfe" },
-          { tipo: "NFC", total: 890, validados: 750, pendentes: 140, divergentes: 0, path: "/fiscal/nfc" },
-        ].map((item) => (
+      {/* Cards por tipo: NFS, NFE, NFC com métricas; demais com link */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {cardsPorTipo.map((item) => (
           <Link key={item.tipo} to={item.path}>
-            <GlassCard className="p-5 cursor-pointer">
+            <GlassCard className="p-5 cursor-pointer h-full">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-sm font-semibold font-display">{item.tipo}</h4>
-                <span className="text-lg font-bold font-display">{item.total.toLocaleString()}</span>
+                {"total" in item && item.total != null ? (
+                  <span className="text-lg font-bold font-display">{item.total.toLocaleString()}</span>
+                ) : (
+                  <span className="text-muted-foreground text-xs">Acessar</span>
+                )}
               </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Validados</span>
-                  <span className="text-success font-medium">{item.validados.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Pendentes</span>
-                  <span className="text-warning font-medium">{item.pendentes}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Divergentes</span>
-                  <span className="text-destructive font-medium">{item.divergentes}</span>
-                </div>
-                <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-success transition-all"
-                    style={{ width: `${(item.validados / item.total) * 100}%` }}
-                  />
-                </div>
-              </div>
+              {"obrigacao" in item && item.obrigacao ? (
+                <p className="text-xs text-muted-foreground">Obrigações e apurações deste tópico</p>
+              ) : (
+                "total" in item && item.total != null && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Validados</span>
+                      <span className="text-success font-medium">{(item as { validados: number }).validados.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Pendentes</span>
+                      <span className="text-warning font-medium">{(item as { pendentes: number }).pendentes}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Divergentes</span>
+                      <span className="text-destructive font-medium">{(item as { divergentes: number }).divergentes}</span>
+                    </div>
+                    <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-success transition-all"
+                        style={{ width: `${(((item as { validados: number }).validados) / (item as { total: number }).total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )
+              )}
             </GlassCard>
           </Link>
         ))}

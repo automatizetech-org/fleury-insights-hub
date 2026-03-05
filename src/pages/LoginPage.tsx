@@ -1,6 +1,6 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { Lock, Loader2, AlertCircle, Shield } from "lucide-react"
+import { Lock, Loader2, AlertCircle } from "lucide-react"
 import { supabase } from "@/services/supabaseClient"
 import { getProfile } from "@/services/profilesService"
 import logoUrl from "@/assets/images/logo.png"
@@ -10,36 +10,24 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? ""
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const [loginWithEmail, setLoginWithEmail] = useState(false)
   const [username, setUsername] = useState("")
-  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
-  const [isAdminTarget, setIsAdminTarget] = useState(false)
+
+  // Garantir tema escuro como padrão na tela de login (mesma lógica do AppLayout)
+  useEffect(() => {
+    const stored = localStorage.getItem("theme")
+    const isDark = stored !== "light"
+    document.documentElement.classList.toggle("dark", isDark)
+    if (!stored) localStorage.setItem("theme", "dark")
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
     setLoading(true)
     try {
-      if (loginWithEmail) {
-        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        })
-        if (authError) throw authError
-        const userId = authData.user?.id
-        if (!userId) throw new Error("Usuário não retornado")
-        const profile = await getProfile(userId)
-        setLoading(false)
-        if (isAdminTarget || profile.role === "super_admin") {
-          navigate("/admin", { replace: true })
-        } else {
-          navigate("/admin", { replace: true })
-        }
-        return
-      }
       const res = await fetch(`${SUPABASE_URL}/functions/v1/auth`, {
         method: "POST",
         headers: {
@@ -61,7 +49,7 @@ export default function LoginPage() {
       if (!userId) throw new Error("Usuário não retornado")
       const profile = await getProfile(userId)
       setLoading(false)
-      if (isAdminTarget || profile.role === "super_admin") {
+      if (profile.role === "super_admin") {
         navigate("/admin", { replace: true })
       } else {
         navigate("/dashboard", { replace: true })
@@ -106,30 +94,17 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-3 md:space-y-4">
           <div className="space-y-2.5 md:space-y-3">
-            {loginWithEmail ? (
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Email"
-                autoComplete="email"
-                className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-gray-200 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2563EB]/50 focus:border-[#2563EB] transition-all text-base touch-manipulation"
-                disabled={loading}
-              />
-            ) : (
-              <input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Nome de usuário"
-                autoFocus
-                autoComplete="username"
-                className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-gray-200 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2563EB]/50 focus:border-[#2563EB] transition-all text-base touch-manipulation"
-                disabled={loading}
-              />
-            )}
+            <input
+              id="username"
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Nome de usuário"
+              autoFocus
+              autoComplete="username"
+              className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-gray-200 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2563EB]/50 focus:border-[#2563EB] transition-all text-base touch-manipulation"
+              disabled={loading}
+            />
             <input
               id="password"
               type="password"
@@ -167,29 +142,6 @@ export default function LoginPage() {
             )}
           </button>
         </form>
-
-        <div className="mt-5 md:mt-6 flex items-center justify-center">
-          <button
-            type="button"
-            onClick={() => setIsAdminTarget(!isAdminTarget)}
-            className="group inline-flex items-center gap-2 rounded-full border border-gray-200/80 dark:border-slate-700/70 bg-white/70 dark:bg-slate-800/40 px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-semibold text-gray-800 dark:text-gray-200 shadow-sm hover:shadow-md transition-all hover:border-[#2563EB]/40 hover:text-[#2563EB] touch-manipulation active:scale-95"
-          >
-            <span className="flex items-center justify-center h-5 w-5 md:h-6 md:w-6 rounded-full bg-gradient-to-br from-red-600 to-[#2563EB] text-white shadow-sm group-hover:shadow flex-shrink-0">
-              <Shield size={12} className="md:w-[14px] md:h-[14px]" />
-            </span>
-            <span className="break-words">{isAdminTarget ? "Admin (ativado)" : "Admin"}</span>
-          </button>
-        </div>
-
-        <p className="mt-4 text-center">
-          <button
-            type="button"
-            onClick={() => { setLoginWithEmail(!loginWithEmail); setError(""); }}
-            className="text-xs text-muted-foreground hover:text-primary underline"
-          >
-            {loginWithEmail ? "Voltar ao login por usuário" : "Primeiro acesso? Entrar com email"}
-          </button>
-        </p>
       </div>
     </div>
   )
