@@ -91,13 +91,28 @@ export async function getGroups(forceRefresh = false): Promise<WhatsAppGroup[]> 
   }
 }
 
-export async function sendToGroup(groupId: string, message: string): Promise<{ ok: boolean; error?: string }> {
+export interface WhatsAppAttachment {
+  filename: string;
+  mimetype: string;
+  dataBase64: string;
+}
+
+export async function sendToGroup(
+  groupId: string,
+  message: string,
+  attachments?: WhatsAppAttachment[]
+): Promise<{ ok: boolean; error?: string }> {
   if (!BASE) return { ok: false, error: "API não configurada" };
   try {
+    const body: { groupId: string; message: string; attachments?: WhatsAppAttachment[] } = {
+      groupId,
+      message,
+    };
+    if (attachments && attachments.length > 0) body.attachments = attachments;
     const res = await fetch(`${BASE}/send`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ groupId, message }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

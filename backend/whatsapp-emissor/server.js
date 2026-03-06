@@ -10,7 +10,7 @@
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const qrImage = require("qr-image");
 const { spawnSync } = require("child_process");
 
@@ -489,6 +489,7 @@ const server = http.createServer(async (req, res) => {
       }
       const groupId = (data.groupId || "").trim();
       const message = typeof data.message === "string" ? data.message : "";
+      const attachments = Array.isArray(data.attachments) ? data.attachments : [];
       if (!groupId) {
         sendJson(res, 400, { ok: false, error: "groupId obrigatório" });
         return;
@@ -496,6 +497,19 @@ const server = http.createServer(async (req, res) => {
       const targetId = groupId.includes("@") ? groupId : `${groupId}@g.us`;
       try {
         await client.sendMessage(targetId, message || " ");
+        for (const att of attachments) {
+          const mimetype = att.mimetype && typeof att.mimetype === "string" ? att.mimetype : "application/octet-stream";
+          const dataBase64 = att.dataBase64 && typeof att.dataBase64 === "string" ? att.dataBase64 : "";
+          const filename = att.filename && typeof att.filename === "string" ? att.filename : "documento";
+          if (!dataBase64) continue;
+          try {
+            const media = new MessageMedia(mimetype, dataBase64, filename);
+            await client.sendMessage(targetId, media);
+            await new Promise((r) => setTimeout(r, 800));
+          } catch (eAtt) {
+            console.error("[ERRO] Enviar anexo:", eAtt && eAtt.message ? eAtt.message : eAtt);
+          }
+        }
         sendJson(res, 200, { ok: true });
       } catch (e) {
         console.error("[ERRO] Enviar para grupo:", e);

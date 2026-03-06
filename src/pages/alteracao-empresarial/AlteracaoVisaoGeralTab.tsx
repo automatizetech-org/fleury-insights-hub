@@ -21,7 +21,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Textarea } from "@/components/ui/textarea";
-import { FileText, Search, Loader2, AlertCircle, QrCode, Send, Link, Unlink, RefreshCw, ChevronsUpDown, Plus, Trash2 } from "lucide-react";
+import { FileText, Search, Loader2, AlertCircle, QrCode, Send, Link, Unlink, RefreshCw, ChevronsUpDown, Plus, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { fetchCnpjPublica, CnpjFormData } from "@/services/cnpjPublicaService";
 import { OPCOES_PARCELAMENTO } from "@/constants/parcelamentoOpcoes";
@@ -48,6 +48,7 @@ import {
   currencyToDigits,
   formatTelefoneInput,
 } from "@/lib/validators";
+import { extractPdfFormFields } from "@/lib/extractPdfFormFields";
 
 const SIM_NAO = [
   { value: "sim", label: "Sim" },
@@ -83,6 +84,9 @@ export function AlteracaoVisaoGeralTab() {
   const waQrRef = useRef<string | null>(null);
   const waGroupsFilledRef = useRef(false);
   const [qrUrlKey, setQrUrlKey] = useState(0);
+  const [anexos, setAnexos] = useState<File[]>([]);
+  const [uploadDragOver, setUploadDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
     razao_social: "",
@@ -272,24 +276,29 @@ export function AlteracaoVisaoGeralTab() {
 
   const applyCnpjData = (data: CnpjFormData) => {
     if (!data) return;
-    const socios = data.socios?.length ? data.socios.map((s) => ({ nome_socio: s.nome, cpf_socio: s.cpf_socio })) : [{ nome_socio: "", cpf_socio: "" }];
+    const apiSocios = data.socios?.length ? data.socios.map((s) => ({ nome_socio: s.nome, cpf_socio: s.cpf_socio })) : [{ nome_socio: "", cpf_socio: "" }];
     setForm((p) => {
       const nextContatos = [...p.contatos];
       if (nextContatos.length > 0) {
         nextContatos[0] = {
           ...nextContatos[0],
-          email_contato: data.email ?? nextContatos[0].email_contato,
-          telefone_contato: data.telefone ?? nextContatos[0].telefone_contato,
+          email_contato: nextContatos[0].email_contato?.trim() ? nextContatos[0].email_contato : (data.email ?? nextContatos[0].email_contato),
+          telefone_contato: nextContatos[0].telefone_contato?.trim() ? nextContatos[0].telefone_contato : (data.telefone ?? nextContatos[0].telefone_contato),
         };
       }
+      const socios = p.socios.map((s, i) => ({
+        nome_socio: s.nome_socio?.trim() ? s.nome_socio : (apiSocios[i]?.nome_socio ?? s.nome_socio),
+        cpf_socio: s.cpf_socio?.trim() ? s.cpf_socio : (apiSocios[i]?.cpf_socio ?? s.cpf_socio),
+      }));
       return {
         ...p,
-        razao_social: data.razao_social || p.razao_social,
-        cnpj: data.cnpj || p.cnpj,
-        data_abertura: data.data_abertura || p.data_abertura,
-        tipo_atividade: data.tipo_atividade || p.tipo_atividade,
-        inscricao_estadual: data.inscricao_estadual || p.inscricao_estadual,
-        tributacao: data.tributacao || p.tributacao,
+        razao_social: p.razao_social?.trim() ? p.razao_social : (data.razao_social || p.razao_social),
+        cnpj: p.cnpj?.trim() ? p.cnpj : (data.cnpj || p.cnpj),
+        qualificacao_plano: p.qualificacao_plano?.trim() ? p.qualificacao_plano : (data.natureza_juridica || p.qualificacao_plano),
+        data_abertura: p.data_abertura?.trim() ? p.data_abertura : (data.data_abertura || p.data_abertura),
+        tipo_atividade: p.tipo_atividade?.trim() ? p.tipo_atividade : (data.tipo_atividade || p.tipo_atividade),
+        inscricao_estadual: p.inscricao_estadual?.trim() ? p.inscricao_estadual : (data.inscricao_estadual || p.inscricao_estadual),
+        tributacao: p.tributacao?.trim() ? p.tributacao : (data.tributacao || p.tributacao),
         socios,
         contatos: nextContatos,
       };
@@ -317,9 +326,34 @@ export function AlteracaoVisaoGeralTab() {
       setWaError("");
       setWaLoading(true);
       try {
-        const result = await sendToGroup(waGroupId, message);
+        let attachments: { filename: string; mimetype: string; dataBase64: string }[] | undefined;
+        if (anexos.length > 0) {
+          attachments = await Promise.all(
+            anexos.map(async (file) => {
+              const dataBase64 = await new Promise<string>((resolve, reject) => {
+                const r = new FileReader();
+                r.onloadend = () => {
+                  const result = r.result;
+                  if (typeof result === "string") {
+                    const base64 = result.includes(",") ? result.split(",")[1] : result;
+                    resolve(base64 ?? "");
+                  } else resolve("");
+                };
+                r.onerror = () => reject(new Error("Falha ao ler arquivo"));
+                r.readAsDataURL(file);
+              });
+              return {
+                filename: file.name,
+                mimetype: file.type || "application/octet-stream",
+                dataBase64,
+              };
+            })
+          );
+        }
+        const result = await sendToGroup(waGroupId, message, attachments);
         if (result.ok) {
-          toast.success("Mensagem enviada ao grupo no WhatsApp.");
+          toast.success("Mensagem e documentos enviados ao grupo no WhatsApp.");
+          setAnexos([]);
         } else {
           setWaError(result.error ?? "Falha ao enviar");
           toast.error(result.error ?? "Falha ao enviar");
@@ -331,6 +365,86 @@ export function AlteracaoVisaoGeralTab() {
       toast.success("Formulário validado. Conecte o WhatsApp e selecione um grupo para enviar.");
     }
   };
+
+  const addAnexos = (files: FileList | null) => {
+    if (!files?.length) return;
+    const newFiles: File[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      if (f && !anexos.some((x) => x.name === f.name && x.size === f.size)) newFiles.push(f);
+    }
+    if (newFiles.length === 0) return;
+
+    setAnexos((prev) => {
+      const next = [...prev, ...newFiles];
+      const pdfFiles = next.filter(
+        (f) =>
+          f.type === "application/pdf" ||
+          f.name.toLowerCase().endsWith(".pdf")
+      );
+      if (pdfFiles.length > 0) {
+        (async () => {
+          let lastInscricaoMunicipal = "";
+          const allCpfs: string[] = [];
+          let lastTipoAtividade = "";
+          let lastEmailContato = "";
+          let lastTelefoneContato = "";
+          for (const file of pdfFiles) {
+            const extracted = await extractPdfFormFields(file);
+            if (!extracted) continue;
+            if (extracted.inscricaoMunicipal)
+              lastInscricaoMunicipal = extracted.inscricaoMunicipal;
+            allCpfs.push(...extracted.cpfsSocio);
+            if (extracted.tipoAtividade) lastTipoAtividade = extracted.tipoAtividade;
+            if (extracted.emailContato) lastEmailContato = extracted.emailContato;
+            if (extracted.telefoneContato) lastTelefoneContato = extracted.telefoneContato;
+          }
+          const hasAny =
+            lastInscricaoMunicipal ||
+            allCpfs.length > 0 ||
+            lastTipoAtividade ||
+            lastEmailContato ||
+            lastTelefoneContato;
+          if (!hasAny) return;
+
+          setForm((p) => {
+            const nextForm = { ...p };
+            if (lastInscricaoMunicipal)
+              nextForm.inscricao_municipal = lastInscricaoMunicipal;
+            if (allCpfs.length > 0 && nextForm.socios.length > 0) {
+              nextForm.socios = nextForm.socios.map((s, i) =>
+                i < allCpfs.length ? { ...s, cpf_socio: allCpfs[i] } : s
+              );
+            }
+            if (lastTipoAtividade) nextForm.tipo_atividade = lastTipoAtividade;
+            if (lastEmailContato || lastTelefoneContato) {
+              const nextContatos = [...nextForm.contatos];
+              if (nextContatos.length > 0) {
+                nextContatos[0] = {
+                  ...nextContatos[0],
+                  ...(lastEmailContato && { email_contato: lastEmailContato }),
+                  ...(lastTelefoneContato && { telefone_contato: lastTelefoneContato }),
+                };
+              }
+              nextForm.contatos = nextContatos;
+            }
+            return nextForm;
+          });
+
+          const parts: string[] = [];
+          if (lastInscricaoMunicipal) parts.push("Inscrição Municipal");
+          if (allCpfs.length > 0) parts.push(`${allCpfs.length} CPF(s) de sócio(s)`);
+          if (lastTipoAtividade) parts.push("Atividade principal");
+          if (lastEmailContato) parts.push("E-mail");
+          if (lastTelefoneContato) parts.push("Telefone");
+          toast.success(`PDF(s) analisado(s): ${parts.join(", ")} preenchidos.`);
+        })();
+      }
+      return next;
+    });
+  };
+
+  const removeAnexo = (index: number) => setAnexos((p) => p.filter((_, i) => i !== index));
 
   return (
     <div className="space-y-6">
@@ -680,6 +794,68 @@ export function AlteracaoVisaoGeralTab() {
               placeholder="Informações adicionais em texto livre..."
               className="min-h-[100px]"
             />
+          </div>
+        </section>
+
+        {/* Anexos (enviados após a mensagem no WhatsApp) */}
+        <section className="space-y-4">
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">* Documentos para enviar no WhatsApp *</h3>
+          <div className="space-y-2">
+            <Label>Anexar documentos (serão enviados após a mensagem do formulário)</Label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="sr-only"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+              onChange={(e) => {
+                addAnexos(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <div
+              role="button"
+              tabIndex={0}
+              onDragOver={(e) => { e.preventDefault(); setUploadDragOver(true); }}
+              onDragLeave={() => setUploadDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setUploadDragOver(false);
+                addAnexos(e.dataTransfer.files);
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click(); } }}
+              className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 transition-colors cursor-pointer min-h-[120px] ${
+                uploadDragOver
+                  ? "border-primary bg-primary/10"
+                  : "border-border hover:border-primary/50 hover:bg-muted/30"
+              }`}
+            >
+              <Upload className="h-10 w-10 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground text-center">
+                Arraste os arquivos aqui ou <span className="text-primary font-medium">clique para abrir o explorador</span>
+              </p>
+              <p className="text-xs text-muted-foreground">PDF, DOC, XLS, imagens (PNG, JPG)</p>
+            </div>
+            {anexos.length > 0 && (
+              <ul className="space-y-1 mt-2">
+                {anexos.map((file, idx) => (
+                  <li key={`${file.name}-${idx}`} className="flex items-center justify-between gap-2 py-1.5 px-2 rounded bg-muted/50 text-sm">
+                    <span className="truncate">{file.name}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
+                      onClick={(e) => { e.stopPropagation(); removeAnexo(idx); }}
+                      title="Remover"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </section>
 
