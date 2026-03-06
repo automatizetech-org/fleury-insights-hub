@@ -27,6 +27,11 @@ export default defineConfig(({ mode }) => ({
     "import.meta.env.SERVER_API_URL": JSON.stringify(process.env.SERVER_API_URL ?? ""),
     "import.meta.env.WHATSAPP_API": JSON.stringify(process.env.WHATSAPP_API ?? ""),
   },
+  build: {
+    // Produção: remove console e debugger para não expor dados no DevTools
+    esbuild: mode === "production" ? { drop: ["console", "debugger"] } : undefined,
+    sourcemap: mode !== "production",
+  },
   css: {
     postcss: path.resolve(projectRoot, "config/postcss.config.js"),
   },

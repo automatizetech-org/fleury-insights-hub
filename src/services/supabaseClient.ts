@@ -6,20 +6,22 @@ const SUPABASE_ANON_KEY =
   import.meta.env.SUPABASE_ANON_KEY ??
   import.meta.env.SUPABASE_PUBLISHABLE_KEY
 
-if (import.meta.env.DEV && (!SUPABASE_URL || !SUPABASE_ANON_KEY)) {
+const hasConfig = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY)
+
+if (import.meta.env.DEV && !hasConfig) {
   console.warn(
-    "Supabase: defina SUPABASE_URL e SUPABASE_ANON_KEY no .env."
+    "Supabase: defina SUPABASE_URL e SUPABASE_ANON_KEY no .env (copie de .env.example)."
   )
 }
 
-export const supabase = createClient<Database>(
-  SUPABASE_URL ?? "",
-  SUPABASE_ANON_KEY ?? "",
-  {
-    auth: {
-      storage: localStorage,
-      persistSession: true,
-      autoRefreshToken: true,
-    },
-  }
-)
+// Em DEV sem .env, usa placeholders para o app montar; o login falhará até configurar o .env
+const url = hasConfig ? SUPABASE_URL! : "https://placeholder.supabase.co"
+const key = hasConfig ? SUPABASE_ANON_KEY! : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.placeholder"
+
+export const supabase = createClient<Database>(url, key, {
+  auth: {
+    storage: localStorage,
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+})
