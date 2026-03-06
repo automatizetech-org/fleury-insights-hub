@@ -119,6 +119,7 @@ export function AlteracaoVisaoGeralTab() {
     socios: [{ nome_socio: "", cpf_socio: "" }],
     contatos: [{ nome_contato: "", email_contato: "", telefone_contato: "" }],
     possui_prolabore: "nao_informado",
+    valor_prolabore: "",
     possui_empregados: "nao_informado",
     possui_contabilidade: "nao_informado",
     tipo_contabilidade: "",
@@ -886,6 +887,17 @@ export function AlteracaoVisaoGeralTab() {
                 </SelectContent>
               </Select>
             </div>
+            {form.possui_prolabore === "sim" && (
+              <div className="space-y-2">
+                <Label>Valor do Pró-labore (R$)</Label>
+                <Input
+                  value={formatCurrencyBRL(form.valor_prolabore)}
+                  onChange={(e) => update("valor_prolabore", currencyToDigits(e.target.value))}
+                  placeholder="0,00"
+                  className="font-mono"
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Possui Empregados</Label>
               <Select value={form.possui_empregados} onValueChange={(v) => update("possui_empregados", v)}>

@@ -27,6 +27,7 @@ export interface WhatsAppFormPayload {
   /** Lista de contatos: cada um com nome, e-mail e telefone */
   contatos: Array<{ nome_contato: string; email_contato: string; telefone_contato: string }>;
   possui_prolabore: string;
+  valor_prolabore?: string;
   possui_empregados: string;
   possui_contabilidade: string;
   tipo_contabilidade: string;
@@ -124,6 +125,9 @@ export function formatAlteracaoMessage(form: WhatsAppFormPayload): string {
   lines.push("*4️⃣ Kits de obrigações*");
   lines.push("");
   lines.push("  • Pró-labore: *" + (SIM_NAO_LABEL[form.possui_prolabore] ?? form.possui_prolabore) + "*");
+  if (form.possui_prolabore === "sim") {
+    lines.push("    _Valor do Pró-labore:_ `R$ " + (formatCurrencyBRL(form.valor_prolabore) || "0,00") + "`");
+  }
   lines.push("  • Empregados: *" + (SIM_NAO_LABEL[form.possui_empregados] ?? form.possui_empregados) + "*");
   lines.push("  • Contabilidade: *" + (SIM_NAO_LABEL[form.possui_contabilidade] ?? form.possui_contabilidade) + "*");
   if (form.possui_contabilidade === "sim" && form.tipo_contabilidade) {
