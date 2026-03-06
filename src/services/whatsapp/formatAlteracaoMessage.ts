@@ -63,15 +63,10 @@ export function formatAlteracaoMessage(form: WhatsAppFormPayload): string {
   const sep = "─────────────────────";
   const v = (s: string) => (s?.trim() ? s.trim() : "—");
 
-  lines.push("*📋 ALTERAÇÃO EMPRESARIAL*");
-  lines.push(sep);
-  lines.push("");
-
   const tipoFormLabel = form.tipo_formulario?.trim()
     ? (TIPO_FORMULARIO_LABEL[form.tipo_formulario.trim()] ?? form.tipo_formulario.trim())
     : "—";
-  lines.push("*Tipo de formulário:* *" + tipoFormLabel + "*");
-  lines.push("");
+  lines.push("*📋 " + tipoFormLabel + "*");
   lines.push(sep);
   lines.push("");
 
