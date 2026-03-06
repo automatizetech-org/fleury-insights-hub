@@ -38,7 +38,10 @@ export default function LoginPage() {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        throw new Error(data.error ?? "Falha no login")
+        const msg = res.status === 404
+          ? "Endpoint de login não encontrado (404). No .env use a SUPABASE_URL do seu projeto no Supabase (https://seu-projeto.supabase.co), não localhost. Depois publique a Edge Function 'auth'."
+          : (data.error ?? "Falha no login")
+        throw new Error(msg)
       }
       const { access_token, refresh_token } = data
       if (!access_token || !refresh_token) throw new Error("Sessão inválida")
@@ -61,6 +64,8 @@ export default function LoginPage() {
         const msg = String((err as { message: string }).message)
         if (msg === "Failed to fetch" || msg.includes("fetch")) {
           message = "Não foi possível contactar o servidor. Confira o .env (SUPABASE_URL) e publique a Edge Function 'auth' no Supabase."
+        } else if (msg.includes("404") || msg.includes("não encontrado")) {
+          message = msg
         } else {
           message = msg
         }

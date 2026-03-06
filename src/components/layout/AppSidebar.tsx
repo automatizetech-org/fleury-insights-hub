@@ -288,7 +288,11 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
     <>
       <button
         onClick={() => setMobileOpen(true)}
-        className="fixed top-4 left-4 z-50 md:hidden p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-200 dark:border-slate-700 hover:bg-[#2563EB]/10 dark:hover:bg-[#2563EB]/20 transition-all touch-manipulation active:scale-95"
+        className="fixed z-50 md:hidden p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-200 dark:border-slate-700 hover:bg-[#2563EB]/10 dark:hover:bg-[#2563EB]/20 transition-all touch-manipulation active:scale-95 sm:top-4 sm:left-4"
+        style={{
+          top: "max(6px, calc(6px + env(safe-area-inset-top, 0px)))",
+          left: "max(12px, calc(12px + env(safe-area-inset-left, 0px)))",
+        }}
         aria-label="Abrir menu"
       >
         <Menu size={22} className="text-foreground shrink-0" />

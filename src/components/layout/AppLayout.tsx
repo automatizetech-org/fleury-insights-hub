@@ -54,12 +54,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
         sidebarOpen ? "md:grid-cols-[16rem_1fr]" : "md:grid-cols-[0_1fr]"
       )}
     >
-      <div className="hidden md:block min-w-0 w-64 shrink-0 overflow-visible h-dvh">
+      {/* No mobile: w-0 e h-0 para não ocupar espaço; o sidebar só mostra o botão/drawer (position fixed) */}
+      <div className="w-0 h-0 min-h-0 md:w-64 md:h-dvh shrink-0 overflow-visible md:flex-shrink-0">
         <AppSidebar open={sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)} />
       </div>
 
-      <main className="min-w-0 w-full flex flex-col overflow-x-hidden relative min-h-0">
-        <header className="flex-shrink-0 h-14 flex items-center justify-between gap-2 border-b border-gray-200 dark:border-slate-700/80 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm pl-14 sm:pl-4 md:pl-4 pr-4 md:pr-6 min-w-0">
+      <main className="min-w-0 w-full flex flex-col overflow-x-hidden relative min-h-0 h-dvh md:h-auto">
+        <header className="flex-shrink-0 w-full flex flex-col border-b border-gray-200 dark:border-slate-700/80 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm min-w-0 pt-[env(safe-area-inset-top)]">
+          <div className="h-14 min-h-[56px] flex items-center justify-between gap-2 pl-14 pr-3 sm:pl-4 sm:pr-4 md:pl-4 md:pr-6">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             className="hidden md:flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 dark:text-slate-400 hover:text-[#2563EB] hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors shrink-0"
@@ -67,7 +69,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           >
             {sidebarOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
           </button>
-          <div className="flex items-center gap-2 min-w-0 justify-end">
+          <div className="flex items-center gap-1 sm:gap-2 min-w-0 justify-end ml-auto">
             <button
               onClick={() => setDark(!dark)}
               className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors shrink-0 touch-manipulation"
@@ -82,9 +84,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
               Sair
             </button>
           </div>
+          </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 min-w-0 pb-[env(safe-area-inset-bottom)]">
           <CommandPalette />
           <div className="p-3 sm:p-4 md:p-6 w-full min-w-0 max-w-none animate-fade-in-up box-border">
             {noAccess ? <Navigate to="/dashboard" replace /> : children}

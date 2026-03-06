@@ -42,83 +42,83 @@ export default function DocumentosPage() {
   });
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold font-display tracking-tight">Documentos</h1>
-        <p className="text-sm text-muted-foreground mt-1">Lista unificada de documentos fiscais e operacionais</p>
+    <div className="space-y-4 sm:space-y-6">
+      <div className="min-w-0">
+        <h1 className="text-xl sm:text-2xl font-bold font-display tracking-tight text-foreground">Documentos</h1>
+        <p className="text-xs sm:text-sm text-muted-foreground mt-1 line-clamp-2">Lista unificada de documentos fiscais e operacionais</p>
       </div>
 
       <GlassCard className="overflow-hidden">
-        <div className="p-3 sm:p-4 border-b border-border flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-between gap-3">
+        <div className="p-3 sm:p-4 border-b border-border flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
+            <Filter className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
             {tipoFilters.map((tipo) => (
               <button
                 key={tipo}
                 onClick={() => setFilterTipo(tipo)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all touch-manipulation min-h-[36px] ${
+                className={`rounded-xl px-4 py-2.5 text-sm font-medium transition-all touch-manipulation min-h-[44px] min-w-[64px] ${
                   filterTipo === tipo
-                    ? "bg-primary text-primary-foreground"
-                    : "border border-border hover:bg-muted"
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "border border-border hover:bg-muted active:bg-muted/80"
                 }`}
               >
                 {tipo}
               </button>
             ))}
           </div>
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-            <div className="relative min-w-0">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative min-w-0 flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar empresa ou CNPJ..."
-                className="rounded-lg border border-border bg-background pl-8 pr-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-full min-w-0 sm:w-56"
+                className="rounded-xl border border-border bg-background pl-10 pr-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary/50 w-full min-w-0 touch-manipulation"
               />
             </div>
             <button
               onClick={() => exportToCsv(filtered)}
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 sm:py-1.5 text-xs font-medium hover:bg-muted transition-colors touch-manipulation min-h-[36px]"
+              className="flex items-center justify-center gap-2 rounded-xl border border-border px-4 py-3 text-sm font-medium hover:bg-muted active:bg-muted/80 transition-colors touch-manipulation min-h-[44px] shrink-0"
             >
-              <Download className="h-3 w-3 shrink-0" />
-              CSV
+              <Download className="h-4 w-4 shrink-0" />
+              Exportar CSV
             </button>
           </div>
         </div>
 
         <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
-          <table className="w-full text-xs">
+          <table className="w-full text-xs sm:text-xs min-w-[600px]">
             <thead>
               <tr className="border-b border-border bg-muted/50">
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Empresa</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">CNPJ</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Tipo</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Período</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Origem</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Arquivos</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Data</th>
+                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Empresa</th>
+                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">CNPJ</th>
+                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Tipo</th>
+                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Período</th>
+                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Status</th>
+                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Origem</th>
+                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Arquivos</th>
+                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Data</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((doc) => (
-                <tr key={doc.id} className="border-b border-border hover:bg-muted/30 transition-colors cursor-pointer">
-                  <td className="px-4 py-3 font-medium">{doc.empresa}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{doc.cnpj}</td>
-                  <td className="px-4 py-3">
-                    <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">{doc.tipo}</span>
+                <tr key={doc.id} className="border-b border-border hover:bg-muted/30 active:bg-muted/50 transition-colors">
+                  <td className="px-3 sm:px-4 py-3 font-medium">{doc.empresa}</td>
+                  <td className="px-3 sm:px-4 py-3 text-muted-foreground">{doc.cnpj}</td>
+                  <td className="px-3 sm:px-4 py-3">
+                    <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">{doc.tipo}</span>
                   </td>
-                  <td className="px-4 py-3">{doc.periodo}</td>
-                  <td className="px-4 py-3"><StatusBadge status={doc.status} /></td>
-                  <td className="px-4 py-3 text-muted-foreground">{doc.origem}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1">
+                  <td className="px-3 sm:px-4 py-3">{doc.periodo}</td>
+                  <td className="px-3 sm:px-4 py-3"><StatusBadge status={doc.status} /></td>
+                  <td className="px-3 sm:px-4 py-3 text-muted-foreground">{doc.origem}</td>
+                  <td className="px-3 sm:px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
                       {doc.arquivos.map((arq) => (
                         <span key={arq} className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">{arq}</span>
                       ))}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">{doc.data}</td>
+                  <td className="px-3 sm:px-4 py-3 text-muted-foreground">{doc.data}</td>
                 </tr>
               ))}
             </tbody>
