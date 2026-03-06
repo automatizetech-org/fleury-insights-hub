@@ -42,6 +42,7 @@ import {
   validateEmail,
   formatCNPJ,
   formatCPF,
+  formatCNPJOrCPF,
   formatCompetencia,
   formatDataDDMMAAAA,
   formatCurrencyBRL,
@@ -49,6 +50,12 @@ import {
   formatTelefoneInput,
 } from "@/lib/validators";
 import { extractPdfFormFields } from "@/lib/extractPdfFormFields";
+import {
+  fetchSalarioMinimoBCB,
+  qualificacaoFromHonorario,
+  QUALIFICACAO_DISPLAY,
+  type QualificacaoPlano,
+} from "@/services/bcbSalarioMinimoService";
 
 const SIM_NAO = [
   { value: "sim", label: "Sim" },
@@ -87,6 +94,7 @@ export function AlteracaoVisaoGeralTab() {
   const [anexos, setAnexos] = useState<File[]>([]);
   const [uploadDragOver, setUploadDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [qualificacaoLoading, setQualificacaoLoading] = useState(false);
 
   const [form, setForm] = useState({
     razao_social: "",
@@ -240,8 +248,12 @@ export function AlteracaoVisaoGeralTab() {
   const handleBuscarCnpj = async () => {
     const digits = onlyDigits(cnpjBusca);
     setCnpjError("");
+    if (digits.length === 11) {
+      toast.info("Consulta na Receita disponível apenas para CNPJ (14 dígitos). O CPF foi aceito no campo.");
+      return;
+    }
     if (digits.length !== 14) {
-      setCnpjError("CNPJ deve ter 14 dígitos.");
+      setCnpjError("Informe CNPJ (14 dígitos) ou CPF (11 dígitos).");
       return;
     }
     if (!validateCNPJ(digits)) {
@@ -384,6 +396,7 @@ export function AlteracaoVisaoGeralTab() {
       );
       if (pdfFiles.length > 0) {
         (async () => {
+          let lastCnpjOuCpfEmpresa = "";
           let lastInscricaoMunicipal = "";
           const allCpfs: string[] = [];
           let lastTipoAtividade = "";
@@ -392,6 +405,7 @@ export function AlteracaoVisaoGeralTab() {
           for (const file of pdfFiles) {
             const extracted = await extractPdfFormFields(file);
             if (!extracted) continue;
+            if (extracted.cnpjOuCpfEmpresa) lastCnpjOuCpfEmpresa = extracted.cnpjOuCpfEmpresa;
             if (extracted.inscricaoMunicipal)
               lastInscricaoMunicipal = extracted.inscricaoMunicipal;
             allCpfs.push(...extracted.cpfsSocio);
@@ -400,6 +414,7 @@ export function AlteracaoVisaoGeralTab() {
             if (extracted.telefoneContato) lastTelefoneContato = extracted.telefoneContato;
           }
           const hasAny =
+            lastCnpjOuCpfEmpresa ||
             lastInscricaoMunicipal ||
             allCpfs.length > 0 ||
             lastTipoAtividade ||
@@ -407,8 +422,12 @@ export function AlteracaoVisaoGeralTab() {
             lastTelefoneContato;
           if (!hasAny) return;
 
+          // 1) Primeiro: preencher CNPJ/CPF da empresa (se estiver vazio) e disparar busca na Receita se for CNPJ (14 dígitos)
           setForm((p) => {
             const nextForm = { ...p };
+            if (lastCnpjOuCpfEmpresa && !p.cnpj?.trim()) {
+              nextForm.cnpj = lastCnpjOuCpfEmpresa;
+            }
             if (lastInscricaoMunicipal)
               nextForm.inscricao_municipal = lastInscricaoMunicipal;
             if (allCpfs.length > 0 && nextForm.socios.length > 0) {
@@ -431,7 +450,21 @@ export function AlteracaoVisaoGeralTab() {
             return nextForm;
           });
 
+          if (lastCnpjOuCpfEmpresa && lastCnpjOuCpfEmpresa.length === 14) {
+            try {
+              const data = await fetchCnpjPublica(lastCnpjOuCpfEmpresa);
+              if (data) {
+                cacheRef.current[lastCnpjOuCpfEmpresa] = data;
+                applyCnpjData(data);
+                toast.success("CNPJ encontrado no PDF. Dados preenchidos pela Receita (apenas campos vazios).");
+              }
+            } catch {
+              // CNPJ já preenchido pelo PDF; falha na Receita não impede o resto
+            }
+          }
+
           const parts: string[] = [];
+          if (lastCnpjOuCpfEmpresa) parts.push("CNPJ/CPF da empresa");
           if (lastInscricaoMunicipal) parts.push("Inscrição Municipal");
           if (allCpfs.length > 0) parts.push(`${allCpfs.length} CPF(s) de sócio(s)`);
           if (lastTipoAtividade) parts.push("Atividade principal");
@@ -446,6 +479,28 @@ export function AlteracaoVisaoGeralTab() {
 
   const removeAnexo = (index: number) => setAnexos((p) => p.filter((_, i) => i !== index));
 
+  /** Ao desfocar o valor do honorário: busca salário mínimo no BCB e define qualificação do plano (BRONZE/PRATA/OURO/DIAMANTE). */
+  const handleHonorarioBlur = async () => {
+    const digits = form.valor_honorario?.replace(/\D/g, "") || "0";
+    const valorReais = parseInt(digits, 10) / 100;
+    if (valorReais <= 0) return;
+    setQualificacaoLoading(true);
+    try {
+      const sm = await fetchSalarioMinimoBCB();
+      if (sm != null) {
+        const q = qualificacaoFromHonorario(valorReais, sm);
+        setForm((p) => ({ ...p, qualificacao_plano: q }));
+        toast.success(`Qualificação definida: ${QUALIFICACAO_DISPLAY[q].emoji} ${q} (${(valorReais / sm * 100).toFixed(1)}% do salário mínimo).`);
+      } else {
+        toast.error("Não foi possível obter o salário mínimo (BCB). Defina a qualificação manualmente.");
+      }
+    } finally {
+      setQualificacaoLoading(false);
+    }
+  };
+
+  const qualificacaoDisplay = (QUALIFICACAO_DISPLAY[form.qualificacao_plano as QualificacaoPlano] ?? null);
+
   return (
     <div className="space-y-6">
       {/* Métricas placeholder */}
@@ -459,10 +514,10 @@ export function AlteracaoVisaoGeralTab() {
       <GlassCard className="p-6 space-y-8">
         <div className="flex flex-wrap items-end gap-2">
           <div className="flex-1 min-w-[200px] space-y-2">
-            <Label>Buscar por CNPJ</Label>
+            <Label>Buscar por CNPJ/CPF</Label>
             <Input
-              placeholder="00.000.000/0001-00"
-              value={formatCNPJ(cnpjBusca)}
+              placeholder="CNPJ 00.000.000/0001-00 ou CPF 000.000.000-00"
+              value={formatCNPJOrCPF(cnpjBusca)}
               onChange={(e) => setCnpjBusca(onlyDigits(e.target.value).slice(0, 14))}
               className="font-mono"
               maxLength={18}
@@ -488,17 +543,29 @@ export function AlteracaoVisaoGeralTab() {
               <Input value={form.razao_social} onChange={(e) => update("razao_social", e.target.value)} />
             </div>
             <div className="space-y-2">
-              <Label>CNPJ</Label>
+              <Label>CNPJ/CPF</Label>
               <Input
-                value={formatCNPJ(form.cnpj)}
+                value={formatCNPJOrCPF(form.cnpj)}
                 onChange={(e) => update("cnpj", onlyDigits(e.target.value).slice(0, 14))}
-                placeholder="00.000.000/0001-00"
+                placeholder="00.000.000/0001-00 ou 000.000.000-00"
                 className="font-mono"
               />
             </div>
             <div className="space-y-2">
               <Label>Qualificação do Plano</Label>
-              <Input value={form.qualificacao_plano} onChange={(e) => update("qualificacao_plano", e.target.value)} />
+              <div className="flex items-center gap-2">
+                {qualificacaoDisplay && (
+                  <span className="text-xl shrink-0" title={qualificacaoDisplay.label}>
+                    {qualificacaoDisplay.emoji}
+                  </span>
+                )}
+                <Input
+                  value={form.qualificacao_plano}
+                  onChange={(e) => update("qualificacao_plano", e.target.value.toUpperCase())}
+                  placeholder="BRONZE, PRATA, OURO ou DIAMANTE (preencha o honorário e dê Tab)"
+                  className={qualificacaoDisplay ? qualificacaoDisplay.className + " font-semibold" : ""}
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Data de Abertura</Label>
@@ -762,9 +829,15 @@ export function AlteracaoVisaoGeralTab() {
               <Input
                 value={formatCurrencyBRL(form.valor_honorario)}
                 onChange={(e) => update("valor_honorario", currencyToDigits(e.target.value))}
+                onBlur={handleHonorarioBlur}
                 placeholder="0,00"
                 className="font-mono"
               />
+              {qualificacaoLoading && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Consultando salário mínimo (BCB)...
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Data de Vencimento do Honorário (dia)</Label>

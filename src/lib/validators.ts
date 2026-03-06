@@ -67,6 +67,13 @@ export function formatCPF(value: string): string {
   return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
 }
 
+/** Formata como CPF (até 11 dígitos) ou CNPJ (12–14 dígitos) conforme a quantidade de dígitos. */
+export function formatCNPJOrCPF(value: string): string {
+  const d = onlyDigits(value).slice(0, 14);
+  if (d.length <= 11) return formatCPF(d);
+  return formatCNPJ(d);
+}
+
 /** Validação simples de e-mail. */
 export function validateEmail(value: string): boolean {
   const v = String(value ?? "").trim();

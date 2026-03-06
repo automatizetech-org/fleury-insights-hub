@@ -12,6 +12,8 @@ if (typeof window !== "undefined") {
 }
 
 export interface ExtractedPdfFields {
+  /** CNPJ (14 dígitos) ou CPF (11 dígitos) da empresa — primeiro campo do formulário; usado para buscar na Receita quando for CNPJ */
+  cnpjOuCpfEmpresa?: string;
   inscricaoMunicipal?: string;
   cpfsSocio: string[];
   /** Descrição da atividade econômica principal (após "CÓDIGO E DESCRIÇÃO DA ATIVIDADE ECONÔMICA PRINCIPAL") */
@@ -47,14 +49,34 @@ function normalizeCpf(raw: string): string {
 
 /**
  * Extrai Inscrição Municipal, CPFs do sócio, atividade principal, e-mail e telefone do texto do PDF.
- * - Inscrição Municipal: "Nº Inscrição Municipal 7661479"
- * - CPF: "CPF 037.360.951-55", "CPF:037.360.951-55"
- * - Atividade principal: após "CÓDIGO E DESCRIÇÃO DA ATIVIDADE ECONÔMICA PRINCIPAL", linha "68.21-8-01 - Descrição"
- * - E-mail: após "ENDEREÇO ELETRÔNICO", linha com email (ex: ALADESENVOLVIMENTOIMOBILIARIO@GMAIL.COM)
- * - Telefone: primeiro número no formato (62) 9634-7020 (ignora (0000) 0000-0000)
+ * Primeiro extrai CNPJ/CPF da empresa (NÚMERO DE INSCRIÇÃO ou C.N.P.J. / C.P.F.) para preencher o campo e buscar na Receita.
  */
 function parseExtractedText(text: string): ExtractedPdfFields {
   const result: ExtractedPdfFields = { cpfsSocio: [] };
+
+  // CNPJ/CPF da empresa (primeiro campo do formulário) — mesmo regex para os dois formatos
+  // Formato 1: NÚMERO DE INSCRIÇÃO depois 65.252.839/0001-62 (ou CPF 000.000.000-00)
+  // Formato 2: C.N.P.J. / C.P.F. 65.252.839/0001-62
+  const cnpjCpfPattern =
+    /(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2})/;
+  const numInscMatch = text.match(/N[ÚU]MERO\s+DE\s+INSCRI[CÇ][AÃ]O\s*[\r\n]*\s*/i);
+  const cnpjCpfLabelMatch = text.match(/C\.?N\.?P\.?J\.?\s*\/\s*C\.?P\.?F\.?\s*/i);
+  if (numInscMatch) {
+    const after = text.slice(text.indexOf(numInscMatch[0]) + numInscMatch[0].length);
+    const numMatch = after.match(cnpjCpfPattern);
+    if (numMatch) {
+      const digits = numMatch[1].replace(/\D/g, "");
+      if (digits.length === 11 || digits.length === 14) result.cnpjOuCpfEmpresa = digits;
+    }
+  }
+  if (!result.cnpjOuCpfEmpresa && cnpjCpfLabelMatch) {
+    const after = text.slice(text.indexOf(cnpjCpfLabelMatch[0]) + cnpjCpfLabelMatch[0].length);
+    const numMatch = after.match(cnpjCpfPattern);
+    if (numMatch) {
+      const digits = numMatch[1].replace(/\D/g, "");
+      if (digits.length === 11 || digits.length === 14) result.cnpjOuCpfEmpresa = digits;
+    }
+  }
 
   // Inscrição Municipal: Nº Inscrição Municipal 7661479 (número após "Inscrição Municipal")
   const inscMunicipalMatch = text.match(
