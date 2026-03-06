@@ -19,6 +19,8 @@ export interface WhatsAppFormPayload {
   competencia_inicial: string;
   tributacao: string;
   possui_st: string;
+  /** Possui Retenção de Impostos (sim/nao/nao_informado) */
+  possui_retencao_impostos: string;
   socios: Array<{ nome_socio: string; cpf_socio: string }>;
   /** Lista de contatos: cada um com nome, e-mail e telefone */
   contatos: Array<{ nome_contato: string; email_contato: string; telefone_contato: string }>;
@@ -74,6 +76,7 @@ export function formatAlteracaoMessage(form: WhatsAppFormPayload): string {
   lines.push(`  _Competência Inicial:_ \`${v(form.competencia_inicial)}\``);
   lines.push(`  _Tributação:_ ${v(form.tributacao)}`);
   lines.push(`  _Possui Substituição Tributária:_ *${SIM_NAO_LABEL[form.possui_st] ?? form.possui_st}*`);
+  lines.push(`  _Possui Retenção de Impostos:_ *${SIM_NAO_LABEL[form.possui_retencao_impostos] ?? form.possui_retencao_impostos}*`);
   lines.push("");
   lines.push(sep);
   lines.push("");
@@ -107,23 +110,21 @@ export function formatAlteracaoMessage(form: WhatsAppFormPayload): string {
   lines.push("");
 
   lines.push("*4️⃣ Kits de obrigações*");
-  lines.push(`  _Possui Pró-labore:_ *${SIM_NAO_LABEL[form.possui_prolabore] ?? form.possui_prolabore}*`);
-  lines.push(`  _Possui Empregados:_ *${SIM_NAO_LABEL[form.possui_empregados] ?? form.possui_empregados}*`);
-  lines.push(`  _Possui Contabilidade:_ *${SIM_NAO_LABEL[form.possui_contabilidade] ?? form.possui_contabilidade}*`);
+  lines.push("");
+  lines.push("  • Pró-labore: *" + (SIM_NAO_LABEL[form.possui_prolabore] ?? form.possui_prolabore) + "*");
+  lines.push("  • Empregados: *" + (SIM_NAO_LABEL[form.possui_empregados] ?? form.possui_empregados) + "*");
+  lines.push("  • Contabilidade: *" + (SIM_NAO_LABEL[form.possui_contabilidade] ?? form.possui_contabilidade) + "*");
   if (form.possui_contabilidade === "sim" && form.tipo_contabilidade) {
-    lines.push(`  _Tipo de Contabilidade:_ ${form.tipo_contabilidade}`);
+    lines.push("    _Tipo:_ " + form.tipo_contabilidade);
   }
-  lines.push(`  _Regime Contábil:_ ${v(form.regime_contabil)}`);
-  lines.push(`  _Possui Parcelamento:_ *${SIM_NAO_LABEL[form.possui_parcelamento] ?? form.possui_parcelamento}*`);
+  lines.push("  • Regime Contábil: " + v(form.regime_contabil));
+  lines.push("  • Parcelamento: *" + (SIM_NAO_LABEL[form.possui_parcelamento] ?? form.possui_parcelamento) + "*");
   const parcelamentos = (form.tipos_parcelamento ?? (form.tipo_parcelamento ? [form.tipo_parcelamento] : [])).filter((t) => t?.trim());
   if (form.possui_parcelamento === "sim" && parcelamentos.length > 0) {
-    if (parcelamentos.length === 1) {
-      lines.push(`  _Tipo de Parcelamento:_ ${parcelamentos[0].trim()}`);
-    } else {
-      parcelamentos.forEach((t, i) => {
-        lines.push(`  _Tipo de Parcelamento ${i + 1}:_\n  ${t.trim()}`);
-      });
-    }
+    lines.push("  _Tipos:_");
+    parcelamentos.forEach((t) => {
+      lines.push("    – " + t.trim());
+    });
   }
   lines.push("");
   lines.push(sep);

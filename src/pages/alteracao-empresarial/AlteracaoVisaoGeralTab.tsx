@@ -107,6 +107,7 @@ export function AlteracaoVisaoGeralTab() {
     competencia_inicial: "",
     tributacao: "",
     possui_st: "nao_informado",
+    possui_retencao_impostos: "nao_informado",
     socios: [{ nome_socio: "", cpf_socio: "" }],
     contatos: [{ nome_contato: "", email_contato: "", telefone_contato: "" }],
     possui_prolabore: "nao_informado",
@@ -313,10 +314,17 @@ export function AlteracaoVisaoGeralTab() {
           telefone_contato: nextContatos[0].telefone_contato?.trim() ? nextContatos[0].telefone_contato : (data.telefone ?? nextContatos[0].telefone_contato),
         };
       }
-      const socios = p.socios.map((s, i) => ({
-        nome_socio: s.nome_socio?.trim() ? s.nome_socio : (apiSocios[i]?.nome_socio ?? s.nome_socio),
-        cpf_socio: s.cpf_socio?.trim() ? s.cpf_socio : (apiSocios[i]?.cpf_socio ?? s.cpf_socio),
-      }));
+      // Usar todos os sócios retornados pela API; preservar valores já preenchidos no formulário quando existirem
+      const socios =
+        data.socios && data.socios.length > 0
+          ? data.socios.map((_, i) => ({
+              nome_socio: p.socios[i]?.nome_socio?.trim() ? p.socios[i].nome_socio : (apiSocios[i]?.nome_socio ?? ""),
+              cpf_socio: p.socios[i]?.cpf_socio?.trim() ? p.socios[i].cpf_socio : (apiSocios[i]?.cpf_socio ?? ""),
+            }))
+          : p.socios.map((s, i) => ({
+              nome_socio: s.nome_socio?.trim() ? s.nome_socio : (apiSocios[i]?.nome_socio ?? s.nome_socio),
+              cpf_socio: s.cpf_socio?.trim() ? s.cpf_socio : (apiSocios[i]?.cpf_socio ?? s.cpf_socio),
+            }));
       return {
         ...p,
         razao_social: p.razao_social?.trim() ? p.razao_social : (data.razao_social || p.razao_social),
@@ -439,45 +447,78 @@ export function AlteracaoVisaoGeralTab() {
             lastTelefoneContato;
           if (!hasAny) return;
 
-          // 1) Primeiro: preencher CNPJ/CPF da empresa (se estiver vazio) e disparar busca na Receita se for CNPJ (14 dígitos)
+          // Buscar dados da Receita ANTES de atualizar o form, para aplicar tudo numa única atualização (evita race e garante todos os sócios)
+          let cnpjApiData: CnpjFormData | null = null;
+          if (lastCnpjOuCpfEmpresa && lastCnpjOuCpfEmpresa.length === 14) {
+            try {
+              cnpjApiData = await fetchCnpjPublica(lastCnpjOuCpfEmpresa);
+              if (cnpjApiData) cacheRef.current[lastCnpjOuCpfEmpresa] = cnpjApiData;
+            } catch {
+              // Falha na Receita não impede preencher o que veio do PDF
+            }
+          }
+
+          // Uma única atualização: dados do PDF (só vazios) + dados da API (incluindo TODOS os sócios)
           setForm((p) => {
             const nextForm = { ...p };
-            if (lastCnpjOuCpfEmpresa && !p.cnpj?.trim()) {
-              nextForm.cnpj = lastCnpjOuCpfEmpresa;
-            }
-            if (lastInscricaoMunicipal)
-              nextForm.inscricao_municipal = lastInscricaoMunicipal;
-            if (allCpfs.length > 0 && nextForm.socios.length > 0) {
-              nextForm.socios = nextForm.socios.map((s, i) =>
-                i < allCpfs.length ? { ...s, cpf_socio: allCpfs[i] } : s
-              );
-            }
-            if (lastTipoAtividade) nextForm.tipo_atividade = lastTipoAtividade;
+
+            // PDF: só preenche campos vazios
+            if (lastCnpjOuCpfEmpresa && !p.cnpj?.trim()) nextForm.cnpj = lastCnpjOuCpfEmpresa;
+            if (lastInscricaoMunicipal && !p.inscricao_municipal?.trim()) nextForm.inscricao_municipal = lastInscricaoMunicipal;
+            if (lastTipoAtividade && !p.tipo_atividade?.trim()) nextForm.tipo_atividade = lastTipoAtividade;
             if (lastEmailContato || lastTelefoneContato) {
               const nextContatos = [...nextForm.contatos];
               if (nextContatos.length > 0) {
                 nextContatos[0] = {
                   ...nextContatos[0],
-                  ...(lastEmailContato && { email_contato: lastEmailContato }),
-                  ...(lastTelefoneContato && { telefone_contato: lastTelefoneContato }),
+                  ...(lastEmailContato && !nextContatos[0].email_contato?.trim() && { email_contato: lastEmailContato }),
+                  ...(lastTelefoneContato && !nextContatos[0].telefone_contato?.trim() && { telefone_contato: lastTelefoneContato }),
                 };
               }
               nextForm.contatos = nextContatos;
             }
+
+            // Sócios do PDF: só preenche linhas ainda vazias (não sobrescreve se já vieram da Receita)
+            if (allCpfs.length > 0 && nextForm.socios.length > 0 && !cnpjApiData?.socios?.length) {
+              nextForm.socios = nextForm.socios.map((s, i) => {
+                const jaPreenchido = !!(s.nome_socio?.trim() || s.cpf_socio?.trim());
+                if (jaPreenchido) return s;
+                const cpfPdf = i < allCpfs.length ? allCpfs[i] : undefined;
+                return cpfPdf ? { ...s, cpf_socio: cpfPdf } : s;
+              });
+            }
+
+            // API da Receita: preenche campos vazios e SEMPRE usa a lista completa de sócios da API
+            if (cnpjApiData) {
+              const apiSocios = cnpjApiData.socios?.length
+                ? cnpjApiData.socios.map((s) => ({ nome_socio: s.nome, cpf_socio: s.cpf_socio }))
+                : [];
+              if (apiSocios.length > 0) {
+                nextForm.socios = apiSocios.map((api, i) => ({
+                  nome_socio: nextForm.socios[i]?.nome_socio?.trim() ? nextForm.socios[i].nome_socio : (api.nome_socio ?? ""),
+                  cpf_socio: nextForm.socios[i]?.cpf_socio?.trim() ? nextForm.socios[i].cpf_socio : (api.cpf_socio ?? ""),
+                }));
+              }
+              if (!nextForm.razao_social?.trim()) nextForm.razao_social = cnpjApiData.razao_social || nextForm.razao_social;
+              if (!nextForm.qualificacao_plano?.trim()) nextForm.qualificacao_plano = cnpjApiData.natureza_juridica || nextForm.qualificacao_plano;
+              if (!nextForm.data_abertura?.trim()) nextForm.data_abertura = cnpjApiData.data_abertura || nextForm.data_abertura;
+              if (!nextForm.tipo_atividade?.trim()) nextForm.tipo_atividade = cnpjApiData.tipo_atividade || nextForm.tipo_atividade;
+              if (!nextForm.inscricao_estadual?.trim()) nextForm.inscricao_estadual = cnpjApiData.inscricao_estadual || nextForm.inscricao_estadual;
+              if (!nextForm.tributacao?.trim()) nextForm.tributacao = cnpjApiData.tributacao || nextForm.tributacao;
+              if (nextForm.contatos.length > 0) {
+                nextForm.contatos[0] = {
+                  ...nextForm.contatos[0],
+                  email_contato: nextForm.contatos[0].email_contato?.trim() || cnpjApiData.email || nextForm.contatos[0].email_contato,
+                  telefone_contato: nextForm.contatos[0].telefone_contato?.trim() || cnpjApiData.telefone || nextForm.contatos[0].telefone_contato,
+                };
+              }
+            }
+
             return nextForm;
           });
 
-          if (lastCnpjOuCpfEmpresa && lastCnpjOuCpfEmpresa.length === 14) {
-            try {
-              const data = await fetchCnpjPublica(lastCnpjOuCpfEmpresa);
-              if (data) {
-                cacheRef.current[lastCnpjOuCpfEmpresa] = data;
-                applyCnpjData(data);
-                toast.success("CNPJ encontrado no PDF. Dados preenchidos pela Receita (apenas campos vazios).");
-              }
-            } catch {
-              // CNPJ já preenchido pelo PDF; falha na Receita não impede o resto
-            }
+          if (cnpjApiData) {
+            toast.success("CNPJ encontrado no PDF. Dados preenchidos pela Receita (apenas campos vazios).");
           }
 
           const parts: string[] = [];
@@ -692,6 +733,17 @@ export function AlteracaoVisaoGeralTab() {
             <div className="space-y-2">
               <Label>Possui Substituição Tributária</Label>
               <Select value={form.possui_st} onValueChange={(v) => update("possui_st", v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SIM_NAO.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Possui Retenção de Impostos</Label>
+              <Select value={form.possui_retencao_impostos} onValueChange={(v) => update("possui_retencao_impostos", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {SIM_NAO.map((o) => (

@@ -11,6 +11,9 @@ if (typeof window !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 }
 
+/** CNPJ do escritório (37.197.978/0001-03) — nunca usar como CNPJ da empresa extraído do PDF */
+const CNPJ_ESCRITORIO = "37197978000103";
+
 export interface ExtractedPdfFields {
   /** CNPJ (14 dígitos) ou CPF (11 dígitos) da empresa — primeiro campo do formulário; usado para buscar na Receita quando for CNPJ */
   cnpjOuCpfEmpresa?: string;
@@ -66,7 +69,9 @@ function parseExtractedText(text: string): ExtractedPdfFields {
     const numMatch = after.match(cnpjCpfPattern);
     if (numMatch) {
       const digits = numMatch[1].replace(/\D/g, "");
-      if (digits.length === 11 || digits.length === 14) result.cnpjOuCpfEmpresa = digits;
+      if ((digits.length === 11 || digits.length === 14) && digits !== CNPJ_ESCRITORIO) {
+        result.cnpjOuCpfEmpresa = digits;
+      }
     }
   }
   if (!result.cnpjOuCpfEmpresa && cnpjCpfLabelMatch) {
@@ -74,7 +79,9 @@ function parseExtractedText(text: string): ExtractedPdfFields {
     const numMatch = after.match(cnpjCpfPattern);
     if (numMatch) {
       const digits = numMatch[1].replace(/\D/g, "");
-      if (digits.length === 11 || digits.length === 14) result.cnpjOuCpfEmpresa = digits;
+      if ((digits.length === 11 || digits.length === 14) && digits !== CNPJ_ESCRITORIO) {
+        result.cnpjOuCpfEmpresa = digits;
+      }
     }
   }
 
