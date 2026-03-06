@@ -32,6 +32,43 @@ let isReady = false;
 let lastQR = null;
 let isStarting = false;
 
+// Cache de grupos: resposta imediata após o primeiro getChats (que é lento)
+const GROUPS_CACHE_TTL_MS = 90 * 1000; // 90s
+let groupsCache = { list: [], at: 0 };
+let groupsLoadPromise = null;
+
+function clearGroupsCache() {
+  groupsCache = { list: [], at: 0 };
+  groupsLoadPromise = null;
+}
+
+async function fetchGroupsForCache() {
+  if (!client || !isReady) return [];
+  const existing = groupsLoadPromise;
+  if (existing) return existing;
+  const promise = (async () => {
+    try {
+      const chats = await client.getChats();
+      const list = chats
+        .filter((c) => c && c.isGroup)
+        .map((c) => ({
+          id: (c.id && c.id._serialized) || c.id || "",
+          name: (typeof c.name === "string" && c.name) ? c.name : "Sem nome",
+        }))
+        .filter((g) => g.id);
+      groupsCache = { list, at: Date.now() };
+      return list;
+    } catch (e) {
+      console.error("[ERRO] Cache de grupos:", e && e.message ? e.message : e);
+      return groupsCache.list.length ? groupsCache.list : [];
+    } finally {
+      groupsLoadPromise = null;
+    }
+  })();
+  groupsLoadPromise = promise;
+  return promise;
+}
+
 function clearChromeLocks() {
   const rootLocks = ["SingletonLock", "SingletonCookie", "SingletonSocket", "DevToolsActivePort"];
   rootLocks.forEach((name) => {
@@ -162,15 +199,21 @@ function buildClient() {
   c.on("ready", () => {
     isReady = true;
     lastQR = null;
+    clearGroupsCache();
     try {
       if (fs.existsSync(qrFile)) fs.rmSync(qrFile, { force: true });
     } catch (_) {}
     console.log("[OK] WhatsApp conectado.");
+    // Pré-carrega grupos em background para /groups responder na hora
+    fetchGroupsForCache()
+      .then((list) => console.log("[OK] Grupos em cache:", list.length))
+      .catch(() => {});
   });
 
   c.on("disconnected", async (reason) => {
     isReady = false;
     lastQR = null;
+    clearGroupsCache();
     if (client) {
       try {
         await client.destroy();
@@ -263,6 +306,7 @@ async function resetBrokenClient() {
   if (!client) return;
   isReady = false;
   lastQR = null;
+  clearGroupsCache();
   try {
     await client.destroy();
   } catch (_) {}
@@ -367,14 +411,16 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { groups: [] });
       return;
     }
+    const urlObj = new URL(req.url || "/", `http://localhost:${PORT}`);
+    const forceRefresh = urlObj.searchParams.get("refresh") === "1" || urlObj.searchParams.get("refresh") === "true";
+    const useCache = !forceRefresh && groupsCache.list.length > 0 && (Date.now() - groupsCache.at < GROUPS_CACHE_TTL_MS);
+    if (useCache) {
+      sendJson(res, 200, { groups: groupsCache.list });
+      return;
+    }
+    if (forceRefresh) clearGroupsCache();
     try {
-      const chats = await client.getChats();
-      const groups = chats
-        .filter((c) => c.isGroup)
-        .map((c) => ({
-          id: c.id._serialized || c.id,
-          name: c.name || "Sem nome",
-        }));
+      const groups = await fetchGroupsForCache();
       sendJson(res, 200, { groups });
     } catch (e) {
       const msg = (e && e.message) ? e.message : String(e);
@@ -385,7 +431,7 @@ const server = http.createServer(async (req, res) => {
         });
       } else {
         console.error("[ERRO] Listar grupos:", e);
-        sendJson(res, 500, { groups: [], error: msg || "Erro ao listar grupos" });
+        sendJson(res, 500, { groups: groupsCache.list.length ? groupsCache.list : [], error: msg || "Erro ao listar grupos" });
       }
     }
     return;

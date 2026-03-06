@@ -72,10 +72,11 @@ export function getQrImageUrl(): string {
   return `${BASE.replace(/\/$/, "")}/qr.png?t=${Date.now()}`;
 }
 
-export async function getGroups(): Promise<WhatsAppGroup[]> {
+export async function getGroups(forceRefresh = false): Promise<WhatsAppGroup[]> {
   if (!BASE) return [];
   try {
-    const res = await fetch(`${BASE}/groups`, { method: "GET", headers: getHeaders() });
+    const url = forceRefresh ? `${BASE}/groups?refresh=1` : `${BASE}/groups`;
+    const res = await fetch(url, { method: "GET", headers: getHeaders() });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data?.groups) ? data.groups : [];

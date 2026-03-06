@@ -80,6 +80,7 @@ export function AlteracaoVisaoGeralTab() {
   const waAutoConnectTried = useRef(false);
   const lastQrFetchTime = useRef(0);
   const waQrRef = useRef<string | null>(null);
+  const waGroupsFilledRef = useRef(false);
 
   const [form, setForm] = useState({
     razao_social: "",
@@ -165,17 +166,28 @@ export function AlteracaoVisaoGeralTab() {
     if (waConnected === true) {
       setWaQr(null);
       setWaApiError(null);
-      const load = () =>
-        getGroups().then((g) => {
+      setWaGroupsLoading(true);
+      waGroupsFilledRef.current = false;
+      const load = (isRetry: boolean) =>
+        getGroups(false).then((g) => {
+          if (g.length > 0) waGroupsFilledRef.current = true;
           setWaGroups(g);
+          setWaGroupsLoading(false);
           const saved = localStorage.getItem(WA_GROUP_STORAGE_KEY);
           if (saved && g.some((gr) => gr.id === saved)) setWaGroupId(saved);
         });
-      load();
-      const t1 = setTimeout(load, 3000);
-      const t2 = setTimeout(load, 8000);
-      const t3 = setTimeout(load, 15000);
-      return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+      load(false);
+      // Retries rápidos se a primeira resposta vier vazia (cache ainda carregando no backend)
+      const t1 = setTimeout(() => {
+        if (!waGroupsFilledRef.current) load(true);
+      }, 1200);
+      const t2 = setTimeout(() => {
+        if (!waGroupsFilledRef.current) load(true);
+      }, 3500);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
     }
     if (waConnected !== false) return;
     setWaGroups([]);
@@ -784,7 +796,7 @@ export function AlteracaoVisaoGeralTab() {
                 onClick={async () => {
                   setWaGroupsLoading(true);
                   try {
-                    const g = await getGroups();
+                    const g = await getGroups(true);
                     setWaGroups(g);
                     const saved = localStorage.getItem(WA_GROUP_STORAGE_KEY);
                     if (saved && g.some((gr) => gr.id === saved)) setWaGroupId(saved);
