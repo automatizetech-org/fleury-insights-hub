@@ -92,9 +92,9 @@ Desktop.ini
 # =============================================================================
 # Arquivos pesados / binários (evitar commit acidental)
 # =============================================================================
-# Descomente se não quiser versionar documentos na pasta public:
-# public/contratos/*.docx
-# public/contratos/*.pdf
+# Documentos na pasta public (não versionar para não aparecer em changes):
+public/contratos/*.docx
+public/contratos/*.pdf
 *.zip
 *.rar
 *.7z
