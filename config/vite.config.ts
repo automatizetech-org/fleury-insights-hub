@@ -19,6 +19,7 @@ if (fs.existsSync(envPath)) {
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   root: projectRoot,
+  envPrefix: "VITE_", // string explícita para evitar RegExp em loadEnv (Vite 5.4+)
   define: {
     "import.meta.env.SUPABASE_URL": JSON.stringify(process.env.SUPABASE_URL ?? ""),
     "import.meta.env.SUPABASE_ANON_KEY": JSON.stringify(process.env.SUPABASE_ANON_KEY ?? ""),
