@@ -722,7 +722,7 @@ export function AlteracaoVisaoGeralTab() {
               </Button>
             </div>
             <p className="text-sm text-muted-foreground">
-              Escaneie o QR Code com o WhatsApp (Dispositivos conectados). O QR é renovado automaticamente quando expirar. A sessão é mantida ao desconectar.
+              Escaneie o QR Code com o WhatsApp (Dispositivos conectados). O QR é renovado automaticamente quando expirar. Ao clicar em Desconectar, um novo QR será gerado para reconectar.
             </p>
             {waQr ? (
               <img
@@ -734,7 +734,7 @@ export function AlteracaoVisaoGeralTab() {
             ) : (
               <div className="w-64 h-64 border border-dashed border-border rounded-lg flex flex-col items-center justify-center gap-2 bg-muted/30 p-4">
                 <QrCode className="h-12 w-12 text-muted-foreground" />
-                <p className="text-xs text-muted-foreground text-center">Aguardando QR. Inicie o backend (npm run dev ou node server.js em backend/whatsapp-emissor). Se desconectou no celular, clique em Conectar acima para gerar um novo QR.</p>
+                <p className="text-xs text-muted-foreground text-center">Aguardando QR. Se o backend estiver rodando, o QR aparecerá aqui em instantes. Se acabou de desconectar, aguarde o novo QR ser gerado.</p>
               </div>
             )}
           </div>
@@ -757,7 +757,13 @@ export function AlteracaoVisaoGeralTab() {
                       setWaQr(null);
                       setWaGroups([]);
                       setWaGroupId("");
-                      toast.success("Desconectado. Sessão mantida — use Conectar para reconectar.");
+                      lastQrFetchTime.current = 0;
+                      waQrRef.current = null;
+                      toast.success("Desconectado. Gerando novo QR para reconectar...");
+                      // Solicita novo QR ao backend (ou aguarda restart do PM2); o poll vai exibir o QR em seguida
+                      setTimeout(() => {
+                        connectWhatsApp().then(() => {});
+                      }, 2000);
                     } else toast.error(r.error || "Falha ao desconectar");
                   } finally {
                     setWaDisconnecting(false);

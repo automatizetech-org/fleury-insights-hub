@@ -453,9 +453,22 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/disconnect" && req.method === "POST") {
+    const restartOnDisconnect = process.env.WA_RESTART_ON_DISCONNECT === "1";
     disconnectClient({ clearSession: true })
-      .then(() => sendJson(res, 200, { ok: true }))
-      .catch(() => sendJson(res, 200, { ok: true }));
+      .then(() => {
+        sendJson(res, 200, { ok: true });
+        if (restartOnDisconnect) {
+          console.log("[INFO] WA_RESTART_ON_DISCONNECT=1 — encerrando processo para PM2 reiniciar e gerar novo QR.");
+          setTimeout(() => process.exit(0), 1500);
+        } else {
+          console.log("[INFO] Iniciando cliente para gerar novo QR após desconexão.");
+          startClient().catch((e) => console.error("[ERRO] startClient após disconnect:", e && e.message ? e.message : e));
+        }
+      })
+      .catch(() => {
+        sendJson(res, 200, { ok: true });
+        if (!restartOnDisconnect) startClient().catch(() => {});
+      });
     return;
   }
 

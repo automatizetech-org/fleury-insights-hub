@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:vite\" \"npm run dev:wa\"",
     "dev:vite": "vite --config config/vite.config.ts",
-    "dev:wa": "cd backend/whatsapp-emissor && node server.js",
+    "dev:wa": "cd backend/whatsapp-emissor && node launcher.js",
     "icons:generate": "node scripts/generate-pwa-icons.mjs",
     "build": "vite --version && vite build --config config/vite.config.ts",
     "build:dev": "vite build --mode development --config config/vite.config.ts",
