@@ -1,6 +1,6 @@
 /**
  * PM2: WhatsApp emissor com restart automático ao desconectar.
- * Uso: na pasta do projeto:
+ * Uso: na pasta backend:
  *   pm2 start ecosystem.config.cjs
  *
  * Com WA_RESTART_ON_DISCONNECT=1, ao receber POST /disconnect o processo
@@ -12,7 +12,7 @@ module.exports = {
     {
       name: "whatsapp-emissor",
       script: "server.js",
-      cwd: "./backend/whatsapp-emissor",
+      cwd: "./whatsapp-emissor",
       env: {
         WA_RESTART_ON_DISCONNECT: "1",
       },

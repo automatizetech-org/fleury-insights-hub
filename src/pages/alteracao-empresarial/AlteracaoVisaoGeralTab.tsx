@@ -29,6 +29,7 @@ import {
   formatAlteracaoMessage,
   getConnectionStatus,
   getQrImage,
+  getQrImageUrlWithTimestamp,
   getGroups,
   sendToGroup,
   connectWhatsApp,
@@ -81,6 +82,7 @@ export function AlteracaoVisaoGeralTab() {
   const lastQrFetchTime = useRef(0);
   const waQrRef = useRef<string | null>(null);
   const waGroupsFilledRef = useRef(false);
+  const [qrUrlKey, setQrUrlKey] = useState(0);
 
   const [form, setForm] = useState({
     razao_social: "",
@@ -220,7 +222,14 @@ export function AlteracaoVisaoGeralTab() {
       }
     };
     tick();
-    const id = setInterval(tick, 6000);
+    const id = setInterval(tick, 3000);
+    return () => clearInterval(id);
+  }, [waConnected]);
+
+  // Atualiza a URL direta do QR a cada 4s quando desconectado (fallback para exibir a imagem mesmo se getQrImage falhar)
+  useEffect(() => {
+    if (waConnected !== false) return;
+    const id = setInterval(() => setQrUrlKey((k) => k + 1), 4000);
     return () => clearInterval(id);
   }, [waConnected]);
 
@@ -727,6 +736,14 @@ export function AlteracaoVisaoGeralTab() {
             {waQr ? (
               <img
                 src={waQr}
+                alt="QR Code WhatsApp Web"
+                className="w-[280px] h-[280px] border border-border rounded-lg bg-white object-contain p-2"
+                style={{ imageRendering: "crisp-edges" }}
+              />
+            ) : getQrImageUrlWithTimestamp(qrUrlKey) ? (
+              <img
+                key={qrUrlKey}
+                src={getQrImageUrlWithTimestamp(qrUrlKey)}
                 alt="QR Code WhatsApp Web"
                 className="w-[280px] h-[280px] border border-border rounded-lg bg-white object-contain p-2"
                 style={{ imageRendering: "crisp-edges" }}

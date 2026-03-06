@@ -72,6 +72,12 @@ export function getQrImageUrl(): string {
   return `${BASE.replace(/\/$/, "")}/qr.png?t=${Date.now()}`;
 }
 
+/** URL do QR com timestamp controlado (para refresh periódico no img). */
+export function getQrImageUrlWithTimestamp(ts: number): string {
+  if (!BASE) return "";
+  return `${BASE.replace(/\/$/, "")}/qr.png?t=${ts}`;
+}
+
 export async function getGroups(forceRefresh = false): Promise<WhatsAppGroup[]> {
   if (!BASE) return [];
   try {
