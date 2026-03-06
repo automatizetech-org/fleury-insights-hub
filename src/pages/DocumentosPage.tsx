@@ -49,14 +49,14 @@ export default function DocumentosPage() {
       </div>
 
       <GlassCard className="overflow-hidden">
-        <div className="p-4 border-b border-border flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-muted-foreground" />
+        <div className="p-3 sm:p-4 border-b border-border flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
             {tipoFilters.map((tipo) => (
               <button
                 key={tipo}
                 onClick={() => setFilterTipo(tipo)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all touch-manipulation min-h-[36px] ${
                   filterTipo === tipo
                     ? "bg-primary text-primary-foreground"
                     : "border border-border hover:bg-muted"
@@ -66,27 +66,27 @@ export default function DocumentosPage() {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="relative min-w-0">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar empresa ou CNPJ..."
-                className="rounded-lg border border-border bg-background pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-56"
+                className="rounded-lg border border-border bg-background pl-8 pr-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-full min-w-0 sm:w-56"
               />
             </div>
             <button
               onClick={() => exportToCsv(filtered)}
-              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
+              className="flex items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 sm:py-1.5 text-xs font-medium hover:bg-muted transition-colors touch-manipulation min-h-[36px]"
             >
-              <Download className="h-3 w-3" />
+              <Download className="h-3 w-3 shrink-0" />
               CSV
             </button>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border bg-muted/50">

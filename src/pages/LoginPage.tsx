@@ -82,13 +82,13 @@ export default function LoginPage() {
       </div>
 
       <div className="relative w-full max-w-md bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-2xl md:rounded-3xl shadow-2xl border border-white/20 dark:border-slate-800/50 p-6 md:p-8 animate-in slide-in-from-bottom-4">
-        <div className="flex items-center justify-center gap-2 md:gap-3 mb-6 md:mb-8">
+        <div className="flex flex-col sm:flex-row items-center gap-2 md:gap-3 mb-6 md:mb-8 min-w-0">
           <div className="h-12 w-12 md:h-14 md:w-14 rounded-xl md:rounded-2xl overflow-hidden ring-2 ring-[#2563EB]/20 zoom-in-anim animate-in flex-shrink-0 flex items-center justify-center bg-white/80 dark:bg-slate-800/80">
             <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
           </div>
-          <div className="text-left">
+          <div className="text-center sm:text-left min-w-0">
             <div className="text-xs md:text-sm text-gray-500 dark:text-gray-400 font-medium">Fleury • Dashboard Web</div>
-            <h1 className="text-xl md:text-2xl font-extrabold text-gray-900 dark:text-white">Login</h1>
+            <h1 className="text-xl md:text-2xl font-extrabold text-gray-900 dark:text-white truncate">Login</h1>
           </div>
         </div>
 

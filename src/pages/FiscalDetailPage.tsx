@@ -107,18 +107,18 @@ export default function FiscalDetailPage() {
       </GlassCard>
 
       <GlassCard className="overflow-hidden">
-        <div className="p-4 border-b border-border flex items-center justify-between flex-wrap gap-2">
+        <div className="p-3 sm:p-4 border-b border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <h3 className="text-sm font-semibold font-display">Documentos</h3>
-          <div className="flex gap-2">
+          <div className="flex gap-2 min-w-0">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar por empresa ou chave..."
-              className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-48 sm:w-64 max-w-full"
+              className="rounded-lg border border-border bg-background px-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-full min-w-0 sm:w-48 sm:max-w-[16rem]"
             />
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
           {isLoading ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Carregando...</div>
           ) : filteredDocuments.length === 0 ? (

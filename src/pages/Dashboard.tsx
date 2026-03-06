@@ -55,24 +55,24 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-2xl card-3d-elevated p-8">
-        <div className="absolute top-4 right-8 w-32 h-32 bg-primary/5 rounded-full blur-2xl animate-float" />
-        <div className="absolute bottom-4 left-12 w-24 h-24 bg-accent/5 rounded-full blur-2xl animate-float" style={{ animationDelay: "2s" }} />
-        <div className="relative flex items-center gap-6">
-          <div className="relative">
+      <div className="relative overflow-hidden rounded-2xl card-3d-elevated p-4 sm:p-6 md:p-8">
+        <div className="absolute top-4 right-4 sm:right-8 w-24 h-24 sm:w-32 sm:h-32 bg-primary/5 rounded-full blur-2xl animate-float" />
+        <div className="absolute bottom-4 left-4 sm:left-12 w-16 h-16 sm:w-24 sm:h-24 bg-accent/5 rounded-full blur-2xl animate-float" style={{ animationDelay: "2s" }} />
+        <div className="relative flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6 min-w-0">
+          <div className="relative shrink-0">
             <div className="absolute inset-0 rounded-2xl bg-primary/20 blur-xl scale-150 animate-pulse-slow" />
-            <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-accent shadow-lg animate-logo-float">
-              <BarChart3 className="h-8 w-8 text-primary-foreground" />
+            <div className="relative flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-accent shadow-lg animate-logo-float">
+              <BarChart3 className="h-7 w-7 sm:h-8 sm:w-8 text-primary-foreground" />
             </div>
           </div>
-          <div>
-            <div className="flex items-center gap-3 mb-1">
-              <h1 className="text-3xl font-bold font-display text-gradient-animated">Fleury Analytics</h1>
-              <span className="flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-semibold text-primary">
-                <Sparkles className="h-3 w-3" /> Insights em Tempo Real
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-1">
+              <h1 className="text-xl sm:text-2xl md:text-3xl font-bold font-display text-gradient-animated truncate min-w-0">Fleury Analytics</h1>
+              <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-semibold text-primary shrink-0">
+                <Sparkles className="h-3 w-3 shrink-0" /> Insights em Tempo Real
               </span>
             </div>
-            <p className="text-sm text-muted-foreground">Plataforma de Análise e Gestão Empresarial</p>
+            <p className="text-xs sm:text-sm text-muted-foreground">Plataforma de Análise e Gestão Empresarial</p>
           </div>
         </div>
       </div>
@@ -135,17 +135,17 @@ export default function Dashboard() {
               : recentEvents.length === 0
                 ? "Nenhum documento recente."
                 : recentEvents.map((event) => (
-                    <div key={event.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
-                      <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <div key={event.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 py-3 border-b border-border last:border-0 min-w-0">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                           <FileText className="h-3.5 w-3.5 text-primary" />
                         </div>
-                        <div>
-                          <p className="text-xs font-medium">{"companyName" in event ? String(event.companyName) || "—" : "—"}</p>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium truncate">{"companyName" in event ? String(event.companyName) || "—" : "—"}</p>
                           <p className="text-[10px] text-muted-foreground">{event.type}</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-2 pl-11 sm:pl-0">
                         <StatusBadge status={event.status as "validado" | "novo" | "divergente" | "processando" | "pendente"} />
                         <span className="text-[10px] text-muted-foreground">
                           {event.created_at ? formatDistanceToNow(new Date(event.created_at), { addSuffix: true, locale: ptBR }) : "—"}

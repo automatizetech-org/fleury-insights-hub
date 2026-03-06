@@ -8,7 +8,8 @@ const SUPABASE_ANON_KEY =
 
 const hasConfig = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY)
 
-if (import.meta.env.DEV && !hasConfig) {
+// Avisa só em caso de configuração incompleta (uma variável definida e outra não)
+if (import.meta.env.DEV && (SUPABASE_URL || SUPABASE_ANON_KEY) && !hasConfig) {
   console.warn(
     "Supabase: defina SUPABASE_URL e SUPABASE_ANON_KEY no .env (copie de .env.example)."
   )

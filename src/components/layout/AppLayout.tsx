@@ -59,25 +59,25 @@ export function AppLayout({ children }: { children: ReactNode }) {
       </div>
 
       <main className="min-w-0 w-full flex flex-col overflow-x-hidden relative min-h-0">
-        <header className="flex-shrink-0 h-14 flex items-center justify-between gap-2 border-b border-gray-200 dark:border-slate-700/80 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm pl-4 md:pl-4 pr-4 md:pr-6">
+        <header className="flex-shrink-0 h-14 flex items-center justify-between gap-2 border-b border-gray-200 dark:border-slate-700/80 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm pl-14 sm:pl-4 md:pl-4 pr-4 md:pr-6 min-w-0">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
-            className="hidden md:flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 dark:text-slate-400 hover:text-[#2563EB] hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors"
+            className="hidden md:flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 dark:text-slate-400 hover:text-[#2563EB] hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors shrink-0"
             aria-label={sidebarOpen ? "Recolher painel lateral" : "Exibir painel lateral"}
           >
             {sidebarOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
           </button>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0 justify-end">
             <button
               onClick={() => setDark(!dark)}
-              className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors"
+              className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors shrink-0 touch-manipulation"
               aria-label="Alternar tema"
             >
               {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
             <button
               onClick={handleSignOut}
-              className="flex items-center justify-center h-9 px-4 rounded-lg text-sm font-medium text-gray-600 dark:text-slate-300 hover:text-[#2563EB] hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors"
+              className="flex items-center justify-center h-9 px-3 sm:px-4 rounded-lg text-sm font-medium text-gray-600 dark:text-slate-300 hover:text-[#2563EB] hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors shrink-0 touch-manipulation"
             >
               Sair
             </button>
@@ -86,7 +86,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
         <div className="flex-1 overflow-y-auto min-h-0">
           <CommandPalette />
-          <div className="p-4 md:p-6 w-full min-w-0 max-w-none animate-fade-in-up box-border">
+          <div className="p-3 sm:p-4 md:p-6 w-full min-w-0 max-w-none animate-fade-in-up box-border">
             {noAccess ? <Navigate to="/dashboard" replace /> : children}
           </div>
         </div>
