@@ -8,7 +8,8 @@ const projectRoot = path.resolve(__dirname, "..");
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   root: projectRoot,
-  envPrefix: /^(SUPABASE_|SERVER_|WHATSAPP_)/,
+  // String: prefixo para variáveis expostas ao client. '' = todas (evita RegExp que quebra em alguns Node/Vite).
+  envPrefix: "",
   css: {
     postcss: path.resolve(projectRoot, "config/postcss.config.js"),
   },
