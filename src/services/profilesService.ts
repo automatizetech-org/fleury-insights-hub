@@ -32,8 +32,8 @@ export async function updateProfile(
 
 export type AdminUser = Profile & { email: string | null }
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? ""
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? ""
+const SUPABASE_URL = import.meta.env.SUPABASE_URL ?? ""
+const ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
 
 export async function getUsersForAdmin(): Promise<AdminUser[]> {
   const { data: { session } } = await supabase.auth.getSession()

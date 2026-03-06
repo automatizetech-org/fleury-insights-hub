@@ -13,6 +13,10 @@ dist-ssr
 # =============================================================================
 .env
 .env.local
+.env.development
+.env.development.local
+.env.production
+.env.production.local
 .env.*.local
 !.env.example
 
@@ -38,10 +42,18 @@ lerna-debug.log*
 .vite
 
 # =============================================================================
-# WhatsApp (backend) — sessão e cache (muito pesado)
+# WhatsApp (backend) — sessão e cache (sensível e pesado)
 # =============================================================================
 backend/whatsapp-emissor/.wwebjs_auth/
 backend/whatsapp-emissor/.wwebjs_cache/
+backend/whatsapp-emissor/data/
+backend/whatsapp-emissor/**/session/
+backend/whatsapp-emissor/**/Default/
+backend/whatsapp-emissor/**/*.ldb
+backend/whatsapp-emissor/**/Cookies
+backend/whatsapp-emissor/**/LOCK
+backend/whatsapp-emissor/**/LOG
+backend/whatsapp-emissor/**/LOG.old
 
 # =============================================================================
 # Testes e cobertura
@@ -88,9 +100,25 @@ Desktop.ini
 *.7z
 *.tar.gz
 *.tgz
+*.pfx
+*.p12
+*.key
+*.pem
+*.exe
+*.msi
+
+# Robô NFS / instaladores e dados (arquivos muito grandes)
+docs/fiscal/nfs/**/data/
+docs/fiscal/**/Instalador/
+docs/fiscal/**/Output/
+**/Automacao_*_Setup.exe
 
 # =============================================================================
 # Deploy / plataformas (opcional)
 # =============================================================================
 .vercel
 .netlify
+
+# Supabase local (se usar supabase start)
+supabase/.branches
+supabase/.temp

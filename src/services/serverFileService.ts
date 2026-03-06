@@ -6,7 +6,7 @@
 
 import { supabase } from "./supabaseClient";
 
-const SERVER_API_URL = import.meta.env.VITE_SERVER_API_URL?.replace(/\/$/, "") ?? "";
+const SERVER_API_URL = import.meta.env.SERVER_API_URL?.replace(/\/$/, "") ?? "";
 
 export function getServerApiUrl(): string {
   return SERVER_API_URL;
@@ -22,7 +22,7 @@ export function hasServerApi(): boolean {
  */
 export async function downloadFiscalDocument(documentId: string, suggestedName?: string): Promise<void> {
   if (!SERVER_API_URL) {
-    console.warn("VITE_SERVER_API_URL não configurada; download não disponível.");
+    console.warn("SERVER_API_URL não configurada; download não disponível.");
     return;
   }
   const { data: { session } } = await supabase.auth.getSession();
@@ -30,9 +30,11 @@ export async function downloadFiscalDocument(documentId: string, suggestedName?:
     throw new Error("Faça login para baixar o arquivo.");
   }
   const url = `${SERVER_API_URL}/api/fiscal-documents/${encodeURIComponent(documentId)}/download`;
+  const headers: Record<string, string> = { Authorization: `Bearer ${session.access_token}` };
+  if (SERVER_API_URL.toLowerCase().includes("ngrok")) headers["ngrok-skip-browser-warning"] = "true";
   const res = await fetch(url, {
     method: "GET",
-    headers: { Authorization: `Bearer ${session.access_token}` },
+    headers,
   });
   if (!res.ok) {
     if (res.status === 403) throw new Error("Sem permissão para baixar este documento.");

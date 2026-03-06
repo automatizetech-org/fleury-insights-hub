@@ -133,10 +133,14 @@ export function AlteracaoVisaoGeralTab() {
 
   useEffect(() => {
     let cancelled = false;
+    const timeout = setTimeout(() => {
+      if (!cancelled) setWaConnected(false);
+    }, 8000);
     getConnectionStatus()
       .then((s) => { if (!cancelled) setWaConnected(s.connected); })
-      .catch(() => { if (!cancelled) setWaConnected(false); });
-    return () => { cancelled = true; };
+      .catch(() => { if (!cancelled) setWaConnected(false); })
+      .finally(() => { clearTimeout(timeout); });
+    return () => { cancelled = true; clearTimeout(timeout); };
   }, []);
 
   // Ao abrir a página: tenta conectar automaticamente se estiver desconectado (e API acessível). Se não conseguir, o polling traz o QR.
@@ -175,15 +179,15 @@ export function AlteracaoVisaoGeralTab() {
         const [status, qr] = await Promise.all([getConnectionStatus(), getQrImage()]);
         setWaApiError(null);
         setWaConnected(status.connected);
-        setWaQr(qr);
+        setWaQr(status.connected ? null : qr);
       } catch {
-        setWaApiError("Servidor WhatsApp inacessível. Inicie: cd backend/whatsapp-emissor && node server.js");
+        setWaApiError("Servidor inacessível. Confira: 1) .env com WHATSAPP_API=http://IP_DA_VM:3010 2) Site HTTPS só funciona se a API for HTTPS 3) Firewall da VM com porta 3010 liberada.");
         setWaConnected(false);
         setWaQr(null);
       }
     };
     tick();
-    const id = setInterval(tick, 5000);
+    const id = setInterval(tick, 3000);
     return () => clearInterval(id);
   }, [waConnected]);
 
@@ -672,6 +676,7 @@ export function AlteracaoVisaoGeralTab() {
                     if (r.ok) {
                       const s = await getConnectionStatus();
                       setWaConnected(s.connected);
+                      if (s.connected) setWaQr(null);
                       if (!s.connected) toast.info("Cliente iniciando. Aguarde o QR ou a reconexão pela sessão.");
                     } else toast.error(r.error || "Falha ao conectar");
                   } finally {
@@ -696,7 +701,7 @@ export function AlteracaoVisaoGeralTab() {
             ) : (
               <div className="w-64 h-64 border border-dashed border-border rounded-lg flex flex-col items-center justify-center gap-2 bg-muted/30 p-4">
                 <QrCode className="h-12 w-12 text-muted-foreground" />
-                <p className="text-xs text-muted-foreground text-center">Aguardando QR. Verifique se o servidor (node server.js) está rodando em backend/whatsapp-emissor.</p>
+                <p className="text-xs text-muted-foreground text-center">Aguardando QR. Inicie o backend (npm run dev ou node server.js em backend/whatsapp-emissor). Se desconectou no celular, clique em Conectar acima para gerar um novo QR.</p>
               </div>
             )}
           </div>

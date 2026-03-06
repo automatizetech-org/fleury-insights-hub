@@ -1,10 +1,10 @@
 # API do servidor — Contrato central
 
-Uma **única API** (mesma base URL definida em [../env.example](../env.example)) atende todos os tipos de documento. Cada tipo (fiscal NFe/NFC, NFS, guias DP etc.) usa um endpoint e uma convenção de `file_path`; os robôs gravam no disco e no Supabase seguindo a pasta correspondente em `docs/`.
+Uma **única API** (mesma base URL definida em [../env.example](../env.example), parametrizada pelo IP em [../SERVER_CONFIG.md](../SERVER_CONFIG.md)) atende todos os tipos de documento. Cada tipo (fiscal NFe/NFC, NFS, guias DP etc.) usa um endpoint e uma convenção de `file_path`; os robôs gravam no disco e no Supabase seguindo a pasta correspondente em `docs/`.
 
 ## Variável de ambiente
 
-- **Robôs e frontend:** usar a URL definida em **`docs/env.example`** (`SERVER_API_URL` / `VITE_SERVER_API_URL`). O frontend precisa ter `VITE_SERVER_API_URL` no `.env` da **raiz do projeto** (copie de `docs/env.example`).
+- **Robôs e frontend:** usar a URL definida em **`docs/env.example`** (`SERVER_API_URL`). O frontend precisa ter `SERVER_API_URL` e `WHATSAPP_API` no `.env` da **raiz do projeto** (valores centralizados em `docs/env.example`, IP do servidor em `docs/SERVER_CONFIG.md`).
 
 ## Endpoints (todos sob a mesma base URL)
 

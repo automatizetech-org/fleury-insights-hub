@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useState, useMemo, useRef } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { getCompaniesForUser, updateCompany } from "@/services/companiesService"
@@ -19,6 +19,25 @@ import { cn } from "@/utils"
 
 type FilterStatus = "active" | "inactive" | "all"
 
+type CompanyWithCert = Company & { auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null }
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result
+      if (result instanceof ArrayBuffer) {
+        const bytes = new Uint8Array(result)
+        let binary = ""
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+        resolve(btoa(binary))
+      } else reject(new Error("Leitura do arquivo falhou"))
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsArrayBuffer(file)
+  })
+}
+
 export default function EmpresasPage() {
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState<FilterStatus>("active")
@@ -27,6 +46,11 @@ export default function EmpresasPage() {
   const [editName, setEditName] = useState("")
   const [editDocument, setEditDocument] = useState("")
   const [editActive, setEditActive] = useState(true)
+  const [editUseCertificate, setEditUseCertificate] = useState(false)
+  const [editCertReplacing, setEditCertReplacing] = useState(false)
+  const [editCertFile, setEditCertFile] = useState<File | null>(null)
+  const [editCertPassword, setEditCertPassword] = useState("")
+  const editCertInputRef = useRef<HTMLInputElement>(null)
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState("")
 
@@ -49,7 +73,12 @@ export default function EmpresasPage() {
     setEditingCompany(c)
     setEditName(c.name)
     setEditDocument(c.document ?? "")
-    setEditActive((c as { active?: boolean }).active !== false)
+    setEditActive((c as CompanyWithCert).active !== false)
+    const withCert = c as CompanyWithCert
+    setEditUseCertificate(!!withCert.cert_blob_b64)
+    setEditCertReplacing(false)
+    setEditCertFile(null)
+    setEditCertPassword("")
     setEditError("")
   }
 
@@ -57,13 +86,30 @@ export default function EmpresasPage() {
     e.preventDefault()
     if (!editingCompany) return
     setEditError("")
+    if (editUseCertificate && editCertReplacing && (!editCertFile || !editCertPassword.trim())) {
+      setEditError("Selecione o arquivo .pfx e informe a senha do certificado.")
+      return
+    }
     setEditSaving(true)
     try {
-      await updateCompany(editingCompany.id, {
+      const updates: Parameters<typeof updateCompany>[1] = {
         name: editName.trim(),
         document: editDocument.trim() || null,
         active: editActive,
-      })
+      }
+      if (!editUseCertificate) {
+        updates.auth_mode = null
+        updates.cert_blob_b64 = null
+        updates.cert_password = null
+      } else if (editCertReplacing && editCertFile && editCertPassword.trim()) {
+        updates.auth_mode = "certificate"
+        updates.cert_blob_b64 = await fileToBase64(editCertFile)
+        updates.cert_password = editCertPassword.trim()
+      } else if (editUseCertificate && (editingCompany as CompanyWithCert).cert_blob_b64) {
+        updates.auth_mode = "certificate"
+        // mantém certificado existente (não envia cert_blob_b64/cert_password)
+      }
+      await updateCompany(editingCompany.id, updates)
       queryClient.invalidateQueries({ queryKey: ["companies-list"] })
       queryClient.invalidateQueries({ queryKey: ["admin-companies"] })
       setEditingCompany(null)
@@ -210,6 +256,71 @@ export default function EmpresasPage() {
                 className="rounded border-input"
               />
               <Label htmlFor="emp-edit-active">Ativa</Label>
+            </div>
+            <div className="space-y-3 pt-2 border-t border-border">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="emp-edit-cert"
+                  checked={editUseCertificate}
+                  onChange={(e) => {
+                    setEditUseCertificate(e.target.checked)
+                    if (!e.target.checked) setEditCertReplacing(false)
+                  }}
+                  disabled={editSaving}
+                  className="rounded border-input"
+                />
+                <Label htmlFor="emp-edit-cert" className="font-normal cursor-pointer">Certificado digital (NFS-e)</Label>
+              </div>
+              {editUseCertificate && (
+                <div className="pl-4 border-l-2 border-border space-y-2">
+                  {(editingCompany as CompanyWithCert).cert_blob_b64 && !editCertReplacing ? (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm text-muted-foreground">Certificado cadastrado</span>
+                      <Button type="button" variant="outline" size="sm" onClick={() => { setEditCertReplacing(true); setEditCertFile(null); setEditCertPassword(""); editCertInputRef.current?.click(); }} disabled={editSaving}>
+                        Substituir
+                      </Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setEditUseCertificate(false)} disabled={editSaving}>
+                        Remover
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        ref={editCertInputRef}
+                        type="file"
+                        accept=".pfx"
+                        onChange={(e) => setEditCertFile(e.target.files?.[0] ?? null)}
+                        className="hidden"
+                      />
+                      <div className="space-y-1">
+                        <Label>Arquivo .pfx</Label>
+                        <div className="flex gap-2 items-center">
+                          <Button type="button" variant="outline" size="sm" onClick={() => editCertInputRef.current?.click()} disabled={editSaving}>
+                            {editCertFile ? editCertFile.name : "Selecionar"}
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Senha do certificado</Label>
+                        <Input
+                          type="password"
+                          value={editCertPassword}
+                          onChange={(e) => setEditCertPassword(e.target.value)}
+                          placeholder="Senha do .pfx"
+                          disabled={editSaving}
+                          autoComplete="off"
+                        />
+                      </div>
+                      {(editingCompany as CompanyWithCert).cert_blob_b64 && (
+                        <Button type="button" variant="ghost" size="sm" onClick={() => { setEditCertReplacing(false); setEditCertFile(null); setEditCertPassword(""); }} disabled={editSaving}>
+                          Manter certificado atual
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
             {editError && <p className="text-sm text-destructive">{editError}</p>}
             <DialogFooter>

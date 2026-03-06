@@ -5,8 +5,8 @@ import { supabase } from "@/services/supabaseClient"
 import { getProfile } from "@/services/profilesService"
 import logoUrl from "@/assets/images/logo.png"
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? ""
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? ""
+const SUPABASE_URL = import.meta.env.SUPABASE_URL ?? ""
+const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -60,7 +60,7 @@ export default function LoginPage() {
       if (err && typeof err === "object" && "message" in err) {
         const msg = String((err as { message: string }).message)
         if (msg === "Failed to fetch" || msg.includes("fetch")) {
-          message = "Não foi possível contactar o servidor. Confira o .env (VITE_SUPABASE_URL) e publique a Edge Function 'auth' no Supabase."
+          message = "Não foi possível contactar o servidor. Confira o .env (SUPABASE_URL) e publique a Edge Function 'auth' no Supabase."
         } else {
           message = msg
         }

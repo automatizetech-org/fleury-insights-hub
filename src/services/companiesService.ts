@@ -10,7 +10,13 @@ export async function getCompaniesForUser(activeFilter?: "active" | "inactive" |
   return (data ?? []) as Company[]
 }
 
-export async function createCompany(params: { name: string; document?: string | null }) {
+export async function createCompany(params: {
+  name: string
+  document?: string | null
+  auth_mode?: "password" | "certificate" | null
+  cert_blob_b64?: string | null
+  cert_password?: string | null
+}) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error("Não autenticado")
   const { data, error } = await supabase
@@ -18,6 +24,9 @@ export async function createCompany(params: { name: string; document?: string | 
     .insert({
       name: params.name,
       document: params.document ?? null,
+      auth_mode: params.auth_mode ?? null,
+      cert_blob_b64: params.cert_blob_b64 ?? null,
+      cert_password: params.cert_password ?? null,
       created_by: user.id,
     })
     .select()
@@ -28,7 +37,14 @@ export async function createCompany(params: { name: string; document?: string | 
 
 export async function updateCompany(
   id: string,
-  updates: { name?: string; document?: string | null; active?: boolean }
+  updates: {
+    name?: string
+    document?: string | null
+    active?: boolean
+    auth_mode?: "password" | "certificate" | null
+    cert_blob_b64?: string | null
+    cert_password?: string | null
+  }
 ) {
   const { data, error } = await supabase
     .from("companies")

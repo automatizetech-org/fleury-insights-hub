@@ -4,14 +4,19 @@ Toda a documentação de **API, robôs e download de documentos** fica aqui, org
 
 ## Configuração central (use em todo o projeto)
 
-- **[env.example](./env.example)** — **Único .env de referência** para a URL da API.  
-  Robôs e o site devem usar o mesmo valor. No frontend, copie `VITE_SERVER_API_URL` para o `.env` na **raiz do projeto**.
+- **[env.example](./env.example)** — **Único .env de referência**: IP do servidor (`SERVER_HOST=192.168.50.9`), URL da API de arquivos e URL do backend WhatsApp.  
+  Robôs e o site devem usar os mesmos valores. No frontend, copie `SERVER_API_URL` e `WHATSAPP_API` para o `.env` na **raiz do projeto**.
+
+- **[SERVER_CONFIG.md](./SERVER_CONFIG.md)** — Parâmetro único (IP do servidor), portas (3001 = API arquivos, 3010 = WhatsApp) e como trocar o IP ou usar túnel.
+
+- **[VERCEL_DEPLOY.md](./VERCEL_DEPLOY.md)** — Deploy do frontend na Vercel: o que sobe, variáveis de ambiente e uso com API/WhatsApp (URL pública).
 
 ## Estrutura de pastas
 
 ```
 docs/
-├── env.example          ← URL da API (centralizado)
+├── env.example          ← IP do servidor + URLs da API e WhatsApp (centralizado)
+├── SERVER_CONFIG.md     ← Parâmetros do servidor (IP, portas, como trocar)
 ├── README.md            ← este arquivo
 ├── api/                 ← Contrato da API e visão geral
 │   └── README.md
@@ -27,7 +32,7 @@ docs/
         └── darf/
 ```
 
-Cada subpasta (nfe-nfc, nfs, guias/fgts, guias/darf) tem sua própria configuração de **caminho no disco**, **tabela no Supabase** e **endpoint** que a API expõe. Tudo usa o mesmo `SERVER_API_URL` do [env.example](./env.example).
+Cada subpasta (nfe-nfc, nfs, guias/fgts, guias/darf) tem sua própria configuração de **caminho no disco**, **tabela no Supabase** e **endpoint** que a API expõe. Tudo usa o mesmo `SERVER_API_URL` do [env.example](./env.example) (derivado do IP em [SERVER_CONFIG.md](./SERVER_CONFIG.md)).
 
 ## Índice rápido
 

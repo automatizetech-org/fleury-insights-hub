@@ -2,7 +2,7 @@
  * Módulo WhatsApp Emissor — estrutura padronizada do projeto.
  * Local: backend/whatsapp-emissor
  * Responsabilidades: (a) conexão/sessão (b) geração de QR (c) listagem de grupos (d) envio via outbox (e) formatação de mensagem no front (services/whatsapp).
- * Frontend consome via VITE_WHATSAPP_API (server.js: GET /status, /qr, /groups, POST /send).
+ * Frontend consome via WHATSAPP_API (server.js: GET /status, /qr, /groups, POST /send).
  * Envio do formulário: apenas para o grupo selecionado (POST /send com groupId ou outbox com groupId).
  * Execução: node bot.js connect | disconnect | node server.js
  */

@@ -1,11 +1,21 @@
 /**
  * Cliente da API WhatsApp (QR, grupos, envio).
  * Servidor: backend/whatsapp-emissor/server.js — mesma lógica de conexão do WhatsApp_emissor.
- * Base URL: VITE_WHATSAPP_API (ex: http://localhost:3010)
+ * Base URL: WHATSAPP_API (ex: http://localhost:3010)
  * Endpoints: GET /status, GET /qr, GET /groups, POST /send { groupId, message } — envia apenas para o grupo selecionado.
  */
 
-const BASE = (import.meta as unknown as { env?: { VITE_WHATSAPP_API?: string } }).env?.VITE_WHATSAPP_API ?? "";
+const BASE = (import.meta as unknown as { env?: { WHATSAPP_API?: string } }).env?.WHATSAPP_API ?? "";
+
+/** Headers para requisições. Inclui header do ngrok para pular página de aviso quando a base for ngrok. */
+function getHeaders(extra?: HeadersInit): HeadersInit {
+  const base = BASE.toLowerCase();
+  const isNgrok = base.includes("ngrok");
+  return {
+    ...(extra as object),
+    ...(isNgrok ? { "ngrok-skip-browser-warning": "true" } : {}),
+  };
+}
 
 export interface WhatsAppGroup {
   id: string;
@@ -19,7 +29,7 @@ export interface ConnectionStatus {
 export async function getConnectionStatus(): Promise<ConnectionStatus> {
   if (!BASE) return { connected: false };
   try {
-    const res = await fetch(`${BASE}/status`, { method: "GET" });
+    const res = await fetch(`${BASE}/status`, { method: "GET", headers: getHeaders() });
     if (!res.ok) return { connected: false };
     const data = await res.json();
     return { connected: !!data?.connected };
@@ -28,18 +38,27 @@ export async function getConnectionStatus(): Promise<ConnectionStatus> {
   }
 }
 
-/** Retorna a imagem do QR atual (base64 data URL). Atualiza quando o whatsapp-web.js emite novo QR (~20s). */
+/** Retorna a imagem do QR atual (base64 data URL). Retorna null se já conectado. */
 export async function getQrImage(): Promise<string | null> {
   if (!BASE) return null;
   try {
-    const res = await fetch(`${BASE}/qr`, { method: "GET", cache: "no-store" });
+    const res = await fetch(`${BASE}/qr`, { method: "GET", cache: "no-store", headers: getHeaders() });
     if (!res.ok) return null;
     const data = await res.json();
+    if (data?.connected) return null;
     const qr = data?.qr ?? data?.image ?? null;
-    if (typeof qr !== "string") return null;
-    // Só retornar se for um data URL válido de imagem com conteúdo (evita mostrar placeholder quebrado)
-    if (!qr.startsWith("data:image/") || qr.length < 200) return null;
-    return qr;
+    if (typeof qr === "string" && qr.startsWith("data:image/") && qr.length >= 200) return qr;
+    const pngRes = await fetch(`${BASE.replace(/\/$/, "")}/qr.png?t=${Date.now()}`, { cache: "no-store", headers: getHeaders() });
+    if (pngRes.ok && pngRes.headers.get("content-type")?.startsWith("image/")) {
+      const blob = await pngRes.blob();
+      return await new Promise<string | null>((resolve) => {
+        const r = new FileReader();
+        r.onloadend = () => resolve(typeof r.result === "string" ? r.result : null);
+        r.onerror = () => resolve(null);
+        r.readAsDataURL(blob);
+      });
+    }
+    return null;
   } catch {
     return null;
   }
@@ -54,7 +73,7 @@ export function getQrImageUrl(): string {
 export async function getGroups(): Promise<WhatsAppGroup[]> {
   if (!BASE) return [];
   try {
-    const res = await fetch(`${BASE}/groups`, { method: "GET" });
+    const res = await fetch(`${BASE}/groups`, { method: "GET", headers: getHeaders() });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data?.groups) ? data.groups : [];
@@ -68,7 +87,7 @@ export async function sendToGroup(groupId: string, message: string): Promise<{ o
   try {
     const res = await fetch(`${BASE}/send`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ groupId, message }),
     });
     if (!res.ok) {
@@ -85,7 +104,7 @@ export async function sendToGroup(groupId: string, message: string): Promise<{ o
 export async function connectWhatsApp(): Promise<{ ok: boolean; error?: string }> {
   if (!BASE) return { ok: false, error: "API não configurada" };
   try {
-    const res = await fetch(`${BASE}/connect`, { method: "POST" });
+    const res = await fetch(`${BASE}/connect`, { method: "POST", headers: getHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: (data as { error?: string }).error ?? "Falha ao conectar" };
     return { ok: true };
@@ -98,7 +117,7 @@ export async function connectWhatsApp(): Promise<{ ok: boolean; error?: string }
 export async function disconnectWhatsApp(): Promise<{ ok: boolean; error?: string }> {
   if (!BASE) return { ok: false, error: "API não configurada" };
   try {
-    const res = await fetch(`${BASE}/disconnect`, { method: "POST" });
+    const res = await fetch(`${BASE}/disconnect`, { method: "POST", headers: getHeaders() });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       return { ok: false, error: (data as { error?: string }).error ?? "Falha ao desconectar" };

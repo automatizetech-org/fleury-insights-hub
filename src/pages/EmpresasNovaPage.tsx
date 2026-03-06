@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { createCompany } from "@/services/companiesService"
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies"
@@ -13,11 +13,34 @@ function onlyDigits(s: string) {
   return s.replace(/\D/g, "")
 }
 
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result
+      if (result instanceof ArrayBuffer) {
+        const bytes = new Uint8Array(result)
+        let binary = ""
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+        resolve(btoa(binary))
+      } else {
+        reject(new Error("Leitura do arquivo falhou"))
+      }
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsArrayBuffer(file)
+  })
+}
+
 export default function EmpresasNovaPage() {
   const navigate = useNavigate()
   const { setSelectedCompanyIds } = useSelectedCompanyIds()
   const [name, setName] = useState("")
   const [document, setDocument] = useState("")
+  const [useCertificate, setUseCertificate] = useState(false)
+  const [certFile, setCertFile] = useState<File | null>(null)
+  const [certPassword, setCertPassword] = useState("")
+  const certInputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [loadingCnpj, setLoadingCnpj] = useState(false)
@@ -50,11 +73,24 @@ export default function EmpresasNovaPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
+    if (useCertificate && (!certFile || !certPassword.trim())) {
+      setError("Ao usar certificado digital, selecione o arquivo .pfx e informe a senha.")
+      return
+    }
     setLoading(true)
     try {
+      let cert_blob_b64: string | null = null
+      let cert_password: string | null = null
+      if (useCertificate && certFile && certPassword.trim()) {
+        cert_blob_b64 = await fileToBase64(certFile)
+        cert_password = certPassword.trim()
+      }
       const company = await createCompany({
         name: name.trim(),
         document: document.trim() || null,
+        auth_mode: useCertificate ? "certificate" : null,
+        cert_blob_b64,
+        cert_password,
       })
       setSelectedCompanyIds([company.id])
       navigate("/dashboard", { replace: true })
@@ -112,6 +148,51 @@ export default function EmpresasNovaPage() {
             </div>
             <p className="text-xs text-muted-foreground">Se o nome estiver vazio, use Buscar para preencher pela Receita.</p>
           </div>
+
+          <div className="space-y-3 pt-2 border-t border-border">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="use-cert"
+                checked={useCertificate}
+                onChange={(e) => setUseCertificate(e.target.checked)}
+                disabled={loading}
+                className="rounded border-input"
+              />
+              <Label htmlFor="use-cert" className="font-normal cursor-pointer">Certificado digital (NFS-e)</Label>
+            </div>
+            <p className="text-xs text-muted-foreground">Opcional. Use para o robô NFS-e baixar notas com certificado A1 (.pfx) em vez de usuário/senha.</p>
+            {useCertificate && (
+              <div className="space-y-2 pl-4 border-l-2 border-border">
+                <div className="space-y-1">
+                  <Label>Arquivo .pfx</Label>
+                  <div className="flex gap-2 items-center">
+                    <Input
+                      ref={certInputRef}
+                      type="file"
+                      accept=".pfx"
+                      onChange={(e) => setCertFile(e.target.files?.[0] ?? null)}
+                      disabled={loading}
+                      className="flex-1"
+                    />
+                    {certFile && <span className="text-xs text-muted-foreground truncate max-w-[120px]">{certFile.name}</span>}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label>Senha do certificado</Label>
+                  <Input
+                    type="password"
+                    value={certPassword}
+                    onChange={(e) => setCertPassword(e.target.value)}
+                    placeholder="Senha do .pfx"
+                    disabled={loading}
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
           {error && (
             <p className="text-sm text-destructive">{error}</p>
           )}

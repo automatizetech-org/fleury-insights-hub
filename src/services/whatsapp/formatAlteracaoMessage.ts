@@ -1,7 +1,7 @@
 /**
  * Módulo WhatsApp — Alteração Empresarial.
  * Separação: formatação do texto do formulário | API (QR, grupos, envio).
- * Base URL da API: VITE_WHATSAPP_API (backend/whatsapp-emissor ou serviço equivalente).
+ * Base URL da API: WHATSAPP_API (backend/whatsapp-emissor ou serviço equivalente).
  */
 
 import { formatCNPJ, formatCurrencyBRL } from "@/lib/validators";

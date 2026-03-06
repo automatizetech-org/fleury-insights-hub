@@ -3,7 +3,8 @@
  * Expõe: GET /status, GET /qr, GET /groups, POST /send (envia apenas para o groupId informado).
  * Uso: node server.js (ou npm run dev:wa a partir da raiz).
  * Pastas (tudo dentro de backend/whatsapp-emissor): .wwebjs_auth, .wwebjs_cache, data/
- * Configure no frontend: VITE_WHATSAPP_API=http://localhost:3010
+ * NUNCA apagar .wwebjs_auth — é a sessão salva; sem ela sempre pede QR de novo.
+ * Configure no frontend: WHATSAPP_API=http://localhost:3010
  */
 
 const http = require("http");
@@ -138,10 +139,11 @@ function buildClient() {
     authStrategy: new LocalAuth({ dataPath: authFolder }),
     webVersionCache: { type: "local", path: cacheFolder },
     puppeteer: puppeteerOpts,
+    restartOnAuthFail: true,
   });
 
   c.on("qr", (qr) => {
-    // QR do evento = mesmo dado que a página WhatsApp Web exibe. Geramos PNG legível para a interface.
+    if (isReady || client !== c) return;
     const png = qrImage.imageSync(qr, {
       type: "png",
       size: 12,
@@ -155,7 +157,6 @@ function buildClient() {
       fs.writeFileSync(qrFile, png);
       console.log("QR_READY");
     } catch (_) {}
-    console.log("QR_BASE64:" + png.toString("base64"));
   });
 
   c.on("ready", () => {
@@ -167,9 +168,15 @@ function buildClient() {
     console.log("[OK] WhatsApp conectado.");
   });
 
-  c.on("disconnected", (reason) => {
+  c.on("disconnected", async (reason) => {
     isReady = false;
     lastQR = null;
+    if (client) {
+      try {
+        await client.destroy();
+      } catch (_) {}
+      client = null;
+    }
     console.log("[!] Desconectado:", reason || "");
   });
 
@@ -184,12 +191,14 @@ async function startClient() {
   if (client) return;
   isStarting = true;
   console.log("[INFO] Inicializando cliente WhatsApp...");
+  if (fs.existsSync(authFolder)) {
+    console.log("[INFO] Sessão salva encontrada — tentando restaurar (sem novo QR se válida).");
+  }
   try {
     if (fs.existsSync(qrFile)) fs.rmSync(qrFile, { force: true });
   } catch (_) {}
-  killOrphanChrome();
-  clearChromeLocks();
-  await new Promise((r) => setTimeout(r, 3500));
+  // Primeira tentativa: não matar Chrome nem limpar locks — deixa a sessão (LocalAuth) restaurar
+  await new Promise((r) => setTimeout(r, 3000));
   client = buildClient();
   try {
     await client.initialize();
@@ -198,11 +207,12 @@ async function startClient() {
     console.error("[ERRO] Falha ao inicializar:", msg);
     client = null;
     const isBrowserAlreadyRunning = /browser is already running|userDataDir/i.test(msg);
-    if (isBrowserAlreadyRunning) {
-      console.log("[INFO] Encerrando Chrome órfão e tentando novamente...");
+    const isContextDestroyed = /Execution context|context was destroyed/i.test(msg);
+    if (isBrowserAlreadyRunning || isContextDestroyed) {
+      console.log("[INFO] Encerrando Chrome órfão e tentando novamente em 8s...");
       killOrphanChrome();
       clearChromeLocks();
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise((r) => setTimeout(r, 8000));
     } else if (fs.existsSync(cacheFolder)) {
       try {
         fs.rmSync(cacheFolder, { recursive: true, force: true });
@@ -236,6 +246,21 @@ async function disconnectClient() {
   console.log("[OK] Cliente desconectado. Sessão mantida para reconectar.");
 }
 
+/** Marca o cliente como quebrado (ex.: Frame detachado, context destroyed) para permitir nova conexão e novo QR. */
+async function resetBrokenClient() {
+  if (!client) return;
+  isReady = false;
+  lastQR = null;
+  try {
+    await client.destroy();
+  } catch (_) {}
+  client = null;
+  try {
+    if (fs.existsSync(qrFile)) fs.rmSync(qrFile, { force: true });
+  } catch (_) {}
+  console.log("[!] Cliente reiniciado (sessão quebrada). Use Conectar no site para gerar novo QR.");
+}
+
 function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, {
     "Content-Type": "application/json",
@@ -247,7 +272,7 @@ function sendJson(res, statusCode, data) {
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
 }
 
 const server = http.createServer(async (req, res) => {
@@ -310,8 +335,16 @@ const server = http.createServer(async (req, res) => {
         }));
       sendJson(res, 200, { groups });
     } catch (e) {
-      console.error("[ERRO] Listar grupos:", e);
-      sendJson(res, 500, { groups: [], error: (e && e.message) || "Erro ao listar grupos" });
+      const msg = (e && e.message) ? e.message : String(e);
+      const isBroken = /detached|Execution context|context was destroyed/i.test(msg);
+      if (isBroken) {
+        resetBrokenClient().then(() => {
+          sendJson(res, 200, { groups: [], error: "Sessão quebrada. Clique em Conectar no site para gerar novo QR." });
+        });
+      } else {
+        console.error("[ERRO] Listar grupos:", e);
+        sendJson(res, 500, { groups: [], error: msg || "Erro ao listar grupos" });
+      }
     }
     return;
   }
@@ -379,7 +412,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`[API] WhatsApp API em http://localhost:${PORT}`);
-  console.log("[API] Configure no .env do frontend: VITE_WHATSAPP_API=http://localhost:" + PORT);
+  console.log("[API] Configure no .env do frontend: WHATSAPP_API=http://localhost:" + PORT);
   startClient().catch((e) => {
     console.error("[ERRO] Cliente não iniciou:", e);
   });
