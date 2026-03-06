@@ -5,6 +5,8 @@
  */
 
 import { formatCNPJ, formatCurrencyBRL } from "@/lib/validators";
+import { QUALIFICACAO_DISPLAY } from "@/services/bcbSalarioMinimoService";
+import type { QualificacaoPlano } from "@/services/bcbSalarioMinimoService";
 
 export interface WhatsAppFormPayload {
   razao_social: string;
@@ -26,7 +28,9 @@ export interface WhatsAppFormPayload {
   tipo_contabilidade: string;
   regime_contabil: string;
   possui_parcelamento: string;
-  tipo_parcelamento: string;
+  /** Um ou mais tipos de parcelamento (lista) */
+  tipo_parcelamento?: string;
+  tipos_parcelamento?: string[];
   valor_honorario: string;
   vencimento_honorario: string;
   data_primeiro_honorario: string;
@@ -55,7 +59,9 @@ export function formatAlteracaoMessage(form: WhatsAppFormPayload): string {
   lines.push("*1️⃣ Identificação da Empresa*");
   lines.push(`  _Razão Social:_\n  ${v(form.razao_social)}`);
   lines.push(`  _CNPJ:_ \`${formatCNPJ(form.cnpj) || v(form.cnpj)}\``);
-  lines.push(`  _Qualificação do Plano:_ ${v(form.qualificacao_plano)}`);
+  const qualDisplay = QUALIFICACAO_DISPLAY[form.qualificacao_plano?.trim().toUpperCase() as QualificacaoPlano];
+  const qualTexto = qualDisplay ? `${qualDisplay.emoji} ${form.qualificacao_plano?.trim()}` : v(form.qualificacao_plano);
+  lines.push(`  _Qualificação do Plano:_ ${qualTexto}`);
   lines.push(`  _Data de Abertura:_ \`${v(form.data_abertura)}\``);
   lines.push(`  _Tipo de Atividade:_ ${v(form.tipo_atividade)}`);
   lines.push("");
@@ -109,8 +115,15 @@ export function formatAlteracaoMessage(form: WhatsAppFormPayload): string {
   }
   lines.push(`  _Regime Contábil:_ ${v(form.regime_contabil)}`);
   lines.push(`  _Possui Parcelamento:_ *${SIM_NAO_LABEL[form.possui_parcelamento] ?? form.possui_parcelamento}*`);
-  if (form.possui_parcelamento === "sim" && form.tipo_parcelamento) {
-    lines.push(`  _Tipo de Parcelamento:_ ${form.tipo_parcelamento}`);
+  const parcelamentos = (form.tipos_parcelamento ?? (form.tipo_parcelamento ? [form.tipo_parcelamento] : [])).filter((t) => t?.trim());
+  if (form.possui_parcelamento === "sim" && parcelamentos.length > 0) {
+    if (parcelamentos.length === 1) {
+      lines.push(`  _Tipo de Parcelamento:_ ${parcelamentos[0].trim()}`);
+    } else {
+      parcelamentos.forEach((t, i) => {
+        lines.push(`  _Tipo de Parcelamento ${i + 1}:_\n  ${t.trim()}`);
+      });
+    }
   }
   lines.push("");
   lines.push(sep);

@@ -115,7 +115,7 @@ export function AlteracaoVisaoGeralTab() {
     tipo_contabilidade: "",
     regime_contabil: "",
     possui_parcelamento: "nao_informado",
-    tipo_parcelamento: "",
+    tipos_parcelamento: [""],
     valor_honorario: "",
     vencimento_honorario: "",
     data_primeiro_honorario: "",
@@ -146,6 +146,21 @@ export function AlteracaoVisaoGeralTab() {
   const addContato = () => setForm((p) => ({ ...p, contatos: [...p.contatos, { nome_contato: "", email_contato: "", telefone_contato: "" }] }));
   const removeContato = (index: number) => {
     setForm((p) => ({ ...p, contatos: p.contatos.filter((_, i) => i !== index) }));
+  };
+
+  const updateParcelamento = (index: number, value: string) => {
+    setForm((p) => {
+      const next = [...p.tipos_parcelamento];
+      next[index] = value;
+      return { ...p, tipos_parcelamento: next };
+    });
+  };
+  const addParcelamento = () => setForm((p) => ({ ...p, tipos_parcelamento: [...p.tipos_parcelamento, ""] }));
+  const removeParcelamento = (index: number) => {
+    setForm((p) => ({
+      ...p,
+      tipos_parcelamento: p.tipos_parcelamento.filter((_, i) => i !== index),
+    }));
   };
 
   useEffect(() => {
@@ -361,6 +376,8 @@ export function AlteracaoVisaoGeralTab() {
               };
             })
           );
+          attachments = attachments.filter((a) => a.dataBase64 && a.dataBase64.length > 0);
+          if (attachments.length === 0) attachments = undefined;
         }
         const result = await sendToGroup(waGroupId, message, attachments);
         if (result.ok) {
@@ -533,6 +550,68 @@ export function AlteracaoVisaoGeralTab() {
             {loadingCnpj ? "Buscando..." : "Buscar"}
           </Button>
         </div>
+
+        {/* Documentos para enviar no WhatsApp (após a mensagem) */}
+        <section className="space-y-4">
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">* Documentos para enviar no WhatsApp *</h3>
+          <div className="space-y-2">
+            <Label>Anexar documentos (serão enviados após a mensagem do formulário)</Label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="sr-only"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+              onChange={(e) => {
+                addAnexos(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <div
+              role="button"
+              tabIndex={0}
+              onDragOver={(e) => { e.preventDefault(); setUploadDragOver(true); }}
+              onDragLeave={() => setUploadDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setUploadDragOver(false);
+                addAnexos(e.dataTransfer.files);
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click(); } }}
+              className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 transition-colors cursor-pointer min-h-[120px] ${
+                uploadDragOver
+                  ? "border-primary bg-primary/10"
+                  : "border-border hover:border-primary/50 hover:bg-muted/30"
+              }`}
+            >
+              <Upload className="h-10 w-10 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground text-center">
+                Arraste os arquivos aqui ou <span className="text-primary font-medium">clique para abrir o explorador</span>
+              </p>
+              <p className="text-xs text-muted-foreground">PDF, DOC, XLS, imagens (PNG, JPG)</p>
+            </div>
+            {anexos.length > 0 && (
+              <ul className="space-y-1 mt-2">
+                {anexos.map((file, idx) => (
+                  <li key={`${file.name}-${idx}`} className="flex items-center justify-between gap-2 py-1.5 px-2 rounded bg-muted/50 text-sm">
+                    <span className="truncate">{file.name}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
+                      onClick={(e) => { e.stopPropagation(); removeAnexo(idx); }}
+                      title="Remover"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
 
         {/* 1) Identificação da Empresa */}
         <section className="space-y-4">
@@ -782,38 +861,57 @@ export function AlteracaoVisaoGeralTab() {
             </div>
             {form.possui_parcelamento === "sim" && (
               <div className="space-y-2 md:col-span-2">
-                <Label>Tipo de Parcelamento</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      className="w-full justify-between font-normal"
-                    >
-                      {form.tipo_parcelamento || "Buscar ou selecionar..."}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="Buscar parcelamento..." />
-                      <CommandList>
-                        <CommandEmpty>Nenhum encontrado.</CommandEmpty>
-                        <CommandGroup>
-                          {OPCOES_PARCELAMENTO.map((o) => (
-                            <CommandItem
-                              key={o.value}
-                              value={o.label}
-                              onSelect={() => update("tipo_parcelamento", o.label)}
-                            >
-                              {o.label}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
+                <Label>Tipos de Parcelamento</Label>
+                {form.tipos_parcelamento.map((valor, idx) => (
+                  <div key={idx} className="flex flex-wrap items-center gap-2">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          className="flex-1 min-w-[200px] justify-between font-normal"
+                        >
+                          {valor || "Buscar ou selecionar..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Buscar parcelamento..." />
+                          <CommandList>
+                            <CommandEmpty>Nenhum encontrado.</CommandEmpty>
+                            <CommandGroup>
+                              {OPCOES_PARCELAMENTO.map((o) => (
+                                <CommandItem
+                                  key={o.value}
+                                  value={o.label}
+                                  onSelect={() => updateParcelamento(idx, o.label)}
+                                >
+                                  {o.label}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                    {form.tipos_parcelamento.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 text-destructive hover:text-destructive"
+                        onClick={() => removeParcelamento(idx)}
+                        title="Remover"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                <Button type="button" variant="outline" size="sm" onClick={addParcelamento} className="gap-1">
+                  <Plus className="h-4 w-4" /> Adicionar parcelamento
+                </Button>
                 <p className="text-xs text-muted-foreground">Digite para buscar ou escolha uma opção.</p>
               </div>
             )}
@@ -867,68 +965,6 @@ export function AlteracaoVisaoGeralTab() {
               placeholder="Informações adicionais em texto livre..."
               className="min-h-[100px]"
             />
-          </div>
-        </section>
-
-        {/* Anexos (enviados após a mensagem no WhatsApp) */}
-        <section className="space-y-4">
-          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">* Documentos para enviar no WhatsApp *</h3>
-          <div className="space-y-2">
-            <Label>Anexar documentos (serão enviados após a mensagem do formulário)</Label>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="sr-only"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
-              onChange={(e) => {
-                addAnexos(e.target.files);
-                e.target.value = "";
-              }}
-            />
-            <div
-              role="button"
-              tabIndex={0}
-              onDragOver={(e) => { e.preventDefault(); setUploadDragOver(true); }}
-              onDragLeave={() => setUploadDragOver(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setUploadDragOver(false);
-                addAnexos(e.dataTransfer.files);
-              }}
-              onClick={() => fileInputRef.current?.click()}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click(); } }}
-              className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 transition-colors cursor-pointer min-h-[120px] ${
-                uploadDragOver
-                  ? "border-primary bg-primary/10"
-                  : "border-border hover:border-primary/50 hover:bg-muted/30"
-              }`}
-            >
-              <Upload className="h-10 w-10 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground text-center">
-                Arraste os arquivos aqui ou <span className="text-primary font-medium">clique para abrir o explorador</span>
-              </p>
-              <p className="text-xs text-muted-foreground">PDF, DOC, XLS, imagens (PNG, JPG)</p>
-            </div>
-            {anexos.length > 0 && (
-              <ul className="space-y-1 mt-2">
-                {anexos.map((file, idx) => (
-                  <li key={`${file.name}-${idx}`} className="flex items-center justify-between gap-2 py-1.5 px-2 rounded bg-muted/50 text-sm">
-                    <span className="truncate">{file.name}</span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
-                      onClick={(e) => { e.stopPropagation(); removeAnexo(idx); }}
-                      title="Remover"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
           </div>
         </section>
 

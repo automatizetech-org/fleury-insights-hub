@@ -494,18 +494,28 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, error: "groupId obrigatório" });
         return;
       }
+      console.log("[SEND] POST /send recebido: grupo=" + groupId + ", anexos=" + attachments.length);
       const targetId = groupId.includes("@") ? groupId : `${groupId}@g.us`;
       try {
         await client.sendMessage(targetId, message || " ");
+        const delayMs = (ms) => new Promise((r) => setTimeout(r, ms));
+        if (attachments.length > 0) {
+          console.log("[SEND] Enviando", attachments.length, "anexo(s) em seguida à mensagem.");
+          await delayMs(1200);
+        }
         for (const att of attachments) {
           const mimetype = att.mimetype && typeof att.mimetype === "string" ? att.mimetype : "application/octet-stream";
           const dataBase64 = att.dataBase64 && typeof att.dataBase64 === "string" ? att.dataBase64 : "";
           const filename = att.filename && typeof att.filename === "string" ? att.filename : "documento";
-          if (!dataBase64) continue;
+          if (!dataBase64) {
+            console.warn("[SEND] Anexo sem dataBase64 ignorado:", filename);
+            continue;
+          }
           try {
             const media = new MessageMedia(mimetype, dataBase64, filename);
             await client.sendMessage(targetId, media);
-            await new Promise((r) => setTimeout(r, 800));
+            console.log("[SEND] Anexo enviado:", filename);
+            await delayMs(1000);
           } catch (eAtt) {
             console.error("[ERRO] Enviar anexo:", eAtt && eAtt.message ? eAtt.message : eAtt);
           }
