@@ -19,7 +19,7 @@ if (fs.existsSync(envPath)) {
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   root: projectRoot,
-  // Não usar envPrefix (RegExp quebra no Node da Vercel). Env vars injetadas via define:
+  envPrefix: "VITE_", // string explícita (evita RegExp no Node da Vercel)
   define: {
     "import.meta.env.SUPABASE_URL": JSON.stringify(process.env.SUPABASE_URL ?? ""),
     "import.meta.env.SUPABASE_ANON_KEY": JSON.stringify(process.env.SUPABASE_ANON_KEY ?? ""),
