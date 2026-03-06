@@ -70,6 +70,13 @@ const TIPO_CONTABILIDADE = [
   { value: "Documentos", label: "Documentos" },
 ];
 
+const TIPO_FORMULARIO = [
+  { value: "abertura", label: "ABERTURA" },
+  { value: "alteracao_contratual", label: "ALTERAÇÃO CONTRATUAL" },
+  { value: "suspensao", label: "SUSPENSÃO" },
+  { value: "baixa", label: "BAIXA" },
+];
+
 export function AlteracaoVisaoGeralTab() {
   const [cnpjBusca, setCnpjBusca] = useState("");
   const [cnpjError, setCnpjError] = useState("");
@@ -97,6 +104,7 @@ export function AlteracaoVisaoGeralTab() {
   const [qualificacaoLoading, setQualificacaoLoading] = useState(false);
 
   const [form, setForm] = useState({
+    tipo_formulario: "",
     razao_social: "",
     cnpj: "",
     qualificacao_plano: "",
@@ -651,6 +659,23 @@ export function AlteracaoVisaoGeralTab() {
                 ))}
               </ul>
             )}
+          </div>
+        </section>
+
+        {/* Tipo de formulário */}
+        <section className="space-y-4">
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">Tipo de formulário</h3>
+          <div className="max-w-xs">
+            <Select value={form.tipo_formulario || undefined} onValueChange={(v) => update("tipo_formulario", v)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione o tipo" />
+              </SelectTrigger>
+              <SelectContent>
+                {TIPO_FORMULARIO.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </section>
 

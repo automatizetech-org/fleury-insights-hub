@@ -9,6 +9,8 @@ import { QUALIFICACAO_DISPLAY } from "@/services/bcbSalarioMinimoService";
 import type { QualificacaoPlano } from "@/services/bcbSalarioMinimoService";
 
 export interface WhatsAppFormPayload {
+  /** Tipo do formulário: abertura | alteracao_contratual | suspensao | baixa */
+  tipo_formulario: string;
   razao_social: string;
   cnpj: string;
   qualificacao_plano: string;
@@ -45,6 +47,13 @@ const SIM_NAO_LABEL: Record<string, string> = {
   nao_informado: "Não informado",
 };
 
+const TIPO_FORMULARIO_LABEL: Record<string, string> = {
+  abertura: "ABERTURA",
+  alteracao_contratual: "ALTERAÇÃO CONTRATUAL",
+  suspensao: "SUSPENSÃO",
+  baixa: "BAIXA",
+};
+
 /**
  * Formata o formulário de Alteração Empresarial para envio no WhatsApp.
  * Usa ao máximo a formatação do WhatsApp: *negrito*, _itálico_, `monoespaço` e separadores.
@@ -55,6 +64,14 @@ export function formatAlteracaoMessage(form: WhatsAppFormPayload): string {
   const v = (s: string) => (s?.trim() ? s.trim() : "—");
 
   lines.push("*📋 ALTERAÇÃO EMPRESARIAL*");
+  lines.push(sep);
+  lines.push("");
+
+  const tipoFormLabel = form.tipo_formulario?.trim()
+    ? (TIPO_FORMULARIO_LABEL[form.tipo_formulario.trim()] ?? form.tipo_formulario.trim())
+    : "—";
+  lines.push("*Tipo de formulário:* *" + tipoFormLabel + "*");
+  lines.push("");
   lines.push(sep);
   lines.push("");
 
