@@ -8,6 +8,8 @@
     "dev:vite": "vite --config config/vite.config.ts",
     "dev:wa": "cd backend/whatsapp-emissor && node launcher.js",
     "icons:generate": "node scripts/generate-pwa-icons.mjs",
+    "test:ngrok:list": "node scripts/test-ngrok-api.mjs list",
+    "test:ngrok:sync": "node scripts/test-ngrok-api.mjs sync",
     "build": "vite --version && vite build --config config/vite.config.ts",
     "build:dev": "vite build --mode development --config config/vite.config.ts",
     "lint": "eslint . -c config/eslint.config.js",

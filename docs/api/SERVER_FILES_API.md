@@ -44,6 +44,24 @@ Com um domínio na Cloudflare (conta gratuita), crie um túnel nomeado e use uma
 
 Lógica: validar JWT → buscar registro em `fiscal_documents` por `id` → verificar acesso ao `company_id` → ler arquivo do disco por `file_path` → retornar arquivo.
 
+### GET `/api/files/list?path=...`
+
+- **Query:** `path` = caminho relativo à raiz (ex.: `EMPRESAS/Grupo Fleury/NFS`)
+- **Resposta (200):** `{ files: [{ name, ext, path }] }` — lista XML/PDF da pasta
+- **Erros:** `400`, `403`, `404`, `500`
+
+### GET `/api/files/download?path=...`
+
+- **Query:** `path` = caminho relativo ao arquivo (ex.: `EMPRESAS/Grupo Fleury/NFS/arquivo.xml`)
+- **Resposta (200):** arquivo com `Content-Disposition: attachment`
+- Uso: teste rápido sem JWT
+
+### POST `/api/fiscal-sync`
+
+- **Body:** `{ path, company_id, type?: "NFS" }`
+- **Headers:** `Authorization: Bearer <supabase_access_token>` (obrigatório; usa anon key + JWT; RLS valida)
+- **Resposta (200):** `{ inserted, files }` — sincroniza pasta → `fiscal_documents`
+
 ### GET `/api/dp-guias/:id/download`
 
 - **Headers:** `Authorization: Bearer <supabase_access_token>`
@@ -54,7 +72,11 @@ Lógica: validar JWT → buscar registro em `fiscal_documents` por `id` → veri
 
 ## Estrutura base no disco
 
-A raiz (ex.: `D:\dados\fleury`) é configurada no servidor. O `file_path` no Supabase é **relativo** a essa raiz. Convenções por tipo:
+A raiz (ex.: `C:\Users\ROBO\Documents`) é configurada no servidor (`BASE_PATH`). O `file_path` no Supabase é **relativo** a essa raiz.
+
+**Convenção:** as pastas das empresas dentro de `EMPRESAS\` na VM devem ter o **mesmo nome** da empresa cadastrada no dashboard (tabela `companies.name`). Ex.: empresa "Grupo Fleury" → pasta `EMPRESAS\Grupo Fleury\NFS\`.
+
+Convenções por tipo:
 
 - **Fiscal NFe/NFC:** [../fiscal/nfe-nfc/README.md](../fiscal/nfe-nfc/README.md)
 - **Fiscal NFS:** [../fiscal/nfs/README.md](../fiscal/nfs/README.md)

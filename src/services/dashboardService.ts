@@ -48,7 +48,7 @@ export async function getFiscalDocumentsByType(
   // e descomente file_path no select e use: file_path: d.file_path ?? null no return.
   let q = supabase
     .from("fiscal_documents")
-    .select("id, company_id, type, chave, periodo, status, document_date, created_at")
+    .select("id, company_id, type, chave, periodo, status, document_date, file_path, created_at")
     .eq("type", type)
     .order("document_date", { ascending: false })
     .order("created_at", { ascending: false })
@@ -67,6 +67,6 @@ export async function getFiscalDocumentsByType(
     ...d,
     empresa: names.get(d.company_id) ?? "",
     cnpj: documents.get(d.company_id) ?? "",
-    file_path: null as string | null,
+    file_path: (d as { file_path?: string | null }).file_path ?? null,
   }))
 }
