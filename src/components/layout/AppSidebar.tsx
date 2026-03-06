@@ -142,22 +142,22 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
   const sidebarContent = (
     <>
       <div className="absolute inset-0 bg-gradient-to-br from-[#2563EB]/5 via-transparent to-[#7C3AED]/5 dark:from-[#2563EB]/10 dark:to-[#7C3AED]/10 pointer-events-none transition-opacity duration-500" />
-      <div className="relative p-4 sm:p-6 border-b border-gray-200 dark:border-slate-700 bg-gradient-to-r from-[#2563EB]/10 via-[#2563EB]/5 to-transparent dark:from-[#2563EB]/20 dark:via-[#2563EB]/10 z-10 transition-colors duration-500 flex-shrink-0">
-        <div className="flex flex-col items-center gap-3">
-          <div className="relative wk-sidebar-brand flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden bg-white/90 dark:bg-slate-800/90 shadow-lg shrink-0">
+      <div className="relative p-6 md:p-4 md:pt-6 border-b border-gray-200 dark:border-slate-700 bg-gradient-to-r from-[#2563EB]/10 via-[#2563EB]/5 to-transparent dark:from-[#2563EB]/20 dark:via-[#2563EB]/10 z-10 transition-colors duration-500 flex-shrink-0">
+        <div className="flex flex-col items-center gap-5 md:gap-3">
+          <div className="relative wk-sidebar-brand flex items-center justify-center w-20 h-20 md:w-14 md:h-14 rounded-2xl md:rounded-xl overflow-hidden bg-white/90 dark:bg-slate-800/90 shadow-lg shrink-0">
             <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
           </div>
           <div className="text-center w-full min-w-0">
-            <h2 className="wk-sidebar-title dark:text-white font-bold tracking-tight text-xs sm:text-sm truncate">Dashboard Fleury</h2>
-            <p className="wk-sidebar-subtitle dark:text-slate-400 text-[10px] sm:text-xs mt-0.5">Selecione uma área</p>
-            <div className="mt-2 flex items-center gap-1.5 w-full min-w-0">
+            <h2 className="wk-sidebar-title dark:text-white font-bold tracking-tight text-lg md:text-sm truncate">Dashboard Fleury</h2>
+            <p className="wk-sidebar-subtitle dark:text-slate-400 text-sm md:text-xs mt-1">Selecione uma área</p>
+            <div className="mt-4 md:mt-2 flex items-center gap-2 w-full min-w-0">
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
                     role="combobox"
                     className={cn(
-                      "flex-1 min-w-0 h-8 justify-between rounded-md border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-foreground text-xs font-normal hover:bg-gray-50 dark:hover:bg-slate-700/50 truncate",
+                      "flex-1 min-w-0 h-12 md:h-8 justify-between rounded-xl md:rounded-md border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-foreground text-base md:text-xs font-normal hover:bg-gray-50 dark:hover:bg-slate-700/50 truncate",
                       !selectedCompanyIds.length && "text-muted-foreground"
                     )}
                   >
@@ -168,7 +168,7 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
                           ? companies.find((c) => c.id === selectedCompanyIds[0])?.name ?? "1 selecionada"
                           : `${selectedCompanyIds.length} selecionadas`}
                     </span>
-                    <ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50 flex-shrink-0" />
+                    <ChevronsUpDown className="ml-1 h-5 w-5 md:h-3 md:w-3 shrink-0 opacity-50 flex-shrink-0" />
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[var(--radix-popover-trigger-width)] max-w-[min(18rem,85vw)] p-0" align="start">
@@ -206,10 +206,10 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
               </Popover>
               <Link
                 to="/empresas/nova"
-                className="flex-shrink-0 p-1.5 rounded-md bg-[#2563EB] text-white hover:bg-[#1E40AF] transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center touch-manipulation"
+                className="flex-shrink-0 p-2.5 md:p-1.5 rounded-xl md:rounded-md bg-[#2563EB] text-white hover:bg-[#1E40AF] transition-colors min-w-[48px] min-h-[48px] md:min-w-[36px] md:min-h-[36px] flex items-center justify-center touch-manipulation"
                 title="Cadastrar nova empresa"
               >
-                <Plus className="h-3.5 w-3.5" />
+                <Plus className="h-5 w-5 md:h-3.5 md:w-3.5" />
               </Link>
             </div>
           </div>
@@ -330,16 +330,13 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
         style={{ transform: mobileOpen ? "translateX(0)" : "translateX(-100%)" }}
         aria-hidden={!mobileOpen}
       >
-        <div className="flex-shrink-0 flex items-center justify-between p-3 border-b border-gray-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80">
-          <span className="text-sm font-semibold text-foreground truncate">Menu</span>
-          <button
-            onClick={() => setMobileOpen(false)}
-            className="p-2 -mr-2 min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 rounded-lg transition-colors touch-manipulation active:scale-95"
-            aria-label="Fechar menu"
-          >
-            <X size={22} className="text-foreground shrink-0" />
-          </button>
-        </div>
+        <button
+          onClick={() => setMobileOpen(false)}
+          className="absolute top-3 right-3 z-20 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 rounded-lg transition-colors touch-manipulation active:scale-95"
+          aria-label="Fechar menu"
+        >
+          <X size={22} className="text-foreground shrink-0" />
+        </button>
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain flex flex-col">
           {sidebarContent}
         </div>

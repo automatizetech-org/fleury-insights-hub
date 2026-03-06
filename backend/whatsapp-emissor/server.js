@@ -232,18 +232,30 @@ async function startClient() {
   }
 }
 
-async function disconnectClient() {
-  if (!client) return;
-  try {
-    await client.destroy();
-  } catch (_) {}
-  client = null;
+async function disconnectClient(opts = {}) {
+  const clearSession = opts.clearSession === true;
+  if (client) {
+    try {
+      await client.destroy();
+    } catch (_) {}
+    client = null;
+  }
   isReady = false;
   lastQR = null;
   try {
     if (fs.existsSync(qrFile)) fs.rmSync(qrFile, { force: true });
   } catch (_) {}
-  console.log("[OK] Cliente desconectado. Sessão mantida para reconectar.");
+  if (clearSession) {
+    try {
+      if (fs.existsSync(authFolder)) fs.rmSync(authFolder, { recursive: true, force: true });
+      if (fs.existsSync(cacheFolder)) fs.rmSync(cacheFolder, { recursive: true, force: true });
+      console.log("[OK] Cliente desconectado. Sessão e cache apagados — próximo Conectar gerará novo QR.");
+    } catch (e) {
+      console.warn("[AVISO] Erro ao apagar sessão:", e && e.message ? e.message : e);
+    }
+  } else {
+    console.log("[OK] Cliente desconectado. Sessão mantida para reconectar.");
+  }
 }
 
 /** Marca o cliente como quebrado (ex.: Frame detachado, context destroyed) para permitir nova conexão e novo QR. */
@@ -296,11 +308,24 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { qr: null, connected: true });
       return;
     }
-    if (!lastQR || !Buffer.isBuffer(lastQR)) {
+    let qrBuffer = lastQR;
+    if (!qrBuffer || !Buffer.isBuffer(qrBuffer)) {
+      try {
+        if (fs.existsSync(qrFile)) {
+          const stat = fs.statSync(qrFile);
+          const ageMs = Date.now() - stat.mtimeMs;
+          if (ageMs < 90000) {
+            qrBuffer = fs.readFileSync(qrFile);
+            lastQR = qrBuffer;
+          }
+        }
+      } catch (_) {}
+    }
+    if (!qrBuffer || !Buffer.isBuffer(qrBuffer)) {
       sendJson(res, 200, { qr: null, connected: false });
       return;
     }
-    const base64 = lastQR.toString("base64");
+    const base64 = qrBuffer.toString("base64");
     sendJson(res, 200, { qr: `data:image/png;base64,${base64}`, connected: false });
     return;
   }
@@ -310,13 +335,30 @@ const server = http.createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
-    if (isReady || !lastQR) {
+    if (isReady) {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    let qrBuffer = lastQR;
+    if (!qrBuffer || !Buffer.isBuffer(qrBuffer)) {
+      try {
+        if (fs.existsSync(qrFile)) {
+          const stat = fs.statSync(qrFile);
+          if (Date.now() - stat.mtimeMs < 90000) {
+            qrBuffer = fs.readFileSync(qrFile);
+            lastQR = qrBuffer;
+          }
+        }
+      } catch (_) {}
+    }
+    if (!qrBuffer) {
       res.writeHead(204);
       res.end();
       return;
     }
     res.writeHead(200, { "Content-Type": "image/png" });
-    res.end(lastQR);
+    res.end(qrBuffer);
     return;
   }
 
@@ -365,7 +407,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/disconnect" && req.method === "POST") {
-    disconnectClient()
+    disconnectClient({ clearSession: true })
       .then(() => sendJson(res, 200, { ok: true }))
       .catch(() => sendJson(res, 200, { ok: true }));
     return;

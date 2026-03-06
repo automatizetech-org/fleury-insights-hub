@@ -78,6 +78,8 @@ export function AlteracaoVisaoGeralTab() {
   const [waDisconnecting, setWaDisconnecting] = useState(false);
   const [waGroupsLoading, setWaGroupsLoading] = useState(false);
   const waAutoConnectTried = useRef(false);
+  const lastQrFetchTime = useRef(0);
+  const waQrRef = useRef<string | null>(null);
 
   const [form, setForm] = useState({
     razao_social: "",
@@ -132,6 +134,10 @@ export function AlteracaoVisaoGeralTab() {
   };
 
   useEffect(() => {
+    waQrRef.current = waQr;
+  }, [waQr]);
+
+  useEffect(() => {
     let cancelled = false;
     const timeout = setTimeout(() => {
       if (!cancelled) setWaConnected(false);
@@ -176,10 +182,25 @@ export function AlteracaoVisaoGeralTab() {
     setWaGroupId("");
     const tick = async () => {
       try {
-        const [status, qr] = await Promise.all([getConnectionStatus(), getQrImage()]);
+        const status = await getConnectionStatus();
         setWaApiError(null);
         setWaConnected(status.connected);
-        setWaQr(status.connected ? null : qr);
+        if (status.connected) {
+          setWaQr(null);
+          return;
+        }
+        const now = Date.now();
+        const hasQr = waQrRef.current != null && waQrRef.current.length > 0;
+        const qrExpired = hasQr && now - lastQrFetchTime.current >= 55000;
+        const needQr = !hasQr || qrExpired;
+        if (!needQr) return;
+        const qr = await getQrImage();
+        if (qr) {
+          lastQrFetchTime.current = now;
+          setWaQr(qr);
+        } else {
+          setWaQr(null);
+        }
       } catch {
         setWaApiError("Servidor inacessível. Confira: 1) .env com WHATSAPP_API=http://IP_DA_VM:3010 2) Site HTTPS só funciona se a API for HTTPS 3) Firewall da VM com porta 3010 liberada.");
         setWaConnected(false);
@@ -187,7 +208,7 @@ export function AlteracaoVisaoGeralTab() {
       }
     };
     tick();
-    const id = setInterval(tick, 3000);
+    const id = setInterval(tick, 6000);
     return () => clearInterval(id);
   }, [waConnected]);
 

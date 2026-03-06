@@ -38,7 +38,7 @@ export async function getConnectionStatus(): Promise<ConnectionStatus> {
   }
 }
 
-/** Retorna a imagem do QR atual (base64 data URL). Retorna null se já conectado. */
+/** Retorna a imagem do QR atual (base64 data URL). Retorna null se já conectado ou se o backend ainda não tem QR. */
 export async function getQrImage(): Promise<string | null> {
   if (!BASE) return null;
   try {
@@ -48,6 +48,8 @@ export async function getQrImage(): Promise<string | null> {
     if (data?.connected) return null;
     const qr = data?.qr ?? data?.image ?? null;
     if (typeof qr === "string" && qr.startsWith("data:image/") && qr.length >= 200) return qr;
+    // Backend retornou que não tem QR ainda — não chamar /qr.png para evitar dezenas de requisições
+    if (qr === null || qr === undefined) return null;
     const pngRes = await fetch(`${BASE.replace(/\/$/, "")}/qr.png?t=${Date.now()}`, { cache: "no-store", headers: getHeaders() });
     if (pngRes.ok && pngRes.headers.get("content-type")?.startsWith("image/")) {
       const blob = await pngRes.blob();
