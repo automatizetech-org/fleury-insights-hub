@@ -6,8 +6,22 @@ import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { getPfxInfo } from "@/lib/validatePfxPassword"
+import { toast } from "sonner"
 
 const BRASIL_API_CNPJ = "https://brasilapi.com.br/api/cnpj/v1"
+
+const CONTADORES = [
+  { nome: "ELIANDERSON GOMES FLEURY", cpf: "71361170115" },
+  { nome: "EDER GOMES FLEURY", cpf: "86873598100" },
+] as const
 
 function onlyDigits(s: string) {
   return s.replace(/\D/g, "")
@@ -41,6 +55,7 @@ export default function EmpresasNovaPage() {
   const [certFile, setCertFile] = useState<File | null>(null)
   const [certPassword, setCertPassword] = useState("")
   const certInputRef = useRef<HTMLInputElement>(null)
+  const [contadorCpf, setContadorCpf] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [loadingCnpj, setLoadingCnpj] = useState(false)
@@ -81,9 +96,17 @@ export default function EmpresasNovaPage() {
     try {
       let cert_blob_b64: string | null = null
       let cert_password: string | null = null
+      let cert_valid_until: string | null = null
       if (useCertificate && certFile && certPassword.trim()) {
         cert_blob_b64 = await fileToBase64(certFile)
         cert_password = certPassword.trim()
+        const info = getPfxInfo(cert_blob_b64, cert_password)
+        if (!info.valid) {
+          setError("Senha do certificado incorreta. Não foi possível cadastrar.")
+          toast.error("Senha do certificado incorreta.")
+          return
+        }
+        cert_valid_until = info.validUntil ?? null
       }
       const company = await createCompany({
         name: name.trim(),
@@ -91,12 +114,17 @@ export default function EmpresasNovaPage() {
         auth_mode: useCertificate ? "certificate" : null,
         cert_blob_b64,
         cert_password,
+        cert_valid_until,
+        contador_nome: contadorCpf ? (CONTADORES.find((c) => c.cpf === contadorCpf)?.nome ?? null) : null,
+        contador_cpf: contadorCpf || null,
       })
       setSelectedCompanyIds([company.id])
+      toast.success("Empresa cadastrada com sucesso. Certificado enviado ao Supabase.")
       navigate("/dashboard", { replace: true })
     } catch (err: unknown) {
       const message = err && typeof err === "object" && "message" in err ? String((err as { message: string }).message) : "Erro ao cadastrar"
       setError(message)
+      toast.error(message)
     } finally {
       setLoading(false)
     }
@@ -159,23 +187,27 @@ export default function EmpresasNovaPage() {
                 disabled={loading}
                 className="rounded border-input"
               />
-              <Label htmlFor="use-cert" className="font-normal cursor-pointer">Certificado digital (NFS-e)</Label>
+              <Label htmlFor="use-cert" className="font-normal cursor-pointer">Certificado digital (uso geral)</Label>
             </div>
-            <p className="text-xs text-muted-foreground">Opcional. Use para o robô NFS-e baixar notas com certificado A1 (.pfx) em vez de usuário/senha.</p>
+            <p className="text-xs text-muted-foreground">Opcional. Use para NFS-e, emissões e outras situações que exijam certificado A1 (.pfx).</p>
             {useCertificate && (
               <div className="space-y-2 pl-4 border-l-2 border-border">
                 <div className="space-y-1">
                   <Label>Arquivo .pfx</Label>
-                  <div className="flex gap-2 items-center">
+                  <div className="flex gap-2 items-center min-w-0">
                     <Input
                       ref={certInputRef}
                       type="file"
                       accept=".pfx"
                       onChange={(e) => setCertFile(e.target.files?.[0] ?? null)}
                       disabled={loading}
-                      className="flex-1"
+                      className="flex-1 min-w-0 max-w-[180px]"
                     />
-                    {certFile && <span className="text-xs text-muted-foreground truncate max-w-[120px]">{certFile.name}</span>}
+                    {certFile && (
+                      <span className="text-xs text-muted-foreground truncate min-w-0 flex-1" title={certFile.name}>
+                        {certFile.name}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="space-y-1">
@@ -191,6 +223,27 @@ export default function EmpresasNovaPage() {
                 </div>
               </div>
             )}
+          </div>
+
+          <div className="space-y-2">
+            <Label>Contador responsável</Label>
+            <Select
+              value={contadorCpf || "none"}
+              onValueChange={(v) => setContadorCpf(v === "none" ? "" : v)}
+              disabled={loading}
+            >
+              <SelectTrigger className="min-h-10 [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:text-left py-2">
+                <SelectValue placeholder="Selecione o contador" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Nenhum</SelectItem>
+                {CONTADORES.map((c) => (
+                  <SelectItem key={c.cpf} value={c.cpf}>
+                    {c.nome} — CPF {c.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {error && (

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getUsersForAdmin, getProfile, updateProfile } from "@/services/profilesService"
 import { supabase } from "@/services/supabaseClient"
@@ -23,11 +23,35 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { Users, Building2, Shield, Key, Pencil } from "lucide-react"
+import { Users, Building2, Shield, Key, Pencil, Loader2 } from "lucide-react"
 import { PANEL_KEYS, PANEL_LABELS } from "@/lib/panelAccess"
+import { getPfxInfo } from "@/lib/validatePfxPassword"
+import { toast } from "sonner"
 
 const SUPABASE_URL = import.meta.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
+
+const CONTADORES = [
+  { nome: "ELIANDERSON GOMES FLEURY", cpf: "71361170115" },
+  { nome: "EDER GOMES FLEURY", cpf: "86873598100" },
+] as const
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result
+      if (result instanceof ArrayBuffer) {
+        const bytes = new Uint8Array(result)
+        let binary = ""
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+        resolve(btoa(binary))
+      } else reject(new Error("Leitura do arquivo falhou"))
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsArrayBuffer(file)
+  })
+}
 
 export default function AdminPage() {
   const queryClient = useQueryClient()
@@ -45,6 +69,12 @@ export default function AdminPage() {
   const [editName, setEditName] = useState("")
   const [editDocument, setEditDocument] = useState("")
   const [editActive, setEditActive] = useState(true)
+  const [editContadorCpf, setEditContadorCpf] = useState("")
+  const [editUseCertificate, setEditUseCertificate] = useState(false)
+  const [editCertReplacing, setEditCertReplacing] = useState(false)
+  const [editCertFile, setEditCertFile] = useState<File | null>(null)
+  const [editCertPassword, setEditCertPassword] = useState("")
+  const editCertInputRef = useRef<HTMLInputElement>(null)
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState("")
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null)
@@ -184,6 +214,12 @@ export default function AdminPage() {
     setEditName(emp.name)
     setEditDocument(emp.document ?? "")
     setEditActive((emp as { active?: boolean }).active !== false)
+    setEditContadorCpf((emp as { contador_cpf?: string | null }).contador_cpf ?? "")
+    const withCert = emp as { cert_blob_b64?: string | null; auth_mode?: string | null }
+    setEditUseCertificate(!!(withCert.cert_blob_b64 || withCert.auth_mode === "certificate"))
+    setEditCertReplacing(false)
+    setEditCertFile(null)
+    setEditCertPassword("")
     setEditError("")
   }
 
@@ -191,17 +227,48 @@ export default function AdminPage() {
     e.preventDefault()
     if (!editingCompany) return
     setEditError("")
+    if (editUseCertificate && (editCertFile || editCertPassword) && (!editCertFile || !editCertPassword.trim())) {
+      setEditError("Selecione o arquivo .pfx e informe a senha do certificado.")
+      return
+    }
     setEditSaving(true)
     try {
-      await updateCompany(editingCompany.id, {
+      const updates: Parameters<typeof updateCompany>[1] = {
         name: editName.trim(),
         document: editDocument.trim() || null,
         active: editActive,
-      })
+        contador_nome: editContadorCpf ? (CONTADORES.find((c) => c.cpf === editContadorCpf)?.nome ?? null) : null,
+        contador_cpf: editContadorCpf || null,
+      }
+      if (!editUseCertificate) {
+        updates.auth_mode = null
+        updates.cert_blob_b64 = null
+        updates.cert_password = null
+        updates.cert_valid_until = null
+      } else if (editCertFile && editCertPassword.trim()) {
+        updates.auth_mode = "certificate"
+        const b64 = await fileToBase64(editCertFile)
+        const pwd = editCertPassword.trim()
+        const info = getPfxInfo(b64, pwd)
+        if (!info.valid) {
+          setEditError("Senha do certificado incorreta. Não foi possível salvar.")
+          toast.error("Senha do certificado incorreta.")
+          return
+        }
+        updates.cert_blob_b64 = b64
+        updates.cert_password = pwd
+        updates.cert_valid_until = info.validUntil ?? null
+      } else if (editUseCertificate && (editingCompany as { cert_blob_b64?: string | null }).cert_blob_b64) {
+        updates.auth_mode = "certificate"
+      }
+      await updateCompany(editingCompany.id, updates)
       queryClient.invalidateQueries({ queryKey: ["admin-companies"] })
       setEditingCompany(null)
+      toast.success("Empresa salva com sucesso. Certificado enviado ao Supabase.")
     } catch (err: unknown) {
-      setEditError(err instanceof Error ? err.message : "Erro ao salvar")
+      const msg = err instanceof Error ? err.message : "Erro ao salvar"
+      setEditError(msg)
+      toast.error(msg)
     } finally {
       setEditSaving(false)
     }
@@ -401,6 +468,11 @@ export default function AdminPage() {
                     <div>
                       <p className="text-xs font-medium">{emp.name}</p>
                       <p className="text-[10px] text-muted-foreground">{(emp as { document?: string | null }).document ?? "—"}</p>
+                      {(emp as { contador_nome?: string | null }).contador_nome && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5 truncate max-w-[200px]" title={(emp as { contador_nome?: string | null }).contador_nome ?? undefined}>
+                          {(emp as { contador_nome?: string | null }).contador_nome}
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`text-[10px] font-medium ${(emp as { active?: boolean }).active !== false ? "text-success" : "text-muted-foreground"}`}>
@@ -463,12 +535,20 @@ export default function AdminPage() {
         </div>
       </GlassCard>
 
-      <Dialog open={!!editingCompany} onOpenChange={(open) => !open && setEditingCompany(null)}>
-        <DialogContent>
+      <Dialog open={!!editingCompany} onOpenChange={(open) => !open && !editSaving && setEditingCompany(null)}>
+        <DialogContent aria-describedby={undefined}>
+          {editSaving && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur-sm">
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                <p className="text-sm font-medium">Salvando empresa e enviando certificado ao Supabase...</p>
+              </div>
+            </div>
+          )}
           <DialogHeader>
             <DialogTitle>Editar empresa</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSaveCompany} className="space-y-4">
+          <form onSubmit={handleSaveCompany} className="space-y-4 min-w-0 overflow-hidden">
             <div className="space-y-2">
               <Label>Nome</Label>
               <Input value={editName} onChange={(e) => setEditName(e.target.value)} required disabled={editSaving} />
@@ -480,6 +560,103 @@ export default function AdminPage() {
             <div className="flex items-center gap-2">
               <input type="checkbox" id="edit-active" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} disabled={editSaving} className="rounded border-input" />
               <Label htmlFor="edit-active">Ativa</Label>
+            </div>
+            <div className="space-y-2">
+              <Label>Contador responsável</Label>
+              <Select
+                value={editContadorCpf || "none"}
+                onValueChange={(v) => setEditContadorCpf(v === "none" ? "" : v)}
+                disabled={editSaving}
+              >
+                <SelectTrigger className="min-h-10 [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:text-left py-2">
+                  <SelectValue placeholder="Selecione o contador" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Nenhum</SelectItem>
+                  {CONTADORES.map((c) => (
+                    <SelectItem key={c.cpf} value={c.cpf}>
+                      {c.nome} — CPF {c.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-3 pt-2 border-t border-border">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="edit-cert"
+                  checked={editUseCertificate}
+                  onChange={(e) => {
+                    setEditUseCertificate(e.target.checked)
+                    if (!e.target.checked) setEditCertReplacing(false)
+                  }}
+                  disabled={editSaving}
+                  className="rounded border-input"
+                />
+                <Label htmlFor="edit-cert" className="font-normal cursor-pointer">Certificado digital (uso geral)</Label>
+              </div>
+              {editUseCertificate && (
+                <div className="pl-4 border-l-2 border-border space-y-2">
+                  {(!!(editingCompany as { cert_blob_b64?: string | null; auth_mode?: string | null })?.cert_blob_b64 || (editingCompany as { auth_mode?: string | null })?.auth_mode === "certificate") && !editCertReplacing ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm text-muted-foreground">Certificado cadastrado</span>
+                        <Button type="button" variant="outline" size="sm" onClick={() => { setEditCertReplacing(true); setEditCertFile(null); setEditCertPassword(""); editCertInputRef.current?.click(); }} disabled={editSaving}>
+                          Substituir
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setEditUseCertificate(false)} disabled={editSaving}>
+                          Remover
+                        </Button>
+                      </div>
+                      {(editingCompany as { cert_valid_until?: string | null })?.cert_valid_until && (
+                        <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                          Certificado ativo — Válido até {(() => {
+                            const [y, m, d] = (editingCompany as { cert_valid_until: string }).cert_valid_until.split("-")
+                            return `${d}/${m}/${y}`
+                          })()}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        ref={editCertInputRef}
+                        type="file"
+                        accept=".pfx"
+                        onChange={(e) => setEditCertFile(e.target.files?.[0] ?? null)}
+                        className="hidden"
+                      />
+                      <div className="space-y-1">
+                        <Label>Arquivo .pfx</Label>
+                        <div className="flex gap-2 items-center min-w-0 overflow-hidden">
+                          <Button type="button" variant="outline" size="sm" onClick={() => editCertInputRef.current?.click()} disabled={editSaving} className="w-full min-w-0 overflow-hidden justify-start text-left">
+                            <span className="truncate block w-full" title={editCertFile?.name ?? undefined}>
+                              {editCertFile ? editCertFile.name : "Selecionar"}
+                            </span>
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Senha do certificado</Label>
+                        <Input
+                          type="password"
+                          value={editCertPassword}
+                          onChange={(e) => setEditCertPassword(e.target.value)}
+                          placeholder="Senha do .pfx"
+                          disabled={editSaving}
+                          autoComplete="off"
+                        />
+                      </div>
+                      {(!!(editingCompany as { cert_blob_b64?: string | null })?.cert_blob_b64 || (editingCompany as { auth_mode?: string | null })?.auth_mode === "certificate") && (
+                        <Button type="button" variant="ghost" size="sm" onClick={() => { setEditCertReplacing(false); setEditCertFile(null); setEditCertPassword(""); }} disabled={editSaving}>
+                          Manter certificado atual
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
             {editError && <p className="text-sm text-destructive">{editError}</p>}
             <DialogFooter>

@@ -77,6 +77,35 @@ const TIPO_FORMULARIO = [
   { value: "baixa", label: "BAIXA" },
 ];
 
+const INITIAL_FORM = {
+  tipo_formulario: "",
+  razao_social: "",
+  cnpj: "",
+  qualificacao_plano: "",
+  data_abertura: "",
+  tipo_atividade: "",
+  inscricao_estadual: "",
+  inscricao_municipal: "",
+  competencia_inicial: "",
+  tributacao: "",
+  possui_st: "nao_informado",
+  possui_retencao_impostos: "nao_informado",
+  socios: [{ nome_socio: "", cpf_socio: "" }],
+  contatos: [{ nome_contato: "", email_contato: "", telefone_contato: "" }],
+  possui_prolabore: "nao_informado",
+  valor_prolabore: "",
+  possui_empregados: "nao_informado",
+  possui_contabilidade: "nao_informado",
+  tipo_contabilidade: "",
+  regime_contabil: "",
+  possui_parcelamento: "nao_informado",
+  tipos_parcelamento: [""],
+  valor_honorario: "",
+  vencimento_honorario: "",
+  data_primeiro_honorario: "",
+  observacao: "",
+};
+
 export function AlteracaoVisaoGeralTab() {
   const [cnpjBusca, setCnpjBusca] = useState("");
   const [cnpjError, setCnpjError] = useState("");
@@ -103,34 +132,7 @@ export function AlteracaoVisaoGeralTab() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [qualificacaoLoading, setQualificacaoLoading] = useState(false);
 
-  const [form, setForm] = useState({
-    tipo_formulario: "",
-    razao_social: "",
-    cnpj: "",
-    qualificacao_plano: "",
-    data_abertura: "",
-    tipo_atividade: "",
-    inscricao_estadual: "",
-    inscricao_municipal: "",
-    competencia_inicial: "",
-    tributacao: "",
-    possui_st: "nao_informado",
-    possui_retencao_impostos: "nao_informado",
-    socios: [{ nome_socio: "", cpf_socio: "" }],
-    contatos: [{ nome_contato: "", email_contato: "", telefone_contato: "" }],
-    possui_prolabore: "nao_informado",
-    valor_prolabore: "",
-    possui_empregados: "nao_informado",
-    possui_contabilidade: "nao_informado",
-    tipo_contabilidade: "",
-    regime_contabil: "",
-    possui_parcelamento: "nao_informado",
-    tipos_parcelamento: [""],
-    valor_honorario: "",
-    vencimento_honorario: "",
-    data_primeiro_honorario: "",
-    observacao: "",
-  });
+  const [form, setForm] = useState(INITIAL_FORM);
 
   const update = (key: string, value: string) => setForm((p) => ({ ...p, [key]: value }));
 
@@ -400,6 +402,12 @@ export function AlteracaoVisaoGeralTab() {
         if (result.ok) {
           toast.success("Mensagem e documentos enviados ao grupo no WhatsApp.");
           setAnexos([]);
+          setForm({
+            ...INITIAL_FORM,
+            socios: INITIAL_FORM.socios.map((s) => ({ ...s })),
+            contatos: INITIAL_FORM.contatos.map((c) => ({ ...c })),
+            tipos_parcelamento: [...INITIAL_FORM.tipos_parcelamento],
+          });
         } else {
           setWaError(result.error ?? "Falha ao enviar");
           toast.error(result.error ?? "Falha ao enviar");
@@ -409,6 +417,13 @@ export function AlteracaoVisaoGeralTab() {
       }
     } else {
       toast.success("Formulário validado. Conecte o WhatsApp e selecione um grupo para enviar.");
+      setForm({
+        ...INITIAL_FORM,
+        socios: INITIAL_FORM.socios.map((s) => ({ ...s })),
+        contatos: INITIAL_FORM.contatos.map((c) => ({ ...c })),
+        tipos_parcelamento: [...INITIAL_FORM.tipos_parcelamento],
+      });
+      setAnexos([]);
     }
   };
 

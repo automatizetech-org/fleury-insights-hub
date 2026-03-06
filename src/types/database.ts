@@ -18,9 +18,9 @@ export type Database = {
         Update: { id?: string; username?: string; role?: string; created_at?: string; panel_access?: Record<string, boolean> }
       }
       companies: {
-        Row: { id: string; name: string; document: string | null; created_by: string | null; created_at: string; active: boolean; auth_mode: string | null; cert_blob_b64: string | null; cert_password: string | null }
-        Insert: { id?: string; name: string; document?: string | null; created_by?: string | null; created_at?: string; active?: boolean; auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null }
-        Update: { id?: string; name?: string; document?: string | null; created_by?: string | null; created_at?: string; active?: boolean; auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null }
+        Row: { id: string; name: string; document: string | null; created_by: string | null; created_at: string; active: boolean; auth_mode: string | null; cert_blob_b64: string | null; cert_password: string | null; cert_valid_until: string | null; contador_nome: string | null; contador_cpf: string | null }
+        Insert: { id?: string; name: string; document?: string | null; created_by?: string | null; created_at?: string; active?: boolean; auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null; cert_valid_until?: string | null; contador_nome?: string | null; contador_cpf?: string | null }
+        Update: { id?: string; name?: string; document?: string | null; created_by?: string | null; created_at?: string; active?: boolean; auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null; cert_valid_until?: string | null; contador_nome?: string | null; contador_cpf?: string | null }
       }
       company_memberships: {
         Row: { company_id: string; user_id: string; member_role: string; created_at: string }

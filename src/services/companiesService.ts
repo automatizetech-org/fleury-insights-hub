@@ -16,6 +16,9 @@ export async function createCompany(params: {
   auth_mode?: "password" | "certificate" | null
   cert_blob_b64?: string | null
   cert_password?: string | null
+  cert_valid_until?: string | null
+  contador_nome?: string | null
+  contador_cpf?: string | null
 }) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error("Não autenticado")
@@ -27,6 +30,9 @@ export async function createCompany(params: {
       auth_mode: params.auth_mode ?? null,
       cert_blob_b64: params.cert_blob_b64 ?? null,
       cert_password: params.cert_password ?? null,
+      cert_valid_until: params.cert_valid_until ?? null,
+      contador_nome: params.contador_nome ?? null,
+      contador_cpf: params.contador_cpf ?? null,
       created_by: user.id,
     })
     .select()
@@ -44,6 +50,9 @@ export async function updateCompany(
     auth_mode?: "password" | "certificate" | null
     cert_blob_b64?: string | null
     cert_password?: string | null
+    cert_valid_until?: string | null
+    contador_nome?: string | null
+    contador_cpf?: string | null
   }
 ) {
   const { data, error } = await supabase

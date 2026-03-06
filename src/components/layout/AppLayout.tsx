@@ -3,6 +3,8 @@ import { useNavigate, useLocation, Navigate } from "react-router-dom";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { useProfile } from "@/hooks/useProfile";
+import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
+import { useCompanies } from "@/hooks/useCompanies";
 import { pathToPanelKey } from "@/lib/panelAccess";
 import { cn } from "@/utils";
 import { Moon, Sun, PanelLeftClose, PanelLeft } from "lucide-react";
@@ -15,6 +17,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { isSuperAdmin, profile } = useProfile();
+  const { selectedCompanyIds } = useSelectedCompanyIds();
+  const { data: companies = [] } = useCompanies();
   const panelKey = pathToPanelKey(location.pathname);
   const noAccess =
     !isSuperAdmin &&
@@ -69,6 +73,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
           >
             {sidebarOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
           </button>
+          <p className="text-sm text-muted-foreground truncate min-w-0 hidden sm:block">
+            Seja bem-vindo,{" "}
+            {selectedCompanyIds.length === 0
+              ? "Todas as empresas"
+              : selectedCompanyIds.length === 1
+                ? companies.find((c) => c.id === selectedCompanyIds[0])?.name ?? "—"
+                : `${selectedCompanyIds.length} empresas selecionadas`}
+          </p>
           <div className="flex items-center gap-1 sm:gap-2 min-w-0 justify-end ml-auto">
             <button
               onClick={() => setDark(!dark)}

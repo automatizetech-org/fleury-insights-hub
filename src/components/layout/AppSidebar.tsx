@@ -158,12 +158,12 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
                     role="combobox"
                     className={cn(
                       "flex-1 min-w-0 h-12 md:h-8 justify-between rounded-xl md:rounded-md border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-foreground text-base md:text-xs font-normal hover:bg-gray-50 dark:hover:bg-slate-700/50 truncate",
-                      !selectedCompanyIds.length && "text-muted-foreground"
+                      selectedCompanyIds.length === 0 && "text-muted-foreground"
                     )}
                   >
                     <span className="truncate min-w-0">
                       {selectedCompanyIds.length === 0
-                        ? "Selecione..."
+                        ? "Todas as empresas"
                         : selectedCompanyIds.length === 1
                           ? companies.find((c) => c.id === selectedCompanyIds[0])?.name ?? "1 selecionada"
                           : `${selectedCompanyIds.length} selecionadas`}
@@ -177,6 +177,16 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
                     <CommandList>
                       <CommandEmpty className="text-xs py-3">Nenhuma empresa encontrada.</CommandEmpty>
                       <CommandGroup className="p-0">
+                        <CommandItem
+                          value="Todas as empresas"
+                          onSelect={() => setSelectedCompanyIds([])}
+                          className="text-xs py-1.5 gap-2"
+                        >
+                          <span className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded border", selectedCompanyIds.length === 0 ? "bg-primary border-primary" : "border-input")}>
+                            {selectedCompanyIds.length === 0 ? <Check className="h-2.5 w-2.5 text-primary-foreground" /> : null}
+                          </span>
+                          <span className="truncate min-w-0">Todas as empresas</span>
+                        </CommandItem>
                         {companies.map((c) => {
                           const selected = selectedCompanyIds.includes(c.id);
                           return (

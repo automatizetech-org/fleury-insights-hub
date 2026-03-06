@@ -14,12 +14,26 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Search, Pencil, Plus, Building2 } from "lucide-react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Search, Pencil, Plus, Building2, Loader2 } from "lucide-react"
 import { cn } from "@/utils"
+import { getPfxInfo } from "@/lib/validatePfxPassword"
+import { toast } from "sonner"
 
 type FilterStatus = "active" | "inactive" | "all"
 
-type CompanyWithCert = Company & { auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null }
+type CompanyWithCert = Company & { auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null; cert_valid_until?: string | null; contador_nome?: string | null; contador_cpf?: string | null }
+
+const CONTADORES = [
+  { nome: "ELIANDERSON GOMES FLEURY", cpf: "71361170115" },
+  { nome: "EDER GOMES FLEURY", cpf: "86873598100" },
+] as const
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -51,6 +65,7 @@ export default function EmpresasPage() {
   const [editCertFile, setEditCertFile] = useState<File | null>(null)
   const [editCertPassword, setEditCertPassword] = useState("")
   const editCertInputRef = useRef<HTMLInputElement>(null)
+  const [editContadorCpf, setEditContadorCpf] = useState<string>("")
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState("")
 
@@ -75,10 +90,11 @@ export default function EmpresasPage() {
     setEditDocument(c.document ?? "")
     setEditActive((c as CompanyWithCert).active !== false)
     const withCert = c as CompanyWithCert
-    setEditUseCertificate(!!withCert.cert_blob_b64)
+    setEditUseCertificate(!!(withCert.cert_blob_b64 || withCert.auth_mode === "certificate"))
     setEditCertReplacing(false)
     setEditCertFile(null)
     setEditCertPassword("")
+    setEditContadorCpf(withCert.contador_cpf ?? "")
     setEditError("")
   }
 
@@ -86,7 +102,7 @@ export default function EmpresasPage() {
     e.preventDefault()
     if (!editingCompany) return
     setEditError("")
-    if (editUseCertificate && editCertReplacing && (!editCertFile || !editCertPassword.trim())) {
+    if (editUseCertificate && (editCertFile || editCertPassword) && (!editCertFile || !editCertPassword.trim())) {
       setEditError("Selecione o arquivo .pfx e informe a senha do certificado.")
       return
     }
@@ -101,20 +117,36 @@ export default function EmpresasPage() {
         updates.auth_mode = null
         updates.cert_blob_b64 = null
         updates.cert_password = null
-      } else if (editCertReplacing && editCertFile && editCertPassword.trim()) {
+        updates.cert_valid_until = null
+      } else if (editCertFile && editCertPassword.trim()) {
         updates.auth_mode = "certificate"
-        updates.cert_blob_b64 = await fileToBase64(editCertFile)
-        updates.cert_password = editCertPassword.trim()
+        const b64 = await fileToBase64(editCertFile)
+        const pwd = editCertPassword.trim()
+        const info = getPfxInfo(b64, pwd)
+        if (!info.valid) {
+          setEditError("Senha do certificado incorreta. Não foi possível salvar.")
+          toast.error("Senha do certificado incorreta.")
+          return
+        }
+        updates.cert_blob_b64 = b64
+        updates.cert_password = pwd
+        updates.cert_valid_until = info.validUntil ?? null
       } else if (editUseCertificate && (editingCompany as CompanyWithCert).cert_blob_b64) {
         updates.auth_mode = "certificate"
         // mantém certificado existente (não envia cert_blob_b64/cert_password)
       }
+      const contador = CONTADORES.find((x) => x.cpf === editContadorCpf)
+      updates.contador_nome = contador ? contador.nome : null
+      updates.contador_cpf = editContadorCpf || null
       await updateCompany(editingCompany.id, updates)
       queryClient.invalidateQueries({ queryKey: ["companies-list"] })
       queryClient.invalidateQueries({ queryKey: ["admin-companies"] })
       setEditingCompany(null)
+      toast.success("Empresa salva com sucesso. Certificado enviado ao Supabase.")
     } catch (err: unknown) {
-      setEditError(err instanceof Error ? err.message : "Erro ao salvar")
+      const msg = err instanceof Error ? err.message : "Erro ao salvar"
+      setEditError(msg)
+      toast.error(msg)
     } finally {
       setEditSaving(false)
     }
@@ -192,6 +224,11 @@ export default function EmpresasPage() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{emp.name}</p>
                     <p className="text-xs text-muted-foreground">{emp.document ?? "—"}</p>
+                    {(emp as CompanyWithCert).contador_nome && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Contador: {(emp as CompanyWithCert).contador_nome}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -222,12 +259,20 @@ export default function EmpresasPage() {
         </div>
       </GlassCard>
 
-      <Dialog open={!!editingCompany} onOpenChange={(open) => !open && setEditingCompany(null)}>
-        <DialogContent>
+      <Dialog open={!!editingCompany} onOpenChange={(open) => !open && !editSaving && setEditingCompany(null)}>
+        <DialogContent aria-describedby={undefined}>
+          {editSaving && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur-sm">
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                <p className="text-sm font-medium">Salvando empresa e enviando certificado ao Supabase...</p>
+              </div>
+            </div>
+          )}
           <DialogHeader>
             <DialogTitle>Editar empresa</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSave} className="space-y-4">
+          <form onSubmit={handleSave} className="space-y-4 min-w-0 overflow-hidden">
             <div className="space-y-2">
               <Label>Nome</Label>
               <Input
@@ -257,6 +302,26 @@ export default function EmpresasPage() {
               />
               <Label htmlFor="emp-edit-active">Ativa</Label>
             </div>
+            <div className="space-y-2">
+              <Label>Contador responsável</Label>
+              <Select
+                value={editContadorCpf || "none"}
+                onValueChange={(v) => setEditContadorCpf(v === "none" ? "" : v)}
+                disabled={editSaving}
+              >
+                <SelectTrigger className="min-h-10 [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:text-left py-2">
+                  <SelectValue placeholder="Selecione o contador" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Nenhum</SelectItem>
+                  {CONTADORES.map((c) => (
+                    <SelectItem key={c.cpf} value={c.cpf}>
+                      {c.nome} — CPF {c.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-3 pt-2 border-t border-border">
               <div className="flex items-center gap-2">
                 <input
@@ -270,19 +335,29 @@ export default function EmpresasPage() {
                   disabled={editSaving}
                   className="rounded border-input"
                 />
-                <Label htmlFor="emp-edit-cert" className="font-normal cursor-pointer">Certificado digital (NFS-e)</Label>
+                <Label htmlFor="emp-edit-cert" className="font-normal cursor-pointer">Certificado digital (uso geral)</Label>
               </div>
               {editUseCertificate && (
                 <div className="pl-4 border-l-2 border-border space-y-2">
-                  {(editingCompany as CompanyWithCert).cert_blob_b64 && !editCertReplacing ? (
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm text-muted-foreground">Certificado cadastrado</span>
-                      <Button type="button" variant="outline" size="sm" onClick={() => { setEditCertReplacing(true); setEditCertFile(null); setEditCertPassword(""); editCertInputRef.current?.click(); }} disabled={editSaving}>
-                        Substituir
-                      </Button>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => setEditUseCertificate(false)} disabled={editSaving}>
-                        Remover
-                      </Button>
+                  {(!!(editingCompany as CompanyWithCert)?.cert_blob_b64 || (editingCompany as CompanyWithCert)?.auth_mode === "certificate") && !editCertReplacing ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm text-muted-foreground">Certificado cadastrado</span>
+                        <Button type="button" variant="outline" size="sm" onClick={() => { setEditCertReplacing(true); setEditCertFile(null); setEditCertPassword(""); editCertInputRef.current?.click(); }} disabled={editSaving}>
+                          Substituir
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setEditUseCertificate(false)} disabled={editSaving}>
+                          Remover
+                        </Button>
+                      </div>
+                      {(editingCompany as CompanyWithCert)?.cert_valid_until && (
+                        <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                          Certificado ativo — Válido até {(() => {
+                            const [y, m, d] = (editingCompany as CompanyWithCert).cert_valid_until!.split("-")
+                            return `${d}/${m}/${y}`
+                          })()}
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <>
@@ -295,9 +370,11 @@ export default function EmpresasPage() {
                       />
                       <div className="space-y-1">
                         <Label>Arquivo .pfx</Label>
-                        <div className="flex gap-2 items-center">
-                          <Button type="button" variant="outline" size="sm" onClick={() => editCertInputRef.current?.click()} disabled={editSaving}>
-                            {editCertFile ? editCertFile.name : "Selecionar"}
+                        <div className="flex gap-2 items-center min-w-0 overflow-hidden">
+                          <Button type="button" variant="outline" size="sm" onClick={() => editCertInputRef.current?.click()} disabled={editSaving} className="w-full min-w-0 overflow-hidden justify-start text-left">
+                            <span className="truncate block w-full" title={editCertFile?.name ?? undefined}>
+                              {editCertFile ? editCertFile.name : "Selecionar"}
+                            </span>
                           </Button>
                         </div>
                       </div>
@@ -312,7 +389,7 @@ export default function EmpresasPage() {
                           autoComplete="off"
                         />
                       </div>
-                      {(editingCompany as CompanyWithCert).cert_blob_b64 && (
+                      {(!!(editingCompany as CompanyWithCert)?.cert_blob_b64 || (editingCompany as CompanyWithCert)?.auth_mode === "certificate") && (
                         <Button type="button" variant="ghost" size="sm" onClick={() => { setEditCertReplacing(false); setEditCertFile(null); setEditCertPassword(""); }} disabled={editSaving}>
                           Manter certificado atual
                         </Button>

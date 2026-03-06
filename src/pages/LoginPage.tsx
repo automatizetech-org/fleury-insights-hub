@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useLocation } from "react-router-dom"
 import { Lock, Loader2, AlertCircle } from "lucide-react"
 import { supabase } from "@/services/supabaseClient"
 import { getProfile } from "@/services/profilesService"
@@ -10,6 +10,8 @@ const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const from = (location.state as { from?: string } | null)?.from
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
@@ -55,7 +57,7 @@ export default function LoginPage() {
       if (profile.role === "super_admin") {
         navigate("/admin", { replace: true })
       } else {
-        navigate("/dashboard", { replace: true })
+        navigate(from && from !== "/login" ? from : "/dashboard", { replace: true })
       }
     } catch (err: unknown) {
       setLoading(false)
