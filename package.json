@@ -7,7 +7,7 @@
     "dev": "concurrently \"npm run dev:vite\" \"npm run dev:wa\"",
     "dev:vite": "vite --config config/vite.config.ts",
     "dev:wa": "cd backend/whatsapp-emissor && node server.js",
-    "build": "vite build --config config/vite.config.ts",
+    "build": "vite --version && vite build --config config/vite.config.ts",
     "build:dev": "vite build --mode development --config config/vite.config.ts",
     "lint": "eslint . -c config/eslint.config.js",
     "preview": "vite preview --config config/vite.config.ts",
