@@ -1,6 +1,0 @@
-{
-  "installCommand": "npm ci",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
-}
