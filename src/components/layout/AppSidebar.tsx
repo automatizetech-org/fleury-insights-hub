@@ -91,7 +91,7 @@ const navItems: NavItem[] = [
     ],
   },
   { name: "Financeiro", path: "/financeiro", icon: DollarSign, description: "Contas e Receita", panelKey: "financeiro" },
-  { name: "Operações", path: "/operacoes", icon: Activity, description: "SLA e monitoramento", panelKey: "operacoes" },
+  { name: "Operações", path: "/operacoes", icon: Activity, description: "Sincronização e monitoramento", panelKey: "operacoes" },
   { name: "Documentos", path: "/documentos", icon: FileSpreadsheet, description: "Gestão documental", panelKey: "documentos" },
   { name: "Empresas", path: "/empresas", icon: Building2, description: "Lista e edição de empresas", panelKey: "empresas" },
   {
@@ -105,7 +105,6 @@ const navItems: NavItem[] = [
       { name: "Contratos", path: "/alteracao-empresarial/contratos" },
     ],
   },
-  { name: "Sincronização", path: "/sync", icon: RefreshCw, description: "Status de sync", panelKey: "sync" },
   { name: "Administração", path: "/admin", icon: Settings, description: "Usuários e config" },
 ];
 
@@ -165,8 +164,8 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
                       {selectedCompanyIds.length === 0
                         ? "Todas as empresas"
                         : selectedCompanyIds.length === 1
-                          ? companies.find((c) => c.id === selectedCompanyIds[0])?.name ?? "1 selecionada"
-                          : `${selectedCompanyIds.length} selecionadas`}
+                          ? companies.find((c) => c.id === selectedCompanyIds[0])?.name ?? "1 empresa selecionada"
+                          : `${selectedCompanyIds.length} empresas selecionadas`}
                     </span>
                     <ChevronsUpDown className="ml-1 h-5 w-5 md:h-3 md:w-3 shrink-0 opacity-50 flex-shrink-0" />
                   </Button>

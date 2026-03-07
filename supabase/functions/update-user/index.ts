@@ -47,6 +47,16 @@ Deno.serve(async (req) => {
   const updates: Record<string, unknown> = {}
   if (typeof email === "string" && email.trim()) updates.email = email.trim()
   if (typeof password === "string" && password.length > 0) updates.password = password
+  if (typeof username === "string" && username.trim()) {
+    const { data: targetUser } = await supabaseAdmin.auth.admin.getUserById(user_id)
+    const existing = (targetUser?.user?.user_metadata ?? {}) as Record<string, unknown>
+    updates.user_metadata = {
+      ...existing,
+      full_name: username.trim(),
+      display_name: username.trim(),
+      username: username.trim(),
+    }
+  }
 
   if (Object.keys(updates).length > 0) {
     const { error: updateAuthError } = await supabaseAdmin.auth.admin.updateUserById(user_id, updates)
@@ -58,7 +68,7 @@ Deno.serve(async (req) => {
   const profileUpdates: Record<string, unknown> = {}
   if (typeof username === "string" && username.trim()) profileUpdates.username = username.trim()
   if (role === "super_admin" || role === "user") profileUpdates.role = role
-  if (panel_access && typeof panel_access === "object") profileUpdates.panel_access = panel_access
+  // panel_access não é atualizado aqui para não quebrar quando a coluna não existir na tabela profiles
 
   if (Object.keys(profileUpdates).length > 0) {
     const { error: profileError } = await supabaseAdmin.from("profiles").update(profileUpdates).eq("id", user_id)

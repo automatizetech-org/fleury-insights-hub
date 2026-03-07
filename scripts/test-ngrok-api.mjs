@@ -37,10 +37,25 @@ const TEST_PATH = "EMPRESAS/Grupo Fleury/NFS";
 
 async function listFiles() {
   const url = `${SERVER_API_URL}/api/files/list?path=${encodeURIComponent(TEST_PATH)}`;
-  const headers = { "ngrok-skip-browser-warning": "true" };
+  const headers = {
+    "ngrok-skip-browser-warning": "1",
+    "User-Agent": "fleury-insights-hub/1.0",
+  };
   console.log("GET", url);
   const res = await fetch(url, { headers });
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    if (text.trimStart().startsWith("<")) {
+      console.error("A API respondeu com HTML (página do ngrok?). O script já envia ngrok-skip-browser-warning.");
+      console.error("Se persistir, abra a URL no navegador uma vez e confirme o acesso, depois rode o script de novo.");
+    } else {
+      console.error("Resposta não é JSON:", text.slice(0, 200));
+    }
+    process.exit(1);
+  }
   if (!res.ok) {
     console.error("Erro:", data);
     process.exit(1);
@@ -61,7 +76,8 @@ async function syncFiscal(companyId, token) {
   const headers = {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${token}`,
-    "ngrok-skip-browser-warning": "true",
+    "ngrok-skip-browser-warning": "1",
+    "User-Agent": "fleury-insights-hub/1.0",
   };
   const body = {
     path: TEST_PATH,
@@ -70,13 +86,28 @@ async function syncFiscal(companyId, token) {
   };
   console.log("POST", url, "(com JWT)");
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    if (text.trimStart().startsWith("<")) {
+      console.error("Resposta HTML (página do ngrok?). Tente abrir a URL no navegador uma vez.");
+    } else {
+      console.error("Resposta não é JSON:", text.slice(0, 200));
+    }
+    process.exit(1);
+  }
   if (!res.ok) {
     console.error("Erro:", data);
     process.exit(1);
   }
-  console.log("Sync concluído:", data.inserted, "arquivo(s) inserido(s)");
+  console.log("Sync: encontrados", data.found ?? "?", "arquivo(s), inseridos", data.inserted);
   (data.files || []).forEach((f) => console.log("  -", f.name, "id:", f.id));
+  if (data.errors?.length) {
+    console.error("Falhas no insert:");
+    data.errors.forEach((e) => console.error("  -", e.name, ":", e.error));
+  }
   return data;
 }
 

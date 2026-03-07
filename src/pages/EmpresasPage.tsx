@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
-import { getCompaniesForUser, updateCompany } from "@/services/companiesService"
+import { getCompaniesForUser, updateCompany, getCompanyRobotConfig, upsertCompanyRobotConfig, ROBOT_NFS_TECHNICAL_ID } from "@/services/companiesService"
 import type { Company } from "@/services/profilesService"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
@@ -69,6 +69,10 @@ export default function EmpresasPage() {
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState("")
 
+  const [editNfsRobotEnabled, setEditNfsRobotEnabled] = useState(false)
+  const [editNfsRobotAuthMode, setEditNfsRobotAuthMode] = useState<"password" | "certificate">("password")
+  const [editNfsRobotPassword, setEditNfsRobotPassword] = useState("")
+
   const { data: companies = [], isLoading } = useQuery({
     queryKey: ["companies-list", filter],
     queryFn: () => getCompaniesForUser(filter === "all" ? "all" : filter === "active" ? "active" : "inactive"),
@@ -84,7 +88,7 @@ export default function EmpresasPage() {
     )
   }, [companies, search])
 
-  const openEdit = (c: Company) => {
+  const openEdit = async (c: Company) => {
     setEditingCompany(c)
     setEditName(c.name)
     setEditDocument(c.document ?? "")
@@ -96,6 +100,16 @@ export default function EmpresasPage() {
     setEditCertPassword("")
     setEditContadorCpf(withCert.contador_cpf ?? "")
     setEditError("")
+    try {
+      const config = await getCompanyRobotConfig(c.id, ROBOT_NFS_TECHNICAL_ID)
+      setEditNfsRobotEnabled(config?.enabled ?? false)
+      setEditNfsRobotAuthMode((config?.auth_mode as "password" | "certificate") ?? "password")
+      setEditNfsRobotPassword(config?.nfs_password ?? "")
+    } catch {
+      setEditNfsRobotEnabled(false)
+      setEditNfsRobotAuthMode("password")
+      setEditNfsRobotPassword("")
+    }
   }
 
   const handleSave = async (e: React.FormEvent) => {
@@ -139,6 +153,11 @@ export default function EmpresasPage() {
       updates.contador_nome = contador ? contador.nome : null
       updates.contador_cpf = editContadorCpf || null
       await updateCompany(editingCompany.id, updates)
+      await upsertCompanyRobotConfig(editingCompany.id, ROBOT_NFS_TECHNICAL_ID, {
+        enabled: editNfsRobotEnabled,
+        auth_mode: editNfsRobotAuthMode,
+        nfs_password: editNfsRobotAuthMode === "password" ? editNfsRobotPassword.trim() || null : null,
+      })
       queryClient.invalidateQueries({ queryKey: ["companies-list"] })
       queryClient.invalidateQueries({ queryKey: ["admin-companies"] })
       setEditingCompany(null)
@@ -395,6 +414,77 @@ export default function EmpresasPage() {
                         </Button>
                       )}
                     </>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="space-y-3 pt-2 border-t border-border">
+              <p className="text-sm font-medium">Robô NFS (portal nacional)</p>
+              <p className="text-xs text-muted-foreground">Ative para esta empresa rodar no robô de download de NFS-e. Se desligado, o robô não processa esta empresa.</p>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">Desligado</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={editNfsRobotEnabled}
+                  onClick={() => setEditNfsRobotEnabled((v) => !v)}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
+                    editNfsRobotEnabled ? "bg-primary" : "bg-muted"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition",
+                      editNfsRobotEnabled ? "translate-x-5" : "translate-x-1"
+                    )}
+                  />
+                </button>
+                <span className="text-sm text-muted-foreground">Ligado</span>
+              </div>
+              {editNfsRobotEnabled && (
+                <div className="pl-4 border-l-2 border-border space-y-3">
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="edit-nfs-auth"
+                        checked={editNfsRobotAuthMode === "password"}
+                        onChange={() => setEditNfsRobotAuthMode("password")}
+                        disabled={editSaving}
+                        className="rounded-full border-input"
+                      />
+                      <span className="text-sm">Login (CNPJ + senha)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="edit-nfs-auth"
+                        checked={editNfsRobotAuthMode === "certificate"}
+                        onChange={() => setEditNfsRobotAuthMode("certificate")}
+                        disabled={editSaving}
+                        className="rounded-full border-input"
+                      />
+                      <span className="text-sm">Certificado</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {editNfsRobotAuthMode === "certificate"
+                      ? "Usa o certificado cadastrado acima (uso geral)."
+                      : "Senha para acesso no portal nacional com CNPJ."}
+                  </p>
+                  {editNfsRobotAuthMode === "password" && (
+                    <div className="space-y-1">
+                      <Label>Senha do portal NFS</Label>
+                      <Input
+                        type="password"
+                        value={editNfsRobotPassword}
+                        onChange={(e) => setEditNfsRobotPassword(e.target.value)}
+                        placeholder="Senha de acesso ao portal"
+                        disabled={editSaving}
+                        autoComplete="off"
+                      />
+                    </div>
                   )}
                 </div>
               )}

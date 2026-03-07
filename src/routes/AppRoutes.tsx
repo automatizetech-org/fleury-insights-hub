@@ -11,7 +11,6 @@ import DPTopicPage from "@/pages/DPTopicPage";
 import FinanceiroPage from "@/pages/FinanceiroPage";
 import OperacoesPage from "@/pages/OperacoesPage";
 import DocumentosPage from "@/pages/DocumentosPage";
-import SyncPage from "@/pages/SyncPage";
 import AdminPage from "@/pages/AdminPage";
 import NotFound from "@/pages/NotFound";
 import EmpresasNovaPage from "@/pages/EmpresasNovaPage";
@@ -37,7 +36,7 @@ export function AppRoutes() {
       <Route path="/financeiro" element={<ProtectedRoute><AppLayout><FinanceiroPage /></AppLayout></ProtectedRoute>} />
       <Route path="/operacoes" element={<ProtectedRoute><AppLayout><OperacoesPage /></AppLayout></ProtectedRoute>} />
       <Route path="/documentos" element={<ProtectedRoute><AppLayout><DocumentosPage /></AppLayout></ProtectedRoute>} />
-      <Route path="/sync" element={<ProtectedRoute><AppLayout><SyncPage /></AppLayout></ProtectedRoute>} />
+      <Route path="/sync" element={<Navigate to="/operacoes" replace />} />
       <Route path="/admin" element={<ProtectedRoute><AppLayout><ProtectedAdminRoute><AdminPage /></ProtectedAdminRoute></AppLayout></ProtectedRoute>} />
       <Route path="/empresas" element={<ProtectedRoute><AppLayout><EmpresasPage /></AppLayout></ProtectedRoute>} />
       <Route path="/empresas/nova" element={<ProtectedRoute><AppLayout><EmpresasNovaPage /></AppLayout></ProtectedRoute>} />

@@ -53,3 +53,35 @@ export async function downloadFiscalDocument(documentId: string, suggestedName?:
   a.click();
   URL.revokeObjectURL(a.href);
 }
+
+/** Marca o documento fiscal como baixado (atualiza last_downloaded_at para retenção). */
+export async function markFiscalDocumentDownloaded(documentId: string): Promise<void> {
+  const { error } = await supabase
+    .from("fiscal_documents")
+    .update({ last_downloaded_at: new Date().toISOString() })
+    .eq("id", documentId)
+  if (error) console.warn("Não foi possível atualizar last_downloaded_at:", error.message)
+}
+
+/**
+ * Sincroniza todos os arquivos fiscais da pasta EMPRESAS na VM para fiscal_documents (Supabase).
+ * Usa o JWT da sessão atual. Chamar ao abrir Fiscal/Documentos ou ao clicar em "Sincronizar".
+ */
+export async function fiscalSyncAll(): Promise<{ ok: boolean; inserted: number; skipped: number; deleted: number; errors?: Array<{ file: string; error: string }> }> {
+  if (!SERVER_API_URL) {
+    throw new Error("SERVER_API_URL não configurada.");
+  }
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error("Faça login para sincronizar.");
+  }
+  const headers: Record<string, string> = { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` };
+  if (SERVER_API_URL.toLowerCase().includes("ngrok")) headers["ngrok-skip-browser-warning"] = "true";
+  const res = await fetch(`${SERVER_API_URL}/api/fiscal-sync-all`, { method: "POST", headers });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = body?.error ?? body?.message ?? `Erro ${res.status} ao sincronizar`;
+    throw new Error(msg);
+  }
+  return { ok: true, inserted: body.inserted ?? 0, skipped: body.skipped ?? 0, deleted: body.deleted ?? 0, errors: body.errors };
+}

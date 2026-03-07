@@ -1,6 +1,6 @@
 import { useState, useRef } from "react"
 import { useNavigate } from "react-router-dom"
-import { createCompany } from "@/services/companiesService"
+import { createCompany, upsertCompanyRobotConfig, ROBOT_NFS_TECHNICAL_ID } from "@/services/companiesService"
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select"
 import { getPfxInfo } from "@/lib/validatePfxPassword"
 import { toast } from "sonner"
+import { cn } from "@/utils"
 
 const BRASIL_API_CNPJ = "https://brasilapi.com.br/api/cnpj/v1"
 
@@ -59,6 +60,10 @@ export default function EmpresasNovaPage() {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [loadingCnpj, setLoadingCnpj] = useState(false)
+
+  const [nfsRobotEnabled, setNfsRobotEnabled] = useState(false)
+  const [nfsRobotAuthMode, setNfsRobotAuthMode] = useState<"password" | "certificate">("password")
+  const [nfsRobotPassword, setNfsRobotPassword] = useState("")
 
   const fetchByCnpj = async () => {
     const digits = onlyDigits(document)
@@ -117,6 +122,11 @@ export default function EmpresasNovaPage() {
         cert_valid_until,
         contador_nome: contadorCpf ? (CONTADORES.find((c) => c.cpf === contadorCpf)?.nome ?? null) : null,
         contador_cpf: contadorCpf || null,
+      })
+      await upsertCompanyRobotConfig(company.id, ROBOT_NFS_TECHNICAL_ID, {
+        enabled: nfsRobotEnabled,
+        auth_mode: nfsRobotAuthMode,
+        nfs_password: nfsRobotAuthMode === "password" ? nfsRobotPassword.trim() || null : null,
       })
       setSelectedCompanyIds([company.id])
       toast.success("Empresa cadastrada com sucesso. Certificado enviado ao Supabase.")
@@ -221,6 +231,78 @@ export default function EmpresasNovaPage() {
                     autoComplete="off"
                   />
                 </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3 pt-2 border-t border-border">
+            <p className="text-sm font-medium">Robô NFS (portal nacional)</p>
+            <p className="text-xs text-muted-foreground">Ative para esta empresa rodar no robô de download de NFS-e. Se desligado, o robô não processa esta empresa.</p>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">Desligado</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={nfsRobotEnabled}
+                onClick={() => setNfsRobotEnabled((v) => !v)}
+                className={cn(
+                  "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
+                  nfsRobotEnabled ? "bg-primary" : "bg-muted"
+                )}
+              >
+                <span
+                  className={cn(
+                    "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition",
+                    nfsRobotEnabled ? "translate-x-5" : "translate-x-1"
+                  )}
+                />
+              </button>
+              <span className="text-sm text-muted-foreground">Ligado</span>
+            </div>
+            {nfsRobotEnabled && (
+              <div className="pl-4 border-l-2 border-border space-y-3">
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="nfs-auth"
+                      checked={nfsRobotAuthMode === "password"}
+                      onChange={() => setNfsRobotAuthMode("password")}
+                      disabled={loading}
+                      className="rounded-full border-input"
+                    />
+                    <span className="text-sm">Login (CNPJ + senha)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="nfs-auth"
+                      checked={nfsRobotAuthMode === "certificate"}
+                      onChange={() => setNfsRobotAuthMode("certificate")}
+                      disabled={loading}
+                      className="rounded-full border-input"
+                    />
+                    <span className="text-sm">Certificado</span>
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {nfsRobotAuthMode === "certificate"
+                    ? "Usa o certificado cadastrado acima (uso geral)."
+                    : "Senha para acesso no portal nacional com CNPJ."}
+                </p>
+                {nfsRobotAuthMode === "password" && (
+                  <div className="space-y-1">
+                    <Label>Senha do portal NFS</Label>
+                    <Input
+                      type="password"
+                      value={nfsRobotPassword}
+                      onChange={(e) => setNfsRobotPassword(e.target.value)}
+                      placeholder="Senha de acesso ao portal"
+                      disabled={loading}
+                      autoComplete="off"
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -3,22 +3,34 @@ import type { Database } from "@/types/database"
 
 export type Profile = Database["public"]["Tables"]["profiles"]["Row"]
 export type Company = Database["public"]["Tables"]["companies"]["Row"]
-export type CompanyMembership = Database["public"]["Tables"]["company_memberships"]["Row"]
 
-export async function getProfile(userId: string) {
+export async function getProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("*")
+    .select("id, username, role")
     .eq("id", userId)
-    .single()
+    .maybeSingle()
   if (error) throw error
-  return data as Profile
+  if (!data) return null
+  const row = data as { id: string; username: string; role: string }
+  return {
+    ...row,
+    created_at: "",
+    panel_access: {},
+  } as Profile
 }
 
 export async function getProfilesForAdmin() {
-  const { data, error } = await supabase.from("profiles").select("*").order("created_at", { ascending: false })
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, username, role")
+    .order("id", { ascending: true })
   if (error) throw error
-  return data as Profile[]
+  return (data ?? []).map((row) => ({
+    ...row,
+    created_at: "",
+    panel_access: {},
+  })) as Profile[]
 }
 
 export async function updateProfile(
@@ -45,8 +57,20 @@ export async function getUsersForAdmin(): Promise<AdminUser[]> {
       apikey: ANON_KEY,
       "X-User-Token": session.access_token,
     },
+    cache: "no-store",
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data?.error || data?.detail || "Falha ao listar usuários")
-  return Array.isArray(data) ? data : []
+  const raw = Array.isArray(data) ? data : []
+  return raw.map((u: { id?: string; email?: string | null; username?: string | null; role?: string; panel_access?: Record<string, boolean>; created_at?: string }) => {
+    const username = (u.username != null && u.username !== "") ? String(u.username).trim() : ""
+    return {
+      id: u.id ?? "",
+      email: u.email ?? null,
+      username,
+      role: u.role ?? "user",
+      panel_access: u.panel_access ?? {},
+      created_at: u.created_at ?? "",
+    }
+  }) as AdminUser[]
 }

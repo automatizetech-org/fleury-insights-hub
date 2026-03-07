@@ -2,7 +2,7 @@ import { useState, useRef } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getUsersForAdmin, getProfile, updateProfile } from "@/services/profilesService"
 import { supabase } from "@/services/supabaseClient"
-import { getCompaniesForUser, updateCompany } from "@/services/companiesService"
+import { getCompaniesForUser, updateCompany, getCompanyRobotConfig, upsertCompanyRobotConfig, ROBOT_NFS_TECHNICAL_ID } from "@/services/companiesService"
 import type { Company, AdminUser } from "@/services/profilesService"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,11 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Users, Building2, Shield, Key, Pencil, Loader2 } from "lucide-react"
+import { AdminFolderStructure } from "@/components/admin/AdminFolderStructure"
+import { AdminRobotsList } from "@/components/admin/AdminRobotsList"
+import { AdminScheduler } from "@/components/admin/AdminScheduler"
+import { AdminFileRetention } from "@/components/admin/AdminFileRetention"
+import { getRobots } from "@/services/robotsService"
 import { PANEL_KEYS, PANEL_LABELS } from "@/lib/panelAccess"
 import { getPfxInfo } from "@/lib/validatePfxPassword"
 import { toast } from "sonner"
@@ -77,6 +82,9 @@ export default function AdminPage() {
   const editCertInputRef = useRef<HTMLInputElement>(null)
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState("")
+  const [editNfsRobotEnabled, setEditNfsRobotEnabled] = useState(false)
+  const [editNfsRobotAuthMode, setEditNfsRobotAuthMode] = useState<"password" | "certificate">("password")
+  const [editNfsRobotPassword, setEditNfsRobotPassword] = useState("")
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null)
   const [editUsername, setEditUsername] = useState("")
   const [editEmail, setEditEmail] = useState("")
@@ -85,6 +93,7 @@ export default function AdminPage() {
   const [editPanelAccess, setEditPanelAccess] = useState<Record<string, boolean>>({})
   const [editUserSaving, setEditUserSaving] = useState(false)
   const [editUserError, setEditUserError] = useState("")
+  const [passwordJustSet, setPasswordJustSet] = useState<string | null>(null)
 
   const defaultPanelAccess: Record<string, boolean> = {
     dashboard: true,
@@ -117,11 +126,20 @@ export default function AdminPage() {
       try {
         return await getUsersForAdmin()
       } catch {
-        const list = await supabase.from("profiles").select("*").order("created_at", { ascending: false })
+        const list = await supabase.from("profiles").select("id, username, role, created_at").order("id", { ascending: true })
         if (list.error) throw list.error
-        return (list.data ?? []).map((p) => ({ ...p, email: null as string | null })) as AdminUser[]
+        return (list.data ?? []).map((p) => ({
+          id: (p as { id: string }).id,
+          username: (p as { username?: string | null }).username ?? "",
+          role: (p as { role?: string }).role ?? "user",
+          created_at: "",
+          panel_access: {},
+          email: null as string | null,
+        })) as AdminUser[]
       }
     },
+    staleTime: 0,
+    refetchOnMount: "always",
   })
   const adminUsers = profiles as AdminUser[]
 
@@ -209,7 +227,7 @@ export default function AdminPage() {
     }
   }
 
-  const openEditCompany = (emp: (typeof companies)[0]) => {
+  const openEditCompany = async (emp: (typeof companies)[0]) => {
     setEditingCompany(emp)
     setEditName(emp.name)
     setEditDocument(emp.document ?? "")
@@ -221,6 +239,16 @@ export default function AdminPage() {
     setEditCertFile(null)
     setEditCertPassword("")
     setEditError("")
+    try {
+      const config = await getCompanyRobotConfig(emp.id, ROBOT_NFS_TECHNICAL_ID)
+      setEditNfsRobotEnabled(config?.enabled ?? false)
+      setEditNfsRobotAuthMode((config?.auth_mode as "password" | "certificate") ?? "password")
+      setEditNfsRobotPassword(config?.nfs_password ?? "")
+    } catch {
+      setEditNfsRobotEnabled(false)
+      setEditNfsRobotAuthMode("password")
+      setEditNfsRobotPassword("")
+    }
   }
 
   const handleSaveCompany = async (e: React.FormEvent) => {
@@ -262,6 +290,11 @@ export default function AdminPage() {
         updates.auth_mode = "certificate"
       }
       await updateCompany(editingCompany.id, updates)
+      await upsertCompanyRobotConfig(editingCompany.id, ROBOT_NFS_TECHNICAL_ID, {
+        enabled: editNfsRobotEnabled,
+        auth_mode: editNfsRobotAuthMode,
+        nfs_password: editNfsRobotAuthMode === "password" ? editNfsRobotPassword.trim() || null : null,
+      })
       queryClient.invalidateQueries({ queryKey: ["admin-companies"] })
       setEditingCompany(null)
       toast.success("Empresa salva com sucesso. Certificado enviado ao Supabase.")
@@ -276,7 +309,7 @@ export default function AdminPage() {
 
   const openEditUser = (user: AdminUser) => {
     setEditingUser(user)
-    setEditUsername(user.username)
+    setEditUsername((user.username ?? "").trim())
     setEditEmail(user.email ?? "")
     setEditPassword("")
     setEditRole((user.role === "super_admin" ? "super_admin" : "user") as "user" | "super_admin")
@@ -313,6 +346,7 @@ export default function AdminPage() {
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json?.detail || json?.error || "Falha ao atualizar usuário")
+      if (editPassword) setPasswordJustSet(editPassword)
       queryClient.invalidateQueries({ queryKey: ["admin-profiles"] })
       queryClient.invalidateQueries({ queryKey: ["profile", editingUser.id] })
       setEditingUser(null)
@@ -324,6 +358,14 @@ export default function AdminPage() {
   }
 
   const isSuperAdmin = myProfile?.role === "super_admin"
+
+  const { data: robotsForPaths = [] } = useQuery({
+    queryKey: ["admin-robots"],
+    queryFn: getRobots,
+    enabled: isSuperAdmin,
+  })
+  const segmentPath = robotsForPaths[0]?.segment_path || "FISCAL/NFS"
+  const segmentSlug = segmentPath.replace(/\//g, "\\")
 
   return (
     <div className="space-y-6">
@@ -400,14 +442,17 @@ export default function AdminPage() {
               ? <div className="px-4 py-6 text-center text-muted-foreground text-sm">Carregando...</div>
               : adminUsers.length === 0
                 ? <div className="px-4 py-6 text-center text-muted-foreground text-sm">Nenhum usuário.</div>
-                : adminUsers.map((user) => (
+                : adminUsers.map((user) => {
+                    const displayName = user.username?.trim() || "Sem nome"
+                    const initials = (user.username?.trim() || "?").slice(0, 2).toUpperCase()
+                    return (
                     <div key={user.id} className="px-4 py-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
                       <div className="flex items-center gap-3">
                         <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">
-                          {(user.username || "?").slice(0, 2).toUpperCase()}
+                          {initials}
                         </div>
                         <div>
-                          <p className="text-xs font-medium">{user.username}</p>
+                          <p className="text-xs font-medium">{displayName}</p>
                           <p className="text-[10px] text-muted-foreground">{user.email ?? user.role}</p>
                         </div>
                       </div>
@@ -452,7 +497,8 @@ export default function AdminPage() {
                         </span>
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
           </div>
         </GlassCard>
 
@@ -494,6 +540,32 @@ export default function AdminPage() {
           </div>
         </GlassCard>
       </div>
+
+      <AdminFolderStructure isSuperAdmin={!!isSuperAdmin} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <AdminRobotsList isSuperAdmin={!!isSuperAdmin} />
+        <AdminScheduler isSuperAdmin={!!isSuperAdmin} />
+      </div>
+      {isSuperAdmin && (
+        <AdminFileRetention isSuperAdmin={!!isSuperAdmin} />
+      )}
+
+      {isSuperAdmin && (
+        <GlassCard className="overflow-hidden">
+          <div className="p-4 border-b border-border">
+            <h3 className="text-sm font-semibold font-display">Caminhos padrão</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Estrutura onde o robô grava arquivos e relatório (conforme departamento configurado no robô).
+            </p>
+          </div>
+          <div className="p-4 space-y-2 font-mono text-xs bg-muted/30">
+            <p><span className="text-muted-foreground">Base:</span> definido no .env do robô (BASE_PATH)</p>
+            <p><span className="text-muted-foreground">Estrutura:</span> EMPRESAS\{`{nome_empresa}`}\{segmentSlug}\{`{ano}`}\{`{mês}`}\{`{dia}`}</p>
+            <p><span className="text-muted-foreground">Relatórios:</span> EMPRESAS\{segmentSlug}\relatorio nfs.pdf</p>
+          </div>
+        </GlassCard>
+      )}
 
       <GlassCard className="overflow-hidden">
         <div className="p-4 border-b border-border">
@@ -658,6 +730,65 @@ export default function AdminPage() {
                 </div>
               )}
             </div>
+            <div className="space-y-3 pt-2 border-t border-border">
+              <p className="text-sm font-medium">Robô NFS (portal nacional)</p>
+              <p className="text-xs text-muted-foreground">Ative para esta empresa rodar no robô de download de NFS-e. Se desligado, o robô não processa esta empresa.</p>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">Desligado</span>
+                <Switch
+                  checked={editNfsRobotEnabled}
+                  onCheckedChange={setEditNfsRobotEnabled}
+                  disabled={editSaving}
+                />
+                <span className="text-sm text-muted-foreground">Ligado</span>
+              </div>
+              {editNfsRobotEnabled && (
+                <div className="pl-4 border-l-2 border-border space-y-3">
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="admin-edit-nfs-auth"
+                        checked={editNfsRobotAuthMode === "password"}
+                        onChange={() => setEditNfsRobotAuthMode("password")}
+                        disabled={editSaving}
+                        className="rounded-full border-input"
+                      />
+                      <span className="text-sm">Login (CNPJ + senha)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="admin-edit-nfs-auth"
+                        checked={editNfsRobotAuthMode === "certificate"}
+                        onChange={() => setEditNfsRobotAuthMode("certificate")}
+                        disabled={editSaving}
+                        className="rounded-full border-input"
+                      />
+                      <span className="text-sm">Certificado</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {editNfsRobotAuthMode === "certificate"
+                      ? "Usa o certificado cadastrado acima (uso geral)."
+                      : "Senha para acesso no portal nacional com CNPJ."}
+                  </p>
+                  {editNfsRobotAuthMode === "password" && (
+                    <div className="space-y-1">
+                      <Label>Senha do portal NFS</Label>
+                      <Input
+                        type="password"
+                        value={editNfsRobotPassword}
+                        onChange={(e) => setEditNfsRobotPassword(e.target.value)}
+                        placeholder="Senha de acesso ao portal"
+                        disabled={editSaving}
+                        autoComplete="off"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             {editError && <p className="text-sm text-destructive">{editError}</p>}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setEditingCompany(null)} disabled={editSaving}>Cancelar</Button>
@@ -668,18 +799,19 @@ export default function AdminPage() {
       </Dialog>
 
       <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Editar usuário — {editingUser?.username}</DialogTitle>
+        <DialogContent className="max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
+            <DialogTitle>Editar usuário — {editingUser?.username || "Usuário"}</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSaveUserAccess} className="space-y-4">
-            <div className="space-y-2">
+          <form onSubmit={handleSaveUserAccess} className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-4 space-y-4">
+              <div className="space-y-2">
               <Label htmlFor="edit-username">Usuário (nome)</Label>
               <Input
                 id="edit-username"
                 value={editUsername}
                 onChange={(e) => setEditUsername(e.target.value)}
-                placeholder="username"
+                placeholder="Nome de exibição"
                 required
                 disabled={editUserSaving}
               />
@@ -697,12 +829,15 @@ export default function AdminPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-password">Nova senha</Label>
+              <p className="text-xs text-muted-foreground">
+                A senha atual não pode ser visualizada nem recuperada (segurança do Supabase). Para redefinir, digite uma nova senha abaixo e clique em Salvar. Após salvar, a nova senha será exibida uma vez para você copiar e informar o usuário.
+              </p>
               <Input
                 id="edit-password"
                 type="password"
                 value={editPassword}
                 onChange={(e) => setEditPassword(e.target.value)}
-                placeholder="Deixar em branco para não alterar"
+                placeholder="Deixe em branco para não alterar a senha"
                 disabled={editUserSaving}
                 minLength={6}
               />
@@ -742,7 +877,8 @@ export default function AdminPage() {
               </div>
             )}
             {editUserError && <p className="text-sm text-destructive">{editUserError}</p>}
-            <DialogFooter>
+            </div>
+            <DialogFooter className="shrink-0 px-6 py-4 border-t bg-muted/30">
               <Button type="button" variant="outline" onClick={() => setEditingUser(null)} disabled={editUserSaving}>
                 Fechar
               </Button>
@@ -751,6 +887,34 @@ export default function AdminPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!passwordJustSet} onOpenChange={(open) => !open && setPasswordJustSet(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Senha alterada</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Copie a nova senha e informe o usuário. Por segurança, ela não será exibida novamente.
+          </p>
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 font-mono text-sm">
+            <span className="flex-1 break-all">{passwordJustSet ?? ""}</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (passwordJustSet) navigator.clipboard.writeText(passwordJustSet)
+                toast.success("Senha copiada.")
+              }}
+            >
+              Copiar
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => setPasswordJustSet(null)}>Fechar</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

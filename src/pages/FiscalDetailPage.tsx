@@ -8,7 +8,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getFiscalDocumentsByType } from "@/services/dashboardService";
-import { downloadFiscalDocument, hasServerApi } from "@/services/serverFileService";
+import { downloadFiscalDocument, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
 import { toast } from "sonner";
 
 const typeLabels: Record<string, string> = {
@@ -29,14 +29,26 @@ const typeToDb = (t: string): "NFS" | "NFE" | "NFC" => {
   return "NFE";
 };
 
-const chartData = [
-  { name: "Jan", value: 180 },
-  { name: "Fev", value: 220 },
-  { name: "Mar", value: 195 },
-  { name: "Abr", value: 310 },
-  { name: "Mai", value: 280 },
-  { name: "Jun", value: 340 },
-];
+const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+/** Gera dados do gráfico Volume Mensal a partir dos documentos (campo periodo = YYYY-MM). Últimos 12 meses. */
+function buildVolumeMensalData(documents: { periodo?: string | null }[]): { name: string; value: number }[] {
+  const byPeriodo = new Map<string, number>();
+  for (const d of documents) {
+    const p = (d.periodo || "").trim();
+    if (!p || !/^\d{4}-\d{2}$/.test(p)) continue;
+    byPeriodo.set(p, (byPeriodo.get(p) ?? 0) + 1);
+  }
+  const now = new Date();
+  const result: { name: string; value: number }[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = `${MESES[d.getMonth()]}/${String(d.getFullYear()).slice(2)}`;
+    result.push({ name: label, value: byPeriodo.get(key) ?? 0 });
+  }
+  return result;
+}
 
 export default function FiscalDetailPage() {
   const { type } = useParams<{ type: string }>();
@@ -69,14 +81,25 @@ export default function FiscalDetailPage() {
   const pendentes = documents.filter((d) => d.status === "pendente").length;
   const divergentes = documents.filter((d) => d.status === "divergente").length;
 
-  const handleDownload = async (id: string, chave: string | null) => {
+  const volumeMensalData = useMemo(() => buildVolumeMensalData(documents), [documents]);
+
+  const handleDownload = async (id: string, chave: string | null, filePath: string | null) => {
     try {
-      const name = chave ? `nfe-${chave}.xml` : undefined;
-      await downloadFiscalDocument(id, name);
+      const suggestedName = filePath ? filePath.split("/").pop() || (chave ? `documento-${chave}` : undefined) : undefined;
+      await downloadFiscalDocument(id, suggestedName);
+      await markFiscalDocumentDownloaded(id);
       toast.success("Download iniciado.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao baixar o arquivo.");
     }
+  };
+
+  const getDownloadLabel = (filePath: string | null) => {
+    if (!filePath) return "Baixar";
+    const lower = filePath.toLowerCase();
+    if (lower.endsWith(".pdf")) return "Baixar PDF";
+    if (lower.endsWith(".xml")) return "Baixar XML";
+    return "Baixar";
   };
 
   return (
@@ -103,7 +126,7 @@ export default function FiscalDetailPage() {
 
       <GlassCard className="p-6">
         <h3 className="text-sm font-semibold font-display mb-4">Volume Mensal</h3>
-        <MiniChart data={chartData} type="area" height={200} />
+        <MiniChart data={volumeMensalData} type="area" height={200} />
       </GlassCard>
 
       <GlassCard className="overflow-hidden">
@@ -150,10 +173,10 @@ export default function FiscalDetailPage() {
                         {doc.file_path ? (
                           <button
                             type="button"
-                            onClick={() => handleDownload(doc.id, doc.chave)}
+                            onClick={() => handleDownload(doc.id, doc.chave, doc.file_path)}
                             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
                           >
-                            <Download className="h-3.5 w-3.5" /> Baixar XML
+                            <Download className="h-3.5 w-3.5" /> {getDownloadLabel(doc.file_path)}
                           </button>
                         ) : (
                           <span className="text-muted-foreground text-[10px]">Sem arquivo</span>

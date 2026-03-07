@@ -32,7 +32,6 @@ const pages = [
   { name: "Financeiro", path: "/financeiro", icon: DollarSign, group: "Navegação" },
   { name: "Operações", path: "/operacoes", icon: Activity, group: "Navegação" },
   { name: "Documentos", path: "/documentos", icon: FileSpreadsheet, group: "Navegação" },
-  { name: "Sincronização", path: "/sync", icon: Activity, group: "Sistema" },
   { name: "Administração", path: "/admin", icon: Settings, group: "Sistema" },
 ];
 

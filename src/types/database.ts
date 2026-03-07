@@ -22,15 +22,40 @@ export type Database = {
         Insert: { id?: string; name: string; document?: string | null; created_by?: string | null; created_at?: string; active?: boolean; auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null; cert_valid_until?: string | null; contador_nome?: string | null; contador_cpf?: string | null }
         Update: { id?: string; name?: string; document?: string | null; created_by?: string | null; created_at?: string; active?: boolean; auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null; cert_valid_until?: string | null; contador_nome?: string | null; contador_cpf?: string | null }
       }
-      company_memberships: {
-        Row: { company_id: string; user_id: string; member_role: string; created_at: string }
-        Insert: { company_id: string; user_id: string; member_role: string; created_at?: string }
-        Update: { company_id?: string; user_id?: string; member_role?: string; created_at?: string }
-      }
       fiscal_documents: {
-        Row: { id: string; company_id: string; type: string; chave: string | null; periodo: string; status: string; document_date: string | null; file_path: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; company_id: string; type: string; chave?: string | null; periodo: string; status?: string; document_date?: string | null; file_path?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; company_id?: string; type?: string; chave?: string | null; periodo?: string; status?: string; document_date?: string | null; file_path?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; company_id: string; type: string; chave: string | null; periodo: string; status: string; document_date: string | null; file_path: string | null; last_downloaded_at: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; company_id: string; type: string; chave?: string | null; periodo: string; status?: string; document_date?: string | null; file_path?: string | null; last_downloaded_at?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; company_id?: string; type?: string; chave?: string | null; periodo?: string; status?: string; document_date?: string | null; file_path?: string | null; last_downloaded_at?: string | null; created_at?: string; updated_at?: string }
+      }
+      folder_structure_nodes: {
+        Row: { id: string; parent_id: string | null; name: string; slug: string | null; date_rule: "year" | "year_month" | "year_month_day" | null; position: number; created_at: string; updated_at: string }
+        Insert: { id?: string; parent_id?: string | null; name: string; slug?: string | null; date_rule?: "year" | "year_month" | "year_month_day" | null; position?: number; created_at?: string; updated_at?: string }
+        Update: { id?: string; parent_id?: string | null; name?: string; slug?: string | null; date_rule?: "year" | "year_month" | "year_month_day" | null; position?: number; created_at?: string; updated_at?: string }
+      }
+      robots: {
+        Row: { id: string; technical_id: string; display_name: string; status: "active" | "inactive" | "processing"; last_heartbeat_at: string | null; segment_path: string | null; notes_mode: "recebidas" | "emitidas" | "both" | null; created_at: string; updated_at: string }
+        Insert: { id?: string; technical_id: string; display_name: string; status?: "active" | "inactive" | "processing"; last_heartbeat_at?: string | null; segment_path?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; technical_id?: string; display_name?: string; status?: "active" | "inactive" | "processing"; last_heartbeat_at?: string | null; segment_path?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; created_at?: string; updated_at?: string }
+      }
+      execution_requests: {
+        Row: { id: string; company_ids: string[]; robot_technical_ids: string[]; status: "pending" | "running" | "completed" | "failed"; robot_id: string | null; claimed_at: string | null; completed_at: string | null; error_message: string | null; period_start: string | null; period_end: string | null; notes_mode: "recebidas" | "emitidas" | "both" | null; schedule_rule_id: string | null; created_at: string; created_by: string | null }
+        Insert: { id?: string; company_ids: string[]; robot_technical_ids: string[]; status?: "pending" | "running" | "completed" | "failed"; robot_id?: string | null; claimed_at?: string | null; completed_at?: string | null; error_message?: string | null; period_start?: string | null; period_end?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; schedule_rule_id?: string | null; created_at?: string; created_by?: string | null }
+        Update: { id?: string; company_ids?: string[]; robot_technical_ids?: string[]; status?: "pending" | "running" | "completed" | "failed"; robot_id?: string | null; claimed_at?: string | null; completed_at?: string | null; error_message?: string | null; period_start?: string | null; period_end?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; schedule_rule_id?: string | null; created_at?: string; created_by?: string | null }
+      }
+      schedule_rules: {
+        Row: { id: string; company_ids: string[]; robot_technical_ids: string[]; notes_mode: "recebidas" | "emitidas" | "both" | null; period_start: string; period_end: string; run_at_time: string; run_daily: boolean; status: "active" | "paused" | "completed"; last_run_at: string | null; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; company_ids: string[]; robot_technical_ids: string[]; notes_mode?: "recebidas" | "emitidas" | "both" | null; period_start: string; period_end: string; run_at_time: string; run_daily?: boolean; status?: "active" | "paused" | "completed"; last_run_at?: string | null; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; company_ids?: string[]; robot_technical_ids?: string[]; notes_mode?: "recebidas" | "emitidas" | "both" | null; period_start?: string; period_end?: string; run_at_time?: string; run_daily?: boolean; status?: "active" | "paused" | "completed"; last_run_at?: string | null; created_by?: string | null; created_at?: string; updated_at?: string }
+      }
+      robot_display_config: {
+        Row: { robot_technical_id: string; company_ids: string[]; period_start: string | null; period_end: string | null; notes_mode: "recebidas" | "emitidas" | "both" | null; updated_at: string }
+        Insert: { robot_technical_id: string; company_ids?: string[]; period_start?: string | null; period_end?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; updated_at?: string }
+        Update: { robot_technical_id?: string; company_ids?: string[]; period_start?: string | null; period_end?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; updated_at?: string }
+      }
+      company_robot_config: {
+        Row: { id: string; company_id: string; robot_technical_id: string; enabled: boolean; auth_mode: "password" | "certificate"; nfs_password: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; company_id: string; robot_technical_id: string; enabled?: boolean; auth_mode?: "password" | "certificate"; nfs_password?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; company_id?: string; robot_technical_id?: string; enabled?: boolean; auth_mode?: "password" | "certificate"; nfs_password?: string | null; created_at?: string; updated_at?: string }
       }
       fiscal_pendencias: { Row: { id: string; company_id: string; tipo: string; periodo: string; status: string; created_at: string }; Insert: { id?: string; company_id: string; tipo: string; periodo: string; status: string; created_at?: string }; Update: Partial<{ id: string; company_id: string; tipo: string; periodo: string; status: string; created_at: string }> }
       dp_checklist: { Row: { id: string; company_id: string; tarefa: string; competencia: string; status: string; created_at: string }; Insert: { id?: string; company_id: string; tarefa: string; competencia: string; status?: string; created_at?: string }; Update: Partial<{ id: string; company_id: string; tarefa: string; competencia: string; status: string; created_at: string }> }
@@ -38,6 +63,11 @@ export type Database = {
       financial_records: { Row: { id: string; company_id: string; periodo: string; valor_cents: number; status: string; pendencias_count: number; created_at: string; updated_at: string }; Insert: { id?: string; company_id: string; periodo: string; valor_cents?: number; status?: string; pendencias_count?: number; created_at?: string; updated_at?: string }; Update: Partial<{ id: string; company_id: string; periodo: string; valor_cents: number; status: string; pendencias_count: number; created_at: string; updated_at: string }> }
       sync_events: { Row: { id: string; company_id: string | null; tipo: string; payload: string | null; status: string; idempotency_key: string | null; retries: number; created_at: string }; Insert: { id?: string; company_id?: string | null; tipo: string; payload?: string | null; status: string; idempotency_key?: string | null; retries?: number; created_at?: string }; Update: Partial<{ id: string; company_id: string | null; tipo: string; payload: string | null; status: string; idempotency_key: string | null; retries: number; created_at: string }> }
       documents: { Row: { id: string; company_id: string; tipo: string; periodo: string; status: string; origem: string; document_date: string | null; arquivos: string[]; created_at: string }; Insert: { id?: string; company_id: string; tipo: string; periodo: string; status?: string; origem?: string; document_date?: string | null; arquivos?: string[]; created_at?: string }; Update: Partial<{ id: string; company_id: string; tipo: string; periodo: string; status: string; origem: string; document_date: string | null; arquivos: string[]; created_at: string }> }
+      admin_settings: {
+        Row: { key: string; value: string; updated_at: string }
+        Insert: { key: string; value?: string; updated_at?: string }
+        Update: { key?: string; value?: string; updated_at?: string }
+      }
     }
     Views: { [_ in never]: never }
     Functions: { [_ in never]: never }

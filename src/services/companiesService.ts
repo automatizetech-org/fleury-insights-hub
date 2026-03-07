@@ -1,5 +1,47 @@
 import { supabase } from "./supabaseClient"
 import type { Company } from "./profilesService"
+import type { Tables } from "@/types/database"
+
+export const ROBOT_NFS_TECHNICAL_ID = "nfs_padrao"
+
+export type CompanyRobotConfig = Tables<"company_robot_config">
+
+export async function getCompanyRobotConfig(
+  companyId: string,
+  robotTechnicalId: string = ROBOT_NFS_TECHNICAL_ID
+): Promise<CompanyRobotConfig | null> {
+  const { data, error } = await supabase
+    .from("company_robot_config")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("robot_technical_id", robotTechnicalId)
+    .maybeSingle()
+  if (error) throw error
+  return data as CompanyRobotConfig | null
+}
+
+export async function upsertCompanyRobotConfig(
+  companyId: string,
+  robotTechnicalId: string,
+  config: { enabled: boolean; auth_mode: "password" | "certificate"; nfs_password?: string | null }
+) {
+  const { data, error } = await supabase
+    .from("company_robot_config")
+    .upsert(
+      {
+        company_id: companyId,
+        robot_technical_id: robotTechnicalId,
+        enabled: config.enabled,
+        auth_mode: config.auth_mode,
+        nfs_password: config.auth_mode === "password" ? (config.nfs_password ?? null) : null,
+      },
+      { onConflict: "company_id,robot_technical_id" }
+    )
+    .select()
+    .single()
+  if (error) throw error
+  return data as CompanyRobotConfig
+}
 
 export async function getCompaniesForUser(activeFilter?: "active" | "inactive" | "all") {
   let q = supabase.from("companies").select("*").order("name")

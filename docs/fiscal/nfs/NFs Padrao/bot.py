@@ -23,11 +23,11 @@ import time
 import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 from zipfile import ZipFile, BadZipFile
 
@@ -47,7 +47,7 @@ from PySide6.QtCore import (
     Signal,
     QSize,
 )
-from PySide6.QtGui import QDesktopServices, QIcon, QPainter, QPixmap, QColor
+from PySide6.QtGui import QDesktopServices, QIcon, QPainter, QPixmap, QColor, QAction
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -75,6 +75,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QStackedLayout,
     QStackedWidget,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -111,6 +112,22 @@ EMITIDAS_URL = "https://www.nfse.gov.br/EmissorNacional/Notas/Emitidas"
 RECEBIDAS_URL = "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas"
 
 BASE_DIR = resolve_base_dir()
+# Carrega .env da pasta do script/.exe para BASE_PATH, SERVER_API_URL, ROBOT_SEGMENT_PATH
+try:
+    from dotenv import load_dotenv
+    env_path = BASE_DIR / ".env"
+    if not env_path.exists():
+        env_path = BASE_DIR / ".env.example"
+    if env_path.exists():
+        load_dotenv(env_path)
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        load_dotenv(exe_dir / ".env")
+        if not (exe_dir / ".env").exists():
+            load_dotenv(exe_dir / ".env.example")
+except ImportError:
+    pass
+
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -339,11 +356,13 @@ DEFAULT_UPDATER_SETTINGS: Dict[str, Any] = {
     "current_version": AUTO_UPDATE_APP_VERSION,
 }
 UPDATER_JSON_FILES_TO_PRESERVE = [
-    "companies.json",
-    "path.json",
     "license.json",
     "config.json",
 ]
+
+# Integração com painel admin (agendador + status)
+ROBOT_TECHNICAL_ID = "nfs_padrao"
+ROBOT_DISPLAY_NAME_DEFAULT = "NFS Padrão"
 
 # --------------------------------------------------------------------
 # Helpers de documento (CPF/CNPJ) e persistencia
@@ -976,29 +995,157 @@ def load_companies() -> List[Dict[str, str]]:
 
 
 def load_companies_from_supabase(supabase_url: str, supabase_anon_key: str) -> List[Dict[str, str]]:
-    """Carrega empresas ativas da tabela companies do Supabase (formato igual ao load_companies)."""
+    """
+    Carrega empresas para o Robô NFS: primeiro as marcadas em company_robot_config (enabled);
+    se nenhuma, usa fallback com empresas ativas do dashboard (auth/cert da empresa).
+    """
     if not (supabase_url and supabase_anon_key):
         return []
     try:
         client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        r = client.table("companies").select("id,name,document,auth_mode,cert_blob_b64,cert_password").eq("active", True).order("name").execute()
-        if not getattr(r, "data", None):
+        r = client.table("company_robot_config").select(
+            "auth_mode,nfs_password,companies(id,name,document,auth_mode,cert_blob_b64,cert_password)"
+        ).eq("robot_technical_id", ROBOT_TECHNICAL_ID).eq("enabled", True).execute()
+        if getattr(r, "data", None):
+            norm: List[Dict[str, str]] = []
+            for row in r.data:
+                company = row.get("companies")
+                if not company:
+                    continue
+                name = (company.get("name") or "").strip()
+                doc = only_digits(company.get("document") or "")
+                cfg_auth = (row.get("auth_mode") or "password").strip().lower()
+                if cfg_auth not in ("password", "certificate"):
+                    cfg_auth = "password"
+                if cfg_auth == "certificate":
+                    auth_mode = AUTH_CERTIFICATE
+                    password = ""
+                    cert_password = (company.get("cert_password") or "")
+                    cert_blob_b64 = (company.get("cert_blob_b64") or "")
+                else:
+                    auth_mode = AUTH_PASSWORD
+                    password = (row.get("nfs_password") or "").strip()
+                    cert_password = ""
+                    cert_blob_b64 = ""
+                norm.append({
+                    "id": company.get("id"),
+                    "name": name,
+                    "doc": doc,
+                    "password": password,
+                    "auth_mode": auth_mode,
+                    "cert_path": "",
+                    "cert_password": cert_password,
+                    "cert_blob_b64": cert_blob_b64,
+                })
+            norm.sort(key=lambda x: (x.get("name") or "").lower())
+            return norm
+        # Fallback: nenhuma empresa em company_robot_config — carrega ativas do dashboard (auth da empresa)
+        comps = client.table("companies").select(
+            "id,name,document,auth_mode,cert_blob_b64,cert_password"
+        ).eq("active", True).order("name").execute()
+        if not getattr(comps, "data", None):
             return []
-        norm: List[Dict[str, str]] = []
-        for row in r.data:
+        norm = []
+        for row in comps.data:
+            cid = row.get("id")
             name = (row.get("name") or "").strip()
             doc = only_digits(row.get("document") or "")
-            auth_mode = row.get("auth_mode") or (AUTH_CERTIFICATE if row.get("cert_blob_b64") else AUTH_PASSWORD)
-            if auth_mode not in (AUTH_PASSWORD, AUTH_CERTIFICATE):
+            company_auth = (row.get("auth_mode") or "password").strip().lower()
+            if company_auth not in ("password", "certificate"):
+                company_auth = "password"
+            if company_auth == "certificate" and row.get("cert_blob_b64"):
+                auth_mode = AUTH_CERTIFICATE
+                password = ""
+                cert_password = (row.get("cert_password") or "")
+                cert_blob_b64 = (row.get("cert_blob_b64") or "")
+            else:
                 auth_mode = AUTH_PASSWORD
+                password = ""
+                cert_password = ""
+                cert_blob_b64 = ""
             norm.append({
+                "id": cid,
                 "name": name,
                 "doc": doc,
-                "password": "",
+                "password": password,
                 "auth_mode": auth_mode,
                 "cert_path": "",
-                "cert_password": (row.get("cert_password") or ""),
-                "cert_blob_b64": (row.get("cert_blob_b64") or ""),
+                "cert_password": cert_password,
+                "cert_blob_b64": cert_blob_b64,
+            })
+        norm.sort(key=lambda x: (x.get("name") or "").lower())
+        return norm
+    except Exception:
+        return []
+
+
+def load_companies_from_supabase_by_ids(
+    supabase_url: str, supabase_anon_key: str, company_ids: List[str]
+) -> List[Dict[str, str]]:
+    """
+    Carrega empresas do Supabase pelos IDs (para execução via agendador).
+    Usa company_robot_config quando existir; senão usa auth_mode/cert da própria empresa (companies).
+    """
+    if not (supabase_url and supabase_anon_key and company_ids):
+        return []
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        configs = client.table("company_robot_config").select(
+            "company_id,auth_mode,nfs_password"
+        ).eq("robot_technical_id", ROBOT_TECHNICAL_ID).in_("company_id", company_ids).execute()
+        config_by_company: Dict[str, Dict[str, Any]] = {}
+        if getattr(configs, "data", None):
+            for c in configs.data:
+                config_by_company[c["company_id"]] = c
+        r = client.table("companies").select(
+            "id,name,document,auth_mode,cert_blob_b64,cert_password"
+        ).in_("id", company_ids).eq("active", True).execute()
+        if not getattr(r, "data", None):
+            return []
+        norm = []
+        for row in r.data:
+            cid = row.get("id")
+            cfg = config_by_company.get(cid) if cid else None
+            name = (row.get("name") or "").strip()
+            doc = only_digits(row.get("document") or "")
+            if cfg:
+                cfg_auth = (cfg.get("auth_mode") or "password").strip().lower()
+                if cfg_auth not in ("password", "certificate"):
+                    cfg_auth = "password"
+                if cfg_auth == "certificate":
+                    auth_mode = AUTH_CERTIFICATE
+                    password = ""
+                    cert_password = (row.get("cert_password") or "")
+                    cert_blob_b64 = (row.get("cert_blob_b64") or "")
+                else:
+                    auth_mode = AUTH_PASSWORD
+                    password = (cfg.get("nfs_password") or "").strip()
+                    cert_password = ""
+                    cert_blob_b64 = ""
+            else:
+                # Fallback: sem company_robot_config, usa auth da empresa (companies)
+                company_auth = (row.get("auth_mode") or "password").strip().lower()
+                if company_auth not in ("password", "certificate"):
+                    company_auth = "password"
+                if company_auth == "certificate" and row.get("cert_blob_b64"):
+                    auth_mode = AUTH_CERTIFICATE
+                    password = ""
+                    cert_password = (row.get("cert_password") or "")
+                    cert_blob_b64 = (row.get("cert_blob_b64") or "")
+                else:
+                    auth_mode = AUTH_PASSWORD
+                    password = ""
+                    cert_password = ""
+                    cert_blob_b64 = ""
+            norm.append({
+                "id": cid,
+                "name": name,
+                "doc": doc,
+                "password": password,
+                "auth_mode": auth_mode,
+                "cert_path": "",
+                "cert_password": cert_password,
+                "cert_blob_b64": cert_blob_b64,
             })
         return norm
     except Exception:
@@ -1086,6 +1233,195 @@ def save_output_base_path(path: Path) -> None:
     """
     _, report = load_paths()
     save_paths(path, report)
+
+
+def get_resolved_output_base() -> Optional[Path]:
+    """
+    Pasta base para gravação: apenas BASE_PATH do .env.
+    Estrutura e departamento vêm do painel (robots.segment_path).
+    """
+    base_env = os.environ.get("BASE_PATH", "").strip()
+    if base_env:
+        return Path(base_env)
+    return None
+
+
+def fetch_central_folder_structure(path_logical: Optional[str] = None) -> Tuple[Optional[List[str]], Optional[str]]:
+    """
+    Obtem da API a estrutura de pastas e retorna (segmentos para este robô, date_rule).
+    path_logical: caminho do departamento (ex. FISCAL/NFS); se None, usa ROBOT_SEGMENT_PATH do .env.
+    """
+    url_base = (os.environ.get("FOLDER_STRUCTURE_API_URL") or os.environ.get("SERVER_API_URL") or "").strip().rstrip("/")
+    if not url_base:
+        return (None, None)
+    path_logical = path_logical or os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip()
+    try:
+        r = requests.get(f"{url_base}/api/folder-structure", timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        nodes = data.get("nodes") or []
+    except Exception:
+        return (None, None)
+    if not nodes:
+        return (None, None)
+    parts = [p.strip() for p in path_logical.split("/") if p.strip()]
+    if not parts:
+        return (None, None)
+    segment_path: List[str] = []
+    date_rule: Optional[str] = None
+    parent_id: Optional[str] = None
+    for part in parts:
+        found = None
+        for n in nodes:
+            n_pid = n.get("parent_id")
+            name_match = (n.get("slug") or n.get("name") or "").strip().upper() == part.upper()
+            parent_ok = (n_pid or None) == (parent_id or None)
+            if parent_ok and name_match:
+                found = n
+                break
+        if not found:
+            return (None, None)
+        seg = (found.get("slug") or found.get("name") or "").strip()
+        if seg:
+            segment_path.append(seg)
+        date_rule = found.get("date_rule")
+        parent_id = found["id"]
+    return (segment_path if segment_path else None, date_rule)
+
+
+def get_robot_supabase(preferences: Optional[Dict[str, Any]] = None) -> Tuple[Optional[str], Optional[str]]:
+    """Retorna (url, anon_key) do Supabase para o robô: apenas .env (config só no dashboard)."""
+    url = os.environ.get("SUPABASE_URL", "").strip()
+    key = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+    if url and key:
+        return (url, key)
+    return (None, None)
+
+
+def fetch_robot_config(supabase_url: str, supabase_anon_key: str) -> Optional[Dict[str, Any]]:
+    """Retorna segment_path e notes_mode do robô a partir da tabela robots no Supabase."""
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        r = client.table("robots").select("segment_path, notes_mode").eq("technical_id", ROBOT_TECHNICAL_ID).limit(1).execute()
+        rows = getattr(r, "data", None) or []
+        if not rows:
+            return None
+        row = rows[0]
+        seg = (row.get("segment_path") or "").strip() or None
+        mode = (row.get("notes_mode") or "").strip() or None
+        return {"segment_path": seg, "notes_mode": mode}
+    except Exception:
+        return None
+
+
+def register_robot(supabase_url: str, supabase_anon_key: str) -> Optional[str]:
+    """Autocadastra o robô na tabela robots; não sobrescreve display_name nem segment_path se já existir."""
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        segment_from_env = os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip()
+        r = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
+        rows = getattr(r, "data", None) or []
+        if rows:
+            client.table("robots").update({
+                "status": "active",
+                "last_heartbeat_at": datetime.now().isoformat(),
+            }).eq("id", rows[0]["id"]).execute()
+            return rows[0]["id"]
+        payload: Dict[str, Any] = {
+            "technical_id": ROBOT_TECHNICAL_ID,
+            "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
+            "status": "active",
+            "last_heartbeat_at": datetime.now().isoformat(),
+        }
+        if segment_from_env:
+            payload["segment_path"] = segment_from_env
+        ins = client.table("robots").insert(payload).select("id").execute()
+        new_rows = getattr(ins, "data", None) or []
+        return new_rows[0].get("id") if new_rows else None
+    except Exception as e:
+        print(f"[Robô] Falha ao registrar no painel: {e}", file=sys.stderr)
+        return None
+
+
+def update_robot_heartbeat(supabase_url: str, supabase_anon_key: str, robot_id: str) -> None:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        client.table("robots").update({
+            "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            "status": "active",
+        }).eq("id", robot_id).execute()
+    except Exception:
+        pass
+
+
+def update_robot_status(
+    supabase_url: str, supabase_anon_key: str, robot_id: str, status: str
+) -> None:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        client.table("robots").update({
+            "status": status,
+            "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", robot_id).execute()
+    except Exception:
+        pass
+
+
+def claim_execution_request(
+    supabase_url: str,
+    supabase_anon_key: str,
+    robot_id: str,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Busca um pending compatível com este robô e marca como running; retorna o job ou None."""
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        r = client.table("execution_requests").select("*").eq("status", "pending").order("created_at").limit(10).execute()
+        rows = getattr(r, "data", None) or []
+        for row in rows:
+            tech_ids = row.get("robot_technical_ids") or []
+            if "all" in tech_ids or ROBOT_TECHNICAL_ID in tech_ids:
+                # supabase-py v2: update().eq().eq() não tem .select(); executamos e retornamos o row que já temos
+                client.table("execution_requests").update({
+                    "status": "running",
+                    "robot_id": robot_id,
+                    "claimed_at": datetime.now().isoformat(),
+                }).eq("id", row["id"]).eq("status", "pending").execute()
+                return row
+        return None
+    except Exception as e:
+        msg = f"[Robô] Erro ao buscar job da fila (agendador): {e}"
+        if log_callback:
+            log_callback(msg)
+        print(msg, file=sys.stderr)
+        return None
+
+
+def complete_execution_request(
+    supabase_url: str, supabase_anon_key: str, request_id: str, success: bool, error_message: Optional[str] = None
+) -> None:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        client.table("execution_requests").update({
+            "status": "completed" if success else "failed",
+            "completed_at": datetime.now().isoformat(),
+            "error_message": error_message,
+        }).eq("id", request_id).execute()
+    except Exception:
+        pass
+
+
+def fetch_robot_display_config(supabase_url: str, supabase_anon_key: str) -> Optional[Dict[str, Any]]:
+    """Retorna a config de exibição do robô (empresas, período, modo) para sincronizar com o dashboard."""
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        r = client.table("robot_display_config").select("*").eq("robot_technical_id", ROBOT_TECHNICAL_ID).limit(1).execute()
+        rows = getattr(r, "data", None) or []
+        if not rows:
+            return None
+        return rows[0]
+    except Exception:
+        return None
 
 
 def friendly_path_display(path: Path, keep_parts: int = 2) -> str:
@@ -2106,6 +2442,7 @@ class LogFrame(QFrame):
 
 
 class CompanyItem(QWidget):
+    """Item de empresa na lista do robô: somente leitura (espelho do dashboard)."""
     def __init__(self, name: str, doc: str, auth_mode: str):
         super().__init__()
         self.name = normalize_company_name(name)
@@ -2116,9 +2453,9 @@ class CompanyItem(QWidget):
         suffix = " [certificado]" if auth_mode == AUTH_CERTIFICATE else ""
         label_name = self.name
         label = f"{label_name} - {display_doc}{suffix}" if display_doc else f"{label_name}{suffix}"
-        self.checkbox = QCheckBox(label)
-        self.checkbox.setStyleSheet("QCheckBox { color:#ECF0F1; font:9pt Verdana; font-weight:bold; }")
-        layout.addWidget(self.checkbox)
+        self.label = QLabel(label)
+        self.label.setStyleSheet("QLabel { color:#ECF0F1; font:9pt Verdana; font-weight:bold; }")
+        layout.addWidget(self.label)
         layout.addStretch()
 
 
@@ -2627,7 +2964,7 @@ class ManagerDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
 
-        header = QLabel("Ações disponiveis")
+        header = QLabel("Ações disponíveis")
         header.setStyleSheet("color:#5dade2; font:12pt 'Verdana'; font-weight:bold; padding-bottom:6px;")
         layout.addWidget(header)
 
@@ -2639,31 +2976,7 @@ class ManagerDialog(QDialog):
         box_layout.setSpacing(8)
         box_layout.addWidget(QLabel("Escolha o que deseja fazer:"))
 
-        btn_add = QPushButton("Adicionar empresa")
-        btn_add.setStyleSheet(button_style("#27AE60", "#2ECC71", "#1E8449"))
-        icon_add = load_png_icon("adicionar")
-        if icon_add:
-            btn_add.setIcon(icon_add)
-        attach_glow(btn_add, "#2ECC71")
-        btn_add.clicked.connect(lambda: self._choose("add"))
-
-        btn_edit = QPushButton("Editar empresa")
-        btn_edit.setStyleSheet(button_style("#2980B9", "#3498DB", "#2471A3"))
-        icon_edit = load_png_icon("limpar")  # solicitado usar o mesmo PNG de limpar
-        if icon_edit:
-            btn_edit.setIcon(icon_edit)
-        attach_glow(btn_edit, "#3498DB")
-        btn_edit.clicked.connect(lambda: self._choose("edit"))
-
-        btn_del = QPushButton("Excluir empresa")
-        btn_del.setStyleSheet(button_style("#C0392B", "#E74C3C", "#922B21"))
-        icon_del = load_png_icon("excluir")
-        if icon_del:
-            btn_del.setIcon(icon_del)
-        attach_glow(btn_del, "#E74C3C")
-        btn_del.clicked.connect(lambda: self._choose("del"))
-
-        btn_path = QPushButton("Caminhos (XML/PDF)")
+        btn_path = QPushButton("Estrutura de pastas")
         btn_path.setStyleSheet(button_style("#F1C40F", "#F4D03F", "#D4AC0D"))
         icon_path = load_png_icon("caminho")
         if icon_path:
@@ -2671,15 +2984,7 @@ class ManagerDialog(QDialog):
         attach_glow(btn_path, "#F4D03F")
         btn_path.clicked.connect(lambda: self._choose("path"))
 
-        btn_excel = QPushButton("Importar / Exportar")
-        btn_excel.setStyleSheet(button_style("#1E8449", "#229954", "#196F3D"))
-        icon_excel = load_png_icon("excel")
-        if icon_excel:
-            btn_excel.setIcon(icon_excel)
-        attach_glow(btn_excel, "#229954")
-        btn_excel.clicked.connect(lambda: self._choose("excel"))
-
-        for b in (btn_add, btn_edit, btn_del, btn_path, btn_excel):
+        for b in (btn_path,):
             box_layout.addWidget(b)
 
         layout.addWidget(box)
@@ -2703,9 +3008,9 @@ class ManagerDialog(QDialog):
         self.accept()
 
 class PathDialog(QDialog):
-    def __init__(self, current: Path, current_report: Optional[Path], folder_options: Optional[Dict[str, Any]] = None, parent=None, preferences: Optional[Dict[str, Any]] = None):
+    def __init__(self, current: Path, current_report: Optional[Path], folder_options: Optional[Dict[str, Any]] = None, parent=None, preferences: Optional[Dict[str, Any]] = None, read_only: bool = False, segment_path: Optional[str] = None):
         super().__init__(parent)
-        self.setWindowTitle("Pasta de XMLs")
+        self.setWindowTitle("Estrutura de pastas" if read_only else "Pasta de XMLs")
         self.setMinimumWidth(520)
         self.setStyleSheet(
             """
@@ -2715,6 +3020,12 @@ class PathDialog(QDialog):
             QLineEdit { background:#34495E; color:#ECF0F1; border-radius:6px; padding:6px; font-weight:bold; }
             """
         )
+        self._resolved_xml = current
+        self._resolved_report = current_report or current
+        if read_only:
+            self._build_read_only_layout(current, current_report, segment_path)
+            return
+
         self.status = QLabel("")
         self.status.setStyleSheet("color:#e74c3c;")
 
@@ -2768,7 +3079,25 @@ class PathDialog(QDialog):
         layout.addLayout(row_report)
         layout.addWidget(self.status)
 
-        # Rodar em servidor (VM): carrega empresas do Supabase e inicia com contagem regressiva
+        # Preview: onde os arquivos serao salvos (estrutura centralizada ou local)
+        self._central_segment_path, self._central_date_rule = fetch_central_folder_structure()
+        preview_label = QLabel("Onde os arquivos serao salvos:")
+        preview_label.setStyleSheet("color:#7DD3FC;font:9pt Verdana;font-weight:bold;margin-top:8px;")
+        layout.addWidget(preview_label)
+        self.preview_text = QTextEdit()
+        self.preview_text.setReadOnly(True)
+        self.preview_text.setMaximumHeight(140)
+        self.preview_text.setStyleSheet(
+            "QTextEdit { background:#0F172A; color:#94A3B8; border:1px solid #334155; border-radius:6px; padding:8px; font-family:Consolas,Courier; font-size:9pt; }"
+        )
+        layout.addWidget(self.preview_text)
+        self._update_structure_preview()
+
+        def _on_path_changed() -> None:
+            self._update_structure_preview()
+        self.line.textChanged.connect(_on_path_changed)
+
+        # Rodar em servidor (VM):
         prefs = preferences or {}
         self.chk_rodar_servidor = QCheckBox("Rodar em servidor")
         self.chk_rodar_servidor.setChecked(bool(prefs.get("rodar_em_servidor")))
@@ -2871,9 +3200,11 @@ class PathDialog(QDialog):
                     pass
                 item.setParent(None)
                 item.deleteLater()
+                self._update_structure_preview()
 
             btn_del.clicked.connect(_remove)
             lista_layout.addWidget(item)
+            self._update_structure_preview()
 
         for p in pastas_cliente_initial:
             _add_pasta_item(p)
@@ -2905,6 +3236,7 @@ class PathDialog(QDialog):
 
         self.chk_pasta_cliente.toggled.connect(_toggle_pasta_cliente)
         _toggle_pasta_cliente(self.chk_pasta_cliente.isChecked())
+        self.chk_pasta_cliente.toggled.connect(lambda: self._update_structure_preview())
 
         self.chk_year = QCheckBox("Separar por ano")
         self.chk_year.setChecked(bool(folder_base.get("year")))
@@ -2925,6 +3257,51 @@ class PathDialog(QDialog):
         dlg_path = QFileDialog.getExistingDirectory(self, "Escolha a pasta")
         if dlg_path:
             target_line.setText(dlg_path)
+
+    def _update_structure_preview(self) -> None:
+        base_env = os.environ.get("BASE_PATH", "").strip()
+        base_txt = self.line.text().strip()
+        base = base_env or base_txt
+        if not base:
+            self.preview_text.setPlainText("Defina a pasta base acima ou configure BASE_PATH no .env")
+            return
+        lines = [base]
+        if self._central_segment_path:
+            lines.append("  └── EMPRESAS")
+            lines.append("      └── [nome_empresa]   ← mesmo nome do dashboard")
+            indent = "          "
+            for i, seg in enumerate(self._central_segment_path):
+                prefix = "└── " if i == len(self._central_segment_path) - 1 else "├── "
+                lines.append(f"{indent}{prefix} {seg}")
+                indent += "    "
+            date_rule = self._central_date_rule or ""
+            if date_rule == "year_month_day":
+                date_ex = "2026\\03\\06"
+            elif date_rule == "year_month":
+                date_ex = "2026\\03"
+            elif date_rule == "year":
+                date_ex = "2026"
+            else:
+                date_ex = ""
+            seg_indent = indent
+            lines.append(f"{seg_indent}├── Emitidas" + (f"\\{date_ex}" if date_ex else ""))
+            lines.append(f"{seg_indent}└── Recebidas" + (f"\\{date_ex}" if date_ex else ""))
+            if base_env:
+                lines.append("")
+                lines.append("(BASE_PATH do .env em uso)")
+        else:
+            lines.append("  └── [nome_empresa]")
+            lines.append("      ├── Emitidas")
+            lines.append("      └── Recebidas")
+            chk = getattr(self, "chk_pasta_cliente", None)
+            pastas = getattr(self, "_pastas_cliente_state", [])
+            if chk and chk.isChecked() and pastas:
+                extra = "  ".join(pastas[:3])
+                if len(pastas) > 3:
+                    extra += " ..."
+                lines.append("")
+                lines.append(f"Subpastas (cliente): {extra}")
+        self.preview_text.setPlainText("\n".join(lines))
 
     def _on_accept(self) -> None:
         path_txt = self.line.text().strip()
@@ -2964,6 +3341,49 @@ class PathDialog(QDialog):
             "supabase_anon_key": self.le_supabase_anon_key.text().strip(),
         }
 
+    def _build_read_only_layout(self, current: Path, current_report: Optional[Path], segment_path: Optional[str]) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        layout.addWidget(QLabel("Pasta base (definida no .env):"))
+        layout.addWidget(QLabel(str(current)))
+        layout.addWidget(QLabel("Pasta de relatórios (departamento):"))
+        layout.addWidget(QLabel(str(current_report or current)))
+        central_segments, central_date_rule = fetch_central_folder_structure(segment_path)
+        preview_label = QLabel("Onde os arquivos serão salvos:")
+        preview_label.setStyleSheet("color:#7DD3FC;font:9pt Verdana;font-weight:bold;margin-top:8px;")
+        layout.addWidget(preview_label)
+        preview_text = QTextEdit()
+        preview_text.setReadOnly(True)
+        preview_text.setMaximumHeight(160)
+        preview_text.setStyleSheet(
+            "QTextEdit { background:#0F172A; color:#94A3B8; border:1px solid #334155; border-radius:6px; padding:8px; font-family:Consolas,Courier; font-size:9pt; }"
+        )
+        base = str(current)
+        lines = [base] if base else ["(BASE_PATH no .env)"]
+        if central_segments:
+            lines.append("  └── EMPRESAS")
+            lines.append("      └── [nome_empresa]   ← mesmo nome do dashboard")
+            indent = "          "
+            for i, seg in enumerate(central_segments):
+                prefix = "└── " if i == len(central_segments) - 1 else "├── "
+                lines.append(f"{indent}{prefix} {seg}")
+                indent += "    "
+            date_ex = "2026\\03\\06" if (central_date_rule == "year_month_day") else "2026\\03" if (central_date_rule == "year_month") else "2026" if (central_date_rule == "year") else ""
+            lines.append(f"{indent}├── Emitidas" + (f"\\{date_ex}" if date_ex else ""))
+            lines.append(f"{indent}└── Recebidas" + (f"\\{date_ex}" if date_ex else ""))
+        else:
+            lines.append("  └── [nome_empresa]")
+            lines.append("      ├── Emitidas")
+            lines.append("      └── Recebidas")
+        preview_text.setPlainText("\n".join(lines))
+        layout.addWidget(preview_text)
+        btn_close = QPushButton("Fechar")
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setStyleSheet(button_style("#5D6D7E", "#707B7C", "#4A545B"))
+        attach_glow(btn_close, "#9CA3AF")
+        btn_close.clicked.connect(self.reject)
+        layout.addWidget(btn_close)
 
 
 
@@ -2999,6 +3419,9 @@ class DownloadThread(QThread):
         include_emitidas: bool = True,
         include_recebidas: bool = True,
         folder_structure: Optional[Dict[str, Any]] = None,
+        central_segment_path: Optional[List[str]] = None,
+        central_date_rule: Optional[str] = None,
+        segment_path_from_dashboard: Optional[str] = None,
     ):
         super().__init__()
         self.companies = companies
@@ -3009,6 +3432,9 @@ class DownloadThread(QThread):
         self.include_emitidas = include_emitidas
         self.include_recebidas = include_recebidas
         self.folder_structure = normalizar_estrutura_pastas(folder_structure)
+        self._central_segment_path = central_segment_path
+        self._central_date_rule = central_date_rule
+        self._segment_path_from_dashboard = (segment_path_from_dashboard or "").strip() or None
         self._stop_requested = False
         self._first_company = True
         self.summary_data: Dict[str, Any] = {}
@@ -3251,21 +3677,31 @@ class DownloadThread(QThread):
             browser.close()
 
     def _company_base_dir(self, folder_label: str) -> Path:
-        path = self.output_base / folder_label
-        fs = self.folder_structure or {}
-        if fs.get("usar_pasta_cliente"):
-            for p in (fs.get("pastas_cliente") or []):
-                seg = safe_folder_name(str(p or ""))
-                if seg:
-                    path /= seg
+        # Estrutura vem do dashboard: API (folder_structure) ou Supabase (robots.segment_path). Nada fixo no robô.
+        path = self.output_base / "EMPRESAS" / folder_label
+        if self._central_segment_path:
+            for seg in self._central_segment_path:
+                path /= seg
+        elif self._segment_path_from_dashboard:
+            for part in (p.strip() for p in self._segment_path_from_dashboard.split("/") if p.strip()):
+                path /= part
         return path
 
     def _section_dir(self, company_base: Path, section_label: str, target_date: Optional[date] = None) -> Path:
         path = company_base / section_label
-        fs = self.folder_structure or {}
-        use_year = bool(fs.get("year"))
-        use_month = bool(fs.get("month"))
-        use_day = bool(fs.get("day"))
+        use_year = use_month = use_day = False
+        if self._central_date_rule:
+            if self._central_date_rule == "year":
+                use_year = True
+            elif self._central_date_rule == "year_month":
+                use_year = use_month = True
+            elif self._central_date_rule == "year_month_day":
+                use_year = use_month = use_day = True
+        else:
+            fs = self.folder_structure or {}
+            use_year = bool(fs.get("year"))
+            use_month = bool(fs.get("month"))
+            use_day = bool(fs.get("day"))
         if target_date is None or not (use_year or use_month or use_day):
             return path
         year = f"{target_date.year:04d}"
@@ -3839,10 +4275,29 @@ class MainWindow(QMainWindow):
             """
         )
 
-        self.companies: List[Dict[str, str]] = load_companies()
+        self.companies: List[Dict[str, str]] = []
         self.items: List[CompanyItem] = []
         self.worker: Optional[DownloadThread] = None
-        self.output_base, self.report_path = load_paths()
+        self.output_base: Optional[Path] = get_resolved_output_base()
+        self._segment_path: Optional[str] = os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip() or "FISCAL/NFS"
+        self.report_path: Optional[Path] = None
+        self._default_notes_mode: Optional[str] = None
+        url, key = get_robot_supabase()
+        if url and key:
+            self.companies = load_companies_from_supabase(url, key)
+            self._robot_id = register_robot(url, key)
+            if self._robot_id:
+                cfg = fetch_robot_config(url, key)
+                if cfg:
+                    if cfg.get("segment_path"):
+                        self._segment_path = cfg["segment_path"]
+                    if cfg.get("notes_mode") in ("recebidas", "emitidas", "both"):
+                        self._default_notes_mode = cfg["notes_mode"]
+            if self.output_base:
+                seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
+                self.report_path = self.output_base / "EMPRESAS" / seg_slug
+        else:
+            self._robot_id = None
         self.preferences: Dict[str, Any] = load_path_preferences()
         default_mode = self.preferences.get("default_date_mode", DATE_MODE_PREVIOUS_MONTH)
         if default_mode not in {DATE_MODE_PREVIOUS_MONTH, DATE_MODE_PREVIOUS_DAY}:
@@ -3853,13 +4308,30 @@ class MainWindow(QMainWindow):
         self.last_summary: Optional[Dict[str, Any]] = None
         self._watermark_path = find_logo_image_path()
 
-        if self.preferences.get("rodar_em_servidor") and self.preferences.get("supabase_url") and self.preferences.get("supabase_anon_key"):
-            from_supabase = load_companies_from_supabase(
-                self.preferences["supabase_url"],
-                self.preferences["supabase_anon_key"],
-            )
-            if from_supabase:
-                self.companies = from_supabase
+        self._robot_supabase_url: Optional[str] = None
+        self._robot_supabase_key: Optional[str] = None
+        self._current_job_id: Optional[str] = None
+        self._heartbeat_timer = QTimer(self)
+        self._poll_timer = QTimer(self)
+        self._display_config_timer = QTimer(self)
+        self._last_display_config_updated_at: Optional[str] = None
+        self._heartbeat_timer.timeout.connect(self._on_robot_heartbeat)
+        self._poll_timer.timeout.connect(self._on_robot_poll_job)
+        self._display_config_timer.timeout.connect(self._on_display_config_poll)
+        if url and key and self._robot_id:
+            self._robot_supabase_url = url
+            self._robot_supabase_key = key
+            self._heartbeat_timer.start(30000)
+            self._poll_timer.start(5000)
+            self._display_config_timer.start(2000)
+            QTimer.singleShot(500, self._on_display_config_poll)
+            QTimer.singleShot(2000, self._on_robot_poll_job)
+            print("[Robô] Conectado ao painel. Status: ativo.", file=sys.stderr)
+
+        if not url or not key:
+            print("[Robô] SUPABASE_URL ou SUPABASE_ANON_KEY não definidos. Coloque no .env na pasta do bot.", file=sys.stderr)
+        elif not self._robot_id:
+            print("[Robô] Não foi possível registrar no painel. Veja a mensagem de erro acima.", file=sys.stderr)
 
         central = QWidget()
         main_layout = QVBoxLayout(central)
@@ -3932,19 +4404,17 @@ class MainWindow(QMainWindow):
         self.end_date_edit.setToolTip("Data final do período.")
         dates_layout.addWidget(self.end_date_edit)
 
-        self.chk_default_prev_day = QCheckBox("Usar ontem como padrão")
-        self.chk_default_prev_day.setStyleSheet("color:#ECF0F1;font:9pt Verdana;")
-        self.chk_default_prev_day.setToolTip("Quando marcado, os campos iniciam preenchidos com o dia anterior; caso contrário, com o mês anterior completo.")
-        self.chk_default_prev_day.setChecked(self.default_date_mode == DATE_MODE_PREVIOUS_DAY)
-        self.chk_default_prev_day.toggled.connect(self._on_default_mode_toggled)
-        self.chk_default_prev_day.setMinimumWidth(0)
-        self.chk_default_prev_day.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-
+        self.chk_default_prev_day = None
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("Recebidas (padrão)", {"emitidas": False, "recebidas": True})
         self.mode_combo.addItem("Emitidas", {"emitidas": True, "recebidas": False})
         self.mode_combo.addItem("Emitidas + Recebidas", {"emitidas": True, "recebidas": True})
-        self.mode_combo.setCurrentIndex(0)
+        if self._default_notes_mode == "emitidas":
+            self.mode_combo.setCurrentIndex(1)
+        elif self._default_notes_mode == "both":
+            self.mode_combo.setCurrentIndex(2)
+        else:
+            self.mode_combo.setCurrentIndex(0)
         self.mode_combo.setMinimumWidth(140)
         self.mode_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.mode_combo.setStyleSheet("background:#34495E;color:#ECF0F1;border-radius:6px;padding:6px;font-weight:bold;font:9pt Verdana;")
@@ -3952,66 +4422,14 @@ class MainWindow(QMainWindow):
 
         self.start_date_edit.dateChanged.connect(self._on_start_date_changed)
         self.end_date_edit.dateChanged.connect(self._on_end_date_changed)
-        self.default_date_mode = (
-            DATE_MODE_PREVIOUS_DAY if self.chk_default_prev_day.isChecked() else DATE_MODE_PREVIOUS_MONTH
-        )
+        self.default_date_mode = DATE_MODE_PREVIOUS_MONTH
         self._apply_default_date_range()
-
-        b_all = QPushButton("Selecionar todas")
-        b_all.setStyleSheet(button_style("#2980B9", "#3498DB", "#2471A3"))
-        b_all.setMinimumWidth(0)
-        b_all.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        icon_all = load_png_icon("selecionar")
-        if icon_all:
-            b_all.setIcon(icon_all)
-        attach_glow(b_all, "#3498DB")
-        b_all.clicked.connect(self._select_all)
-
-        b_none = QPushButton("Limpar seleção")
-        b_none.setStyleSheet(button_style("#C0392B", "#E74C3C", "#922B21"))
-        b_none.setMinimumWidth(0)
-        b_none.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        icon_none = load_png_icon("desmarcar-traco-cancelar", "desmarcar-cancelar", "desmarcar", "cancelar")
-        if icon_none:
-            b_none.setIcon(icon_none)
-        attach_glow(b_none, "#E74C3C")
-        b_none.clicked.connect(self._deselect_all)
-
-        top_row.addWidget(b_all)
-        top_row.addWidget(b_none)
 
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(6)
         bottom_row.addWidget(dates_widget, 1)
-        bottom_row.addWidget(self.chk_default_prev_day)
         bottom_row.addWidget(self.mode_combo)
 
-        schedule_widget = QWidget()
-        schedule_layout = QHBoxLayout(schedule_widget)
-        schedule_layout.setContentsMargins(0, 0, 0, 0)
-        schedule_layout.setSpacing(4)
-
-        self.schedule_chk = QCheckBox("Agendar")
-        self.schedule_chk.setStyleSheet("color:#ECF0F1;font:9pt Verdana;")
-        self.schedule_chk.setToolTip("Quando marcado, inicia a contagem regressiva até a data/hora definida.")
-        schedule_layout.addWidget(self.schedule_chk)
-
-        self.schedule_dt = QDateTimeEdit()
-        self.schedule_dt.setDisplayFormat("dd/MM/yyyy HH:mm")
-        self.schedule_dt.setCalendarPopup(True)
-        self.schedule_dt.setMinimumWidth(150)
-        self.schedule_dt.setMaximumWidth(190)
-        self.schedule_dt.setStyleSheet("background:#34495E;color:#ECF0F1;border-radius:6px;padding:6px;font-weight:bold;font:9pt Verdana;")
-        self.schedule_dt.setToolTip("Data e hora para iniciar automaticamente.")
-        self.schedule_dt.setDateTime(QDateTime.currentDateTime().addSecs(3600))
-        schedule_layout.addWidget(self.schedule_dt)
-
-        self.schedule_countdown = QLabel("")
-        self.schedule_countdown.setStyleSheet("color:#F7DC6F;font:9pt Verdana;")
-        self.schedule_countdown.setMinimumWidth(90)
-        schedule_layout.addWidget(self.schedule_countdown)
-
-        bottom_row.addWidget(schedule_widget)
         bottom_row.addStretch(1)
 
         controls.addLayout(top_row)
@@ -4097,49 +4515,46 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self._finish_logged = False
 
-        self.schedule_timer = QTimer(self)
-        self.schedule_timer.setInterval(1000)
-        self.schedule_timer.timeout.connect(self._update_schedule_countdown)
-        self.schedule_chk.toggled.connect(self._on_schedule_toggled)
-        self.schedule_dt.dateTimeChanged.connect(self._update_schedule_countdown)
-        self.schedule_armed = False
-        QTimer.singleShot(0, self._on_schedule_toggled)
-        self.last_summary: Optional[Dict[str, Any]] = None
-        QTimer.singleShot(500, self._maybe_start_servidor_mode)
+        if url and key and not self.companies:
+            QTimer.singleShot(100, lambda: self._log(
+                "Nenhuma empresa ativa no dashboard ou habilitada para o Robô NFS. "
+                "Cadastre empresas no painel e ative para este robô no Gerenciador (ou use certificado na empresa)."
+            ))
 
-    # ------------------------------------------------------------------
-    # UI helpers
-    # ------------------------------------------------------------------
-    def _maybe_start_servidor_mode(self) -> None:
-        """Se 'Rodar em servidor' estiver ativo: contagem regressiva 10s e inicia com todas as empresas, Emitidas+Recebidas, dia atual."""
-        if not self.preferences.get("rodar_em_servidor"):
-            return
-        if not self.output_base or not self.output_base.exists():
-            return
-        if not self.companies:
-            self._log("Modo servidor: nenhuma empresa ativa no Supabase.")
-            return
-        self._reload_items()
-        self._select_all()
-        self.mode_combo.setCurrentIndex(2)
-        today = date.today()
-        qd = QDate(today.year, today.month, today.day)
-        self.start_date_edit.blockSignals(True)
-        self.end_date_edit.blockSignals(True)
-        try:
-            self.start_date_edit.setDate(qd)
-            self.end_date_edit.setDate(qd)
-        finally:
-            self.start_date_edit.blockSignals(False)
-            self.end_date_edit.blockSignals(False)
-        self.schedule_chk.setChecked(True)
-        self.schedule_dt.setDateTime(QDateTime.currentDateTime().addSecs(10))
-        self.schedule_armed = True
-        self._on_schedule_toggled()
-        if not self.schedule_timer.isActive():
-            self.schedule_timer.start()
-        self._log("Modo servidor: contagem regressiva 10s para iniciar automaticamente (todas as empresas, Emitidas+Recebidas, dia atual).")
+        self._tray_icon = QSystemTrayIcon(self)
+        if LOGO_ICON.exists():
+            self._tray_icon.setIcon(QIcon(str(LOGO_ICON)))
+        else:
+            from PySide6.QtWidgets import QStyle
+            self._tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu()
+        show_act = QAction("Abrir janela", self)
+        show_act.triggered.connect(self._show_from_tray)
+        menu.addAction(show_act)
+        quit_act = QAction("Fechar robô", self)
+        quit_act.triggered.connect(lambda: QApplication.quit())
+        menu.addAction(quit_act)
+        self._tray_icon.setContextMenu(menu)
+        self._tray_icon.activated.connect(self._on_tray_activated)
+        self._tray_icon.setToolTip("NFS-e - Download de XML/PDF")
 
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
+            if not self._heartbeat_timer.isActive():
+                self._heartbeat_timer.start(30000)
+            if not self._poll_timer.isActive():
+                self._poll_timer.start(5000)
+            if not self._display_config_timer.isActive():
+                self._display_config_timer.start(2000)
+
+    def _on_tray_activated(self, reason: int) -> None:
+        if reason == QSystemTrayIcon.DoubleClick:
+            self._show_from_tray()
     def _update_headless_label(self, checked: bool) -> None:
         self.chk_headless.setText("Ocultar navegador" if checked else "Mostrar navegador")
 
@@ -4181,30 +4596,6 @@ class MainWindow(QMainWindow):
             self.start_date_edit.setDate(new_date)
         self.start_date_edit.setMaximumDate(new_date)
 
-    def _on_default_mode_toggled(self, checked: bool) -> None:
-        self.default_date_mode = DATE_MODE_PREVIOUS_DAY if checked else DATE_MODE_PREVIOUS_MONTH
-        if checked:
-            today = datetime.now().date()
-            prev_day = today - timedelta(days=1)
-            qd = QDate(prev_day.year, prev_day.month, prev_day.day)
-            self.start_date_edit.blockSignals(True)
-            self.end_date_edit.blockSignals(True)
-            try:
-                # Remove restricoes anteriores antes de atualizar os dois campos.
-                self.end_date_edit.setMinimumDate(QDate(100, 1, 1))
-                self.start_date_edit.setMaximumDate(QDate(9999, 12, 31))
-                self.start_date_edit.setDate(qd)
-                self.end_date_edit.setDate(qd)
-            finally:
-                self.start_date_edit.blockSignals(False)
-                self.end_date_edit.blockSignals(False)
-            self.end_date_edit.setMinimumDate(qd)
-            self.start_date_edit.setMaximumDate(qd)
-        else:
-            self._apply_default_date_range()
-        self.preferences["default_date_mode"] = self.default_date_mode
-        save_path_preferences(self.preferences)
-
     def _reload_items(self) -> None:
         # Limpa layout atual (sem remover o stretch final)
         while self.list_layout.count():
@@ -4222,53 +4613,14 @@ class MainWindow(QMainWindow):
     def _filter_items(self, text: str) -> None:
         low = text.lower()
         for it in self.items:
-            it.setVisible(low in it.checkbox.text().lower())
+            it.setVisible(low in it.label.text().lower())
 
     def _select_all(self) -> None:
         for it in self.items:
-            it.checkbox.setChecked(True)
-
-    def _on_schedule_toggled(self) -> None:
-        if not self.schedule_chk.isChecked():
-            self.schedule_timer.stop()
-            self.schedule_countdown.setText("")
-            self.schedule_armed = False
-            return
-        if not self.schedule_armed:
-            self.schedule_timer.stop()
-            self.schedule_countdown.setText("Clique em Iniciar")
-            return
-        self._update_schedule_countdown()
-        if not self.schedule_timer.isActive():
-            self.schedule_timer.start()
-
-    def _update_schedule_countdown(self) -> None:
-        if not self.schedule_chk.isChecked():
-            return
-        if not self.schedule_armed:
-            self.schedule_timer.stop()
-            self.schedule_countdown.setText("Clique em Iniciar")
-            return
-        now = QDateTime.currentDateTime()
-        target = self.schedule_dt.dateTime()
-        secs = now.secsTo(target)
-        if secs <= 0:
-            self.schedule_timer.stop()
-            if self.schedule_armed:
-                self.schedule_countdown.setText("Iniciando...")
-                self.schedule_armed = False
-                self._start(triggered_by_schedule=True)
-            else:
-                self.schedule_countdown.setText("Pronto para iniciar")
-            return
-        h = secs // 3600
-        m = (secs % 3600) // 60
-        s = secs % 60
-        self.schedule_countdown.setText(f"⏳ {h:02d}:{m:02d}:{s:02d}")
+            it.setVisible(True)
 
     def _deselect_all(self) -> None:
-        for it in self.items:
-            it.checkbox.setChecked(False)
+        pass
 
     # ------------------------------------------------------------------
     # CRUD de empresas
@@ -4278,208 +4630,18 @@ class MainWindow(QMainWindow):
             dlg = ManagerDialog(self)
             if dlg.exec() != QDialog.Accepted or not dlg.choice:
                 break
-            if dlg.choice == "add":
-                self._add_company()
-            elif dlg.choice == "edit":
-                self._edit_company()
-            elif dlg.choice == "del":
-                self._delete_company()
-            elif dlg.choice == "path":
+            if dlg.choice == "path":
                 self._choose_output_base()
-            elif dlg.choice == "excel":
-                self._open_excel_options()
 
     def _choose_output_base(self) -> None:
         current = self.output_base or BASE_DIR
         current_report = self.report_path or current
-        dlg = PathDialog(current, current_report, self.folder_structure, self, self.preferences)
-        if dlg.exec() == QDialog.Accepted:
-            self.output_base, self.report_path = dlg.get_paths()
-            folder_opts = dlg.get_folder_options()
-            self.folder_structure = normalizar_estrutura_pastas(folder_opts)
-            self.preferences["folder_structure"] = dict(self.folder_structure)
-            self.preferences["rodar_em_servidor"] = folder_opts.get("rodar_em_servidor", False)
-            self.preferences["supabase_url"] = folder_opts.get("supabase_url", "")
-            self.preferences["supabase_anon_key"] = folder_opts.get("supabase_anon_key", "")
-            save_path_preferences(self.preferences)
-            save_paths(self.output_base, self.report_path)
-            self._log(f"Pasta de saida atualizada: {self.output_base}")
-            self._log(f"Pasta de relatorio atualizada: {self.report_path}")
-
-    def _open_excel_options(self) -> None:
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Importar / Exportar Empresas")
-        dlg.setModal(True)
-        dlg.setFixedWidth(440)
-        dlg.setStyleSheet(
-            """
-            QDialog { background:#0B1220; }
-            QLabel { color:#E8F4FF; font-family: Verdana; font-size: 10pt; }
-            """
+        dlg = PathDialog(
+            current, current_report, self.folder_structure, self, self.preferences,
+            read_only=True, segment_path=self._segment_path,
         )
-
-        layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
-
-        frame = QFrame()
-        frame.setStyleSheet("QFrame { background-color: #0F172A; border-radius: 10px; }")
-        frame_layout = QVBoxLayout(frame)
-        frame_layout.setContentsMargins(14, 14, 14, 14)
-        frame_layout.setSpacing(10)
-
-        lbl = QLabel("Escolha importar ou exportar a lista (Nome, CNPJ e acesso) em formato Excel.")
-        lbl.setWordWrap(True)
-        frame_layout.addWidget(lbl)
-
-        cb_substituir = QCheckBox("Substituir a lista atual ao importar")
-        cb_substituir.setChecked(False)
-        cb_substituir.setToolTip("Desmarque para apenas acrescentar novas empresas. CNPJs ja cadastrados serao ignorados.")
-        cb_substituir.setStyleSheet("QCheckBox { color: #E8F4FF; font-family: Verdana; font-size: 10pt; }")
-        frame_layout.addWidget(cb_substituir)
-
-        actions = QHBoxLayout()
-        actions.setSpacing(10)
-
-        btn_import = QPushButton("Importar do Excel")
-        btn_import.setMinimumHeight(32)
-        btn_import.setMinimumWidth(170)
-        btn_import.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_import.setStyleSheet(button_style("#1E8449", "#229954", "#196F3D"))
-        icon_excel = load_png_icon("excel")
-        if icon_excel:
-            btn_import.setIcon(icon_excel)
-        attach_glow(btn_import, "#229954")
-        actions.addWidget(btn_import)
-
-        btn_export = QPushButton("Exportar para Excel")
-        btn_export.setMinimumHeight(32)
-        btn_export.setMinimumWidth(170)
-        btn_export.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_export.setStyleSheet(button_style("#0E6655", "#148F77", "#0B5345"))
-        if icon_excel:
-            btn_export.setIcon(icon_excel)
-        attach_glow(btn_export, "#148F77")
-        actions.addWidget(btn_export)
-
-        frame_layout.addLayout(actions)
-
-        btn_close = QPushButton("Fechar")
-        btn_close.setMinimumHeight(28)
-        btn_close.setStyleSheet(button_style("#102A4C", "#12304E", "#0F1E35"))
-        icon_close = load_png_icon("desmarcar-cancelar", "desmarcar", "cancelar")
-        if icon_close:
-            btn_close.setIcon(icon_close)
-        attach_glow(btn_close, "#12304E")
-        frame_layout.addWidget(btn_close, alignment=Qt.AlignRight)
-
-        layout.addWidget(frame)
-
-        def _do_import() -> None:
-            dlg.accept()
-            self._import_companies_excel(substituir_lista=cb_substituir.isChecked())
-
-        def _do_export() -> None:
-            dlg.accept()
-            self._export_companies_excel()
-
-        btn_import.clicked.connect(_do_import)
-        btn_export.clicked.connect(_do_export)
-        btn_close.clicked.connect(dlg.reject)
-
         dlg.exec()
-
-    def _export_companies_excel(self) -> None:
-        if not self.companies:
-            QMessageBox.information(self, "Exportar Excel", "Nenhuma empresa cadastrada para exportar.")
-            self._log("Exportacao Excel cancelada: lista vazia.")
-            return
-
-        try:
-            from openpyxl import Workbook
-            from openpyxl.utils import get_column_letter
-        except ImportError:
-            QMessageBox.warning(
-                self,
-                "Exportar Excel",
-                "Biblioteca 'openpyxl' nao encontrada. Instale com:\n\npip install openpyxl",
-            )
-            self._log("Dependencia 'openpyxl' ausente para exportar Excel.")
-            return
-
-        base_dir = str(self.output_base or BASE_DIR)
-        if not os.path.isdir(base_dir):
-            base_dir = str(BASE_DIR)
-        sugestao = os.path.join(base_dir, "empresas.xlsx")
-
-        caminho, _ = QFileDialog.getSaveFileName(
-            self,
-            "Exportar lista de empresas",
-            sugestao,
-            "Planilha Excel (*.xlsx);;Todos os arquivos (*)",
-        )
-        if not caminho:
-            self._log("Exportacao Excel cancelada pelo usuario.")
-            return
-        if not caminho.lower().endswith(".xlsx"):
-            caminho += ".xlsx"
-
-        try:
-            os.makedirs(os.path.dirname(caminho), exist_ok=True)
-        except Exception:
-            pass
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Empresas"
-        ws.append(
-            [
-                "Nome da Empresa",
-                "CNPJ",
-                "Modo de Acesso",
-                "Senha",
-                "Senha Certificado",
-                "cert_blob_b64",
-            ]
-        )
-
-        for entry in sorted(self.companies, key=lambda x: normalize_company_name(x.get("name", ""))):
-            nome = normalize_company_name(entry.get("name", ""))
-            doc_digits = only_digits(entry.get("doc", ""))
-            cnpj_fmt = format_cnpj(doc_digits) if len(doc_digits) == 14 else ""
-            auth_mode = entry.get("auth_mode", AUTH_PASSWORD)
-            access_label = "CERTIFICADO" if auth_mode == AUTH_CERTIFICATE else "SENHA"
-            ws.append(
-                [
-                    nome,
-                    cnpj_fmt,
-                    access_label,
-                    entry.get("password", "") or "",
-                    entry.get("cert_password", "") or "",
-                    entry.get("cert_blob_b64", "") or "",
-                ]
-            )
-
-        try:
-            widths = [32, 22, 18, 22, 24, 72]
-            for idx, width in enumerate(widths, start=1):
-                ws.column_dimensions[get_column_letter(idx)].width = width
-        except Exception:
-            pass
-
-        try:
-            wb.save(caminho)
-        except Exception as exc:
-            QMessageBox.critical(self, "Exportar Excel", f"Nao foi possivel salvar o arquivo.\n\nDetalhes: {exc}")
-            self._log(f"Falha ao exportar empresas para Excel: {exc}")
-            return
-
-        self._log(f"Lista de empresas exportada para '{caminho}'.")
-        InfoDialog(
-            title="Exportar Excel",
-            message=f"Arquivo salvo com sucesso:\n{caminho}",
-            parent=self,
-        ).exec()
+        # Estrutura é somente leitura; path e relatório vêm do departamento/dashboard.
 
     def _import_companies_excel(self, substituir_lista: bool = True) -> None:
         try:
@@ -4672,7 +4834,6 @@ class MainWindow(QMainWindow):
             modo_log = "acrescentar"
 
         self.companies = empresas_resultantes
-        save_companies(self.companies)
         self._reload_items()
 
         if avisos:
@@ -4698,7 +4859,6 @@ class MainWindow(QMainWindow):
             return
         data = dlg.get_data()
         self.companies.append(data)
-        save_companies(self.companies)
         self._reload_items()
         self._log(f"Empresa adicionada: {data.get('name', '')}.")
 
@@ -4733,7 +4893,6 @@ class MainWindow(QMainWindow):
             return
         updated = dlg.get_data()
         self.companies[idx] = updated
-        save_companies(self.companies)
         self._reload_items()
         self._log(f"Empresa atualizada: {updated.get('name', '')}.")
 
@@ -4790,7 +4949,6 @@ class MainWindow(QMainWindow):
             if 0 <= idx < len(self.companies):
                 removed_names.append(normalize_company_name(self.companies[idx].get("name", "")))
                 self.companies.pop(idx)
-        save_companies(self.companies)
         self._reload_items()
         if len(removed_names) == 1:
             self._log(f"Empresa removida: {removed_names[0]}.")
@@ -4801,34 +4959,20 @@ class MainWindow(QMainWindow):
     # Acoes de bot
     # ------------------------------------------------------------------
     def _start(self, triggered_by_schedule: bool = False) -> None:
-        if self.schedule_chk.isChecked() and not triggered_by_schedule:
-            now = QDateTime.currentDateTime()
-            target = self.schedule_dt.dateTime()
-            secs = now.secsTo(target)
-            if secs > 0:
-                self.schedule_armed = True
-                self._on_schedule_toggled()
-                self._log(f"Agendado para {target.toString('dd/MM/yyyy HH:mm')}. Aguardando contagem regressiva.")
-                return
-        self.schedule_armed = False
-
+        self._log("Preparando iniciar downloads...")
         output_base = self.output_base
         if not output_base:
+            self._log("Caminho nao definido. Defina o caminho das empresas no Gerenciador.")
             QMessageBox.warning(self, "Caminho nao definido", "Defina o caminho das empresas no gerenciador antes de iniciar.")
             return
         if not output_base.exists():
+            self._log(f"Pasta configurada nao existe: {output_base}")
             QMessageBox.warning(self, "Caminho invalido", "A pasta configurada nao existe. Escolha um caminho valido.")
             return
 
-        selected_records: List[Dict[str, str]] = []
-        for it in self.items:
-            if it.checkbox.isChecked():
-                rec = self._find_company_record(it.name, it.doc)
-                if rec:
-                    selected_records.append(rec)
-
+        selected_records: List[Dict[str, str]] = list(self.companies)
         if not selected_records:
-            self._log("Selecione pelo menos uma empresa para processar.")
+            self._log("Nenhuma empresa marcada para o Robô NFS no dashboard. Ative nas empresas no painel.")
             return
 
         updated_companies = False
@@ -4893,9 +5037,6 @@ class MainWindow(QMainWindow):
                     )
                 )
 
-        if updated_companies:
-            save_companies(self.companies)
-
         start_date = self.start_date_edit.date()
         end_date = self.end_date_edit.date()
         period_start = datetime(start_date.year(), start_date.month(), start_date.day())
@@ -4916,7 +5057,10 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
 
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "processing")
         headless = self.chk_headless.isChecked()
+        central_segment_path, central_date_rule = fetch_central_folder_structure(self._segment_path)
         self.worker = DownloadThread(
             selected,
             headless,
@@ -4926,6 +5070,9 @@ class MainWindow(QMainWindow):
             include_emitidas,
             include_recebidas,
             self.folder_structure,
+            central_segment_path,
+            central_date_rule,
+            segment_path_from_dashboard=self._segment_path,
         )
         self.worker.log.connect(self._log)
         self.worker.summary_ready.connect(self._on_summary_ready)
@@ -4937,11 +5084,6 @@ class MainWindow(QMainWindow):
 
     def _stop(self) -> None:
         w = self.worker
-        if self.schedule_armed and not w:
-            self.schedule_armed = False
-            self.schedule_countdown.setText("")
-            self._log("Agendamento cancelado.")
-            return
         if not w:
             self._log("Nenhum processo em execucao.")
             return
@@ -4967,7 +5109,15 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         summary = self.last_summary
+        job_id = self._current_job_id
+        self._current_job_id = None
         self.worker = None
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
+        if job_id and self._robot_supabase_url and self._robot_supabase_key:
+            complete_execution_request(
+                self._robot_supabase_url, self._robot_supabase_key, job_id, True, None
+            )
         self._log("Processo concluido.")
         if summary:
             try:
@@ -4978,6 +5128,206 @@ class MainWindow(QMainWindow):
                     self._open_pdf(pdf_path)
             except Exception as exc:  # noqa: BLE001
                 self._log(f"Falha ao gerar relatorio: {exc}")
+
+    def _on_robot_heartbeat(self) -> None:
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_heartbeat(self._robot_supabase_url, self._robot_supabase_key, self._robot_id)
+
+    def _on_display_config_poll(self) -> None:
+        if not self._robot_supabase_url or not self._robot_supabase_key or self.worker and self.worker.isRunning():
+            return
+        cfg = fetch_robot_display_config(self._robot_supabase_url, self._robot_supabase_key)
+        if not cfg:
+            return
+        updated = (cfg.get("updated_at") or "").strip()
+        if updated and updated == self._last_display_config_updated_at:
+            return
+        company_ids = cfg.get("company_ids") or []
+        self._last_display_config_updated_at = updated
+        if not company_ids:
+            self.companies = []
+            self._reload_items()
+        else:
+            records = load_companies_from_supabase_by_ids(
+                self._robot_supabase_url, self._robot_supabase_key, company_ids
+            )
+            self.companies = records
+            self._reload_items()
+        period_start = (cfg.get("period_start") or "").strip() or None
+        period_end = (cfg.get("period_end") or "").strip() or None
+        if period_start and period_end:
+            try:
+                start_dt = datetime.strptime(period_start[:10], "%Y-%m-%d")
+                end_dt = datetime.strptime(period_end[:10], "%Y-%m-%d")
+                self.start_date_edit.blockSignals(True)
+                self.end_date_edit.blockSignals(True)
+                try:
+                    self.start_date_edit.setDate(QDate(start_dt.year, start_dt.month, start_dt.day))
+                    self.end_date_edit.setDate(QDate(end_dt.year, end_dt.month, end_dt.day))
+                finally:
+                    self.start_date_edit.blockSignals(False)
+                    self.end_date_edit.blockSignals(False)
+            except Exception:
+                pass
+        notes_mode = (cfg.get("notes_mode") or "").strip()
+        if notes_mode in ("emitidas", "both", "recebidas"):
+            if notes_mode == "emitidas":
+                self.mode_combo.setCurrentIndex(1)
+            elif notes_mode == "both":
+                self.mode_combo.setCurrentIndex(2)
+            else:
+                self.mode_combo.setCurrentIndex(0)
+
+    def _on_robot_poll_job(self) -> None:
+        if not self._robot_id or not self._robot_supabase_url or not self._robot_supabase_key:
+            return
+        if self.worker and self.worker.isRunning():
+            return
+        job = claim_execution_request(
+            self._robot_supabase_url, self._robot_supabase_key, self._robot_id, log_callback=self._log
+        )
+        if job:
+            self._log("[Robô] Job da fila (agendador) iniciado.")
+            self._run_job(job)
+
+    def _run_job(self, job: Dict[str, Any]) -> None:
+        company_ids = job.get("company_ids") or []
+        if not company_ids:
+            complete_execution_request(
+                self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Nenhuma empresa no job"
+            )
+            return
+        period_start_s = job.get("period_start")
+        period_end_s = job.get("period_end")
+        if not period_start_s:
+            period_start_s = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        if not period_end_s:
+            period_end_s = period_start_s
+        try:
+            start_dt = datetime.strptime(period_start_s[:10], "%Y-%m-%d")
+            end_dt = datetime.strptime(period_end_s[:10], "%Y-%m-%d")
+        except Exception:
+            start_dt = datetime.now() - timedelta(days=1)
+            end_dt = start_dt
+        url = self._robot_supabase_url or self.preferences.get("supabase_url")
+        key = self._robot_supabase_key or self.preferences.get("supabase_anon_key")
+        if not url or not key:
+            complete_execution_request(
+                self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Supabase nao configurado"
+            )
+            return
+        records = load_companies_from_supabase_by_ids(url, key, company_ids)
+        if not records:
+            complete_execution_request(
+                self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Nenhuma empresa encontrada"
+            )
+            self._log(
+                "[Robô] Nenhuma empresa com config no painel (company_robot_config) para este robô. "
+                "Habilite as empresas no gerenciador e defina auth_mode/senha."
+            )
+            return
+        selected: List[Company] = []
+        for rec in records:
+            name_norm = normalize_company_name(rec.get("name", ""))
+            doc_digits = only_digits(rec.get("doc", ""))
+            mode = rec.get("auth_mode") or (AUTH_CERTIFICATE if rec.get("cert_blob_b64") else AUTH_PASSWORD)
+            if mode not in (AUTH_PASSWORD, AUTH_CERTIFICATE):
+                mode = AUTH_PASSWORD
+            if mode == AUTH_CERTIFICATE:
+                cert_data = None
+                if rec.get("cert_blob_b64"):
+                    try:
+                        cert_data = base64.b64decode(rec["cert_blob_b64"])
+                    except Exception:
+                        pass
+                selected.append(
+                    Company(
+                        name=name_norm,
+                        doc=doc_digits,
+                        auth_mode=AUTH_CERTIFICATE,
+                        cert_password=(rec.get("cert_password") or ""),
+                        cert_data=cert_data,
+                    )
+                )
+            else:
+                selected.append(
+                    Company(
+                        name=name_norm,
+                        doc=doc_digits,
+                        password=rec.get("password", ""),
+                        auth_mode=AUTH_PASSWORD,
+                    )
+                )
+        if not selected:
+            complete_execution_request(
+                self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Nenhuma empresa valida"
+            )
+            return
+        notes_mode = (job.get("notes_mode") or self._default_notes_mode or "recebidas").strip()
+        if notes_mode == "emitidas":
+            include_emitidas, include_recebidas = True, False
+        elif notes_mode == "both":
+            include_emitidas, include_recebidas = True, True
+        else:
+            include_emitidas, include_recebidas = False, True
+        self.companies = records
+        self._reload_items()
+        self.start_date_edit.blockSignals(True)
+        self.end_date_edit.blockSignals(True)
+        try:
+            self.start_date_edit.setDate(QDate(start_dt.year, start_dt.month, start_dt.day))
+            self.end_date_edit.setDate(QDate(end_dt.year, end_dt.month, end_dt.day))
+        finally:
+            self.start_date_edit.blockSignals(False)
+            self.end_date_edit.blockSignals(False)
+        if notes_mode == "emitidas":
+            self.mode_combo.setCurrentIndex(1)
+        elif notes_mode == "both":
+            self.mode_combo.setCurrentIndex(2)
+        else:
+            self.mode_combo.setCurrentIndex(0)
+        output_base = get_resolved_output_base() or self.output_base
+        if not output_base or not output_base.exists():
+            complete_execution_request(
+                self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Pasta de saida nao configurada"
+            )
+            return
+        self._current_job_id = job["id"]
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "processing")
+        self._finish_logged = False
+        self.last_summary = None
+        self.btn_start.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        central_segment_path, central_date_rule = fetch_central_folder_structure(self._segment_path)
+        self.worker = DownloadThread(
+            selected,
+            True,
+            output_base,
+            start_dt,
+            end_dt,
+            include_emitidas,
+            include_recebidas,
+            self.folder_structure,
+            central_segment_path,
+            central_date_rule,
+            segment_path_from_dashboard=self._segment_path,
+        )
+        self.worker.log.connect(self._log)
+        self.worker.summary_ready.connect(self._on_summary_ready)
+        self.worker.finished.connect(self._on_finished)
+        self.worker.start()
+        self._log(f"[Agendador] Iniciando job para {len(selected)} empresa(s), periodo {start_dt:%d/%m/%Y} a {end_dt:%d/%m/%Y}")
+
+    def closeEvent(self, event) -> None:
+        event.ignore()
+        self.hide()
+        self._tray_icon.show()
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "inactive")
+        self._heartbeat_timer.stop()
+        self._poll_timer.stop()
+        self._display_config_timer.stop()
 
     def _find_company_record(self, name: str, doc: str) -> Optional[Dict[str, str]]:
         name_norm = normalize_company_name(name)
@@ -5054,7 +5404,7 @@ class MainWindow(QMainWindow):
             self._log("Caminho de relatorio nao definido.")
             return None
         report_dir.mkdir(parents=True, exist_ok=True)
-        pdf_path = report_dir / f"Relatorio NFS-e.pdf"
+        pdf_path = report_dir / "relatorio nfs.pdf"
 
         palette = {
             "bg": "#f5f7fb",

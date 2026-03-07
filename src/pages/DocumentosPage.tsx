@@ -2,24 +2,23 @@ import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { FileText, Download, Filter, Search } from "lucide-react";
 import { useState } from "react";
-
-const documents = [
-  { id: "1", empresa: "Tech Solutions Ltda", cnpj: "12.345.678/0001-90", tipo: "NFE", periodo: "07/2025", status: "validado" as const, origem: "Automação", data: "2025-07-15", arquivos: ["XML", "DANFE"] },
-  { id: "2", empresa: "Comércio ABC", cnpj: "98.765.432/0001-10", tipo: "NFS", periodo: "07/2025", status: "novo" as const, origem: "Automação", data: "2025-07-14", arquivos: ["XML"] },
-  { id: "3", empresa: "Indústria XYZ", cnpj: "45.678.901/0001-23", tipo: "NFC", periodo: "07/2025", status: "divergente" as const, origem: "Upload Manual", data: "2025-07-14", arquivos: ["XML", "DANFE"] },
-  { id: "4", empresa: "Serviços Delta", cnpj: "11.223.344/0001-55", tipo: "NFE", periodo: "07/2025", status: "processando" as const, origem: "Automação", data: "2025-07-13", arquivos: ["XML"] },
-  { id: "5", empresa: "Logística Beta", cnpj: "99.887.766/0001-99", tipo: "NFS", periodo: "06/2025", status: "validado" as const, origem: "Automação", data: "2025-07-12", arquivos: ["XML", "PDF Guia"] },
-  { id: "6", empresa: "Alfa Comercial", cnpj: "33.445.566/0001-77", tipo: "NFE", periodo: "06/2025", status: "pendente" as const, origem: "Upload Manual", data: "2025-07-11", arquivos: ["XML"] },
-  { id: "7", empresa: "Gama Indústria", cnpj: "55.667.788/0001-33", tipo: "NFC", periodo: "06/2025", status: "validado" as const, origem: "Automação", data: "2025-07-10", arquivos: ["XML", "DANFE"] },
-  { id: "8", empresa: "Omega Services", cnpj: "77.889.900/0001-11", tipo: "NFS", periodo: "06/2025", status: "validado" as const, origem: "Automação", data: "2025-07-09", arquivos: ["XML"] },
-];
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
+import { getAllFiscalDocuments } from "@/services/dashboardService";
+import { downloadFiscalDocument, fiscalSyncAll, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 
 const tipoFilters = ["Todos", "NFS", "NFE", "NFC"];
 
-function exportToCsv(data: typeof documents) {
-  const headers = ["Empresa", "CNPJ", "Tipo", "Período", "Status", "Origem", "Data", "Arquivos"];
+function exportToCsv(
+  data: Array<{ empresa: string; cnpj: string | null; type: string; periodo: string; status: string; document_date: string | null; created_at: string }>
+) {
+  const headers = ["Empresa", "CNPJ", "Tipo", "Período", "Status", "Data"];
   const rows = data.map((d) =>
-    [d.empresa, d.cnpj, d.tipo, d.periodo, d.status, d.origem, d.data, d.arquivos.join("; ")].map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")
+    [d.empresa, d.cnpj ?? "", d.type, d.periodo, d.status, (d.document_date ?? d.created_at ?? "").slice(0, 10)].map((c) =>
+      `"${String(c).replace(/"/g, '""')}"`
+    ).join(",")
   );
   const csv = [headers.join(","), ...rows].join("\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
@@ -34,18 +33,86 @@ function exportToCsv(data: typeof documents) {
 export default function DocumentosPage() {
   const [filterTipo, setFilterTipo] = useState("Todos");
   const [search, setSearch] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const { selectedCompanyIds } = useSelectedCompanyIds();
+  const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
+  const queryClient = useQueryClient();
+
+  const { data: documents = [], isLoading } = useQuery({
+    queryKey: ["fiscal-documents-all", companyFilter],
+    queryFn: () => getAllFiscalDocuments(companyFilter),
+  });
+
+  const canSync = hasServerApi();
+
+  const handleSyncClick = () => {
+    if (!canSync) {
+      toast.error(
+        "Configure SERVER_API_URL no arquivo .env na raiz do projeto (URL do server-api, ex: do ngrok) e reinicie o app (npm run dev) para sincronizar os arquivos da VM."
+      );
+      return;
+    }
+    setSyncing(true);
+    fiscalSyncAll()
+      .then((r) => {
+        queryClient.invalidateQueries({ queryKey: ["fiscal-documents-all"] });
+        queryClient.invalidateQueries({ queryKey: ["fiscal-summary"] });
+        queryClient.invalidateQueries({ queryKey: ["fiscal-documents"] });
+        const parts = [];
+        if (r.inserted > 0) parts.push(`${r.inserted} inserido(s)`);
+        if (r.deleted > 0) parts.push(`${r.deleted} removido(s)`);
+        toast.success(parts.length ? parts.join(", ") + "." : "Sincronização concluída.");
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : "Erro ao sincronizar"))
+      .finally(() => setSyncing(false));
+  };
 
   const filtered = documents.filter((doc) => {
-    const matchesTipo = filterTipo === "Todos" || doc.tipo === filterTipo;
-    const matchesSearch = doc.empresa.toLowerCase().includes(search.toLowerCase()) || doc.cnpj.includes(search);
+    const matchesTipo = filterTipo === "Todos" || doc.type === filterTipo;
+    const matchesSearch =
+      doc.empresa.toLowerCase().includes(search.toLowerCase()) ||
+      (doc.cnpj && doc.cnpj.replace(/\D/g, "").includes(search.replace(/\D/g, ""))) ||
+      (doc.chave && doc.chave.includes(search));
     return matchesTipo && matchesSearch;
   });
 
+  const handleDownload = async (id: string, chave: string | null, filePath: string | null) => {
+    try {
+      const suggestedName = filePath ? filePath.split("/").pop() ?? (chave ? `documento-${chave}` : undefined) : undefined;
+      await downloadFiscalDocument(id, suggestedName);
+      await markFiscalDocumentDownloaded(id);
+      toast.success("Download iniciado.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao baixar.");
+    }
+  };
+
+  const getDownloadLabel = (filePath: string | null) => {
+    if (!filePath) return "—";
+    const lower = filePath.toLowerCase();
+    if (lower.endsWith(".pdf")) return "PDF";
+    if (lower.endsWith(".xml")) return "XML";
+    return "Arquivo";
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="min-w-0">
-        <h1 className="text-xl sm:text-2xl font-bold font-display tracking-tight text-foreground">Documentos</h1>
-        <p className="text-xs sm:text-sm text-muted-foreground mt-1 line-clamp-2">Lista unificada de documentos fiscais e operacionais</p>
+      <div className="flex flex-wrap items-center justify-between gap-4 min-w-0">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold font-display tracking-tight text-foreground">Documentos</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground mt-1 line-clamp-2">
+            {companyFilter ? `Filtrado por ${companyFilter.length} empresa(s)` : "Todas as empresas"} — Lista unificada de documentos fiscais
+          </p>
+        </div>
+        {canSync ? (
+          <Button variant="outline" size="sm" onClick={handleSyncClick} disabled={syncing}>
+            {syncing ? "Sincronizando…" : "Sincronizar"}
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" onClick={handleSyncClick} title="Adicione SERVER_API_URL no .env (URL do ngrok) e reinicie o app">
+            Sincronizar
+          </Button>
+        )}
       </div>
 
       <GlassCard className="overflow-hidden">
@@ -86,49 +153,65 @@ export default function DocumentosPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
-          <table className="w-full text-xs sm:text-xs min-w-[600px]">
-            <thead>
-              <tr className="border-b border-border bg-muted/50">
-                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Empresa</th>
-                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">CNPJ</th>
-                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Tipo</th>
-                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Período</th>
-                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Origem</th>
-                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Arquivos</th>
-                <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Data</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((doc) => (
-                <tr key={doc.id} className="border-b border-border hover:bg-muted/30 active:bg-muted/50 transition-colors">
-                  <td className="px-3 sm:px-4 py-3 font-medium">{doc.empresa}</td>
-                  <td className="px-3 sm:px-4 py-3 text-muted-foreground">{doc.cnpj}</td>
-                  <td className="px-3 sm:px-4 py-3">
-                    <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">{doc.tipo}</span>
-                  </td>
-                  <td className="px-3 sm:px-4 py-3">{doc.periodo}</td>
-                  <td className="px-3 sm:px-4 py-3"><StatusBadge status={doc.status} /></td>
-                  <td className="px-3 sm:px-4 py-3 text-muted-foreground">{doc.origem}</td>
-                  <td className="px-3 sm:px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {doc.arquivos.map((arq) => (
-                        <span key={arq} className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">{arq}</span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-3 sm:px-4 py-3 text-muted-foreground">{doc.data}</td>
+        {isLoading ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">Carregando…</div>
+        ) : (
+          <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
+            <table className="w-full text-xs sm:text-xs min-w-[600px]">
+              <thead>
+                <tr className="border-b border-border bg-muted/50">
+                  <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Empresa</th>
+                  <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">CNPJ</th>
+                  <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Tipo</th>
+                  <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Período</th>
+                  <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Status</th>
+                  <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Origem</th>
+                  <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Data</th>
+                  <th className="text-left px-3 sm:px-4 py-3 font-medium text-muted-foreground">Download</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filtered.map((doc) => (
+                  <tr key={doc.id} className="border-b border-border hover:bg-muted/30 active:bg-muted/50 transition-colors">
+                    <td className="px-3 sm:px-4 py-3 font-medium">{doc.empresa}</td>
+                    <td className="px-3 sm:px-4 py-3 text-muted-foreground">{doc.cnpj ?? "—"}</td>
+                    <td className="px-3 sm:px-4 py-3">
+                      <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">{doc.type}</span>
+                    </td>
+                    <td className="px-3 sm:px-4 py-3">{doc.periodo}</td>
+                    <td className="px-3 sm:px-4 py-3">
+                      <StatusBadge status={doc.status as "validado" | "novo" | "divergente" | "processando" | "pendente"} />
+                    </td>
+                    <td className="px-3 sm:px-4 py-3 text-muted-foreground">Automação</td>
+                    <td className="px-3 sm:px-4 py-3 text-muted-foreground">{(doc.document_date ?? doc.created_at ?? "").toString().slice(0, 10)}</td>
+                    <td className="px-3 sm:px-4 py-3">
+                      {doc.file_path ? (
+                        <button
+                          type="button"
+                          onClick={() => handleDownload(doc.id, doc.chave, doc.file_path)}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                        >
+                          <Download className="h-3 w-3" /> {getDownloadLabel(doc.file_path)}
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground text-[10px]">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
-        {filtered.length === 0 && (
+        {!isLoading && filtered.length === 0 && (
           <div className="p-12 text-center">
             <FileText className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">Nenhum documento encontrado</p>
+            <p className="text-sm text-muted-foreground">
+              {documents.length === 0
+                ? "Nenhum documento. Use Sincronizar para trazer arquivos da VM (pasta EMPRESAS)."
+                : "Nenhum documento encontrado com os filtros aplicados."}
+            </p>
           </div>
         )}
       </GlassCard>

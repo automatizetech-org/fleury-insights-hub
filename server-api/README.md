@@ -1,6 +1,11 @@
-# API de arquivos — Fleury Insights Hub
+# API unificada — Fleury Insights Hub
 
-Servidor que roda na **VM** (porta 3001). Expõe listagem de pastas e download de documentos fiscais.
+Roda na **VM na porta 3001**. Atende **arquivos** (list, download, fiscal-sync) e **repassa o restante** para o backend do WhatsApp — mesma porta, um único ngrok.
+
+- **Rotas de arquivos** → server-api responde
+- **Demais rotas** (WhatsApp, etc.) → proxy para `WHATSAPP_BACKEND_URL` (ex.: porta 3010)
+
+Na VM: o **backend do WhatsApp** deve rodar na porta **3010**; o **server-api** na **3001**; ngrok aponta para **3001**.
 
 ## Convenção: pastas = nomes do dashboard
 
@@ -30,7 +35,8 @@ C:\Users\ROBO\Documents\          ← BASE_PATH
 ## Configuração
 
 1. Copie `.env.example` para `.env` na pasta `server-api`
-2. Ajuste `BASE_PATH` se na VM a raiz for outra (Supabase já vem preenchido; só anon key)
+2. Ajuste `BASE_PATH` se na VM a raiz for outra
+3. **WHATSAPP_BACKEND_URL** — URL do backend WhatsApp na VM (ex.: `http://localhost:3010`). O backend do WhatsApp deve rodar nessa porta; o server-api repassa para ela as rotas que não são de arquivos.
 
 ## Endpoints
 
@@ -43,17 +49,18 @@ C:\Users\ROBO\Documents\          ← BASE_PATH
 
 ## Rodar na VM
 
-```bash
-cd server-api
-npm install
-npm start
-```
-
-Com ngrok (para acesso externo):
-
-```bash
-ngrok http --domain=plagiaristic-elinore-ungloomily.ngrok-free.dev 3001
-```
+1. **Backend do WhatsApp** — subir na porta **3010** (não mexer no código; só configurar a porta onde ele escuta, ex.: 3010).
+2. **server-api** — na pasta `server-api`:
+   ```bash
+   cd server-api
+   npm install
+   npm start
+   ```
+   (Escuta na 3001 e repassa para 3010 o que não for arquivos.)
+3. **ngrok** (já em uso):
+   ```bash
+   ngrok http --domain=plagiaristic-elinore-ungloomily.ngrok-free.dev 3001
+   ```
 
 ## Teste rápido
 
@@ -65,7 +72,6 @@ npm run test:ngrok:list
 
 # Sincronizar para fiscal_documents (company_id da empresa no Supabase; exige JWT do usuário)
 npm run test:ngrok:sync -- <uuid-da-empresa> [seu_jwt]
-# Ou defina SYNC_TOKEN no .env com o access_token do usuário logado
 # Ou defina SYNC_TOKEN no .env com o access_token do usuário logado
 ```
 

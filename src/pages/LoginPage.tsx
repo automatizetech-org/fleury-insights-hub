@@ -54,6 +54,10 @@ export default function LoginPage() {
       if (!userId) throw new Error("Usuário não retornado")
       const profile = await getProfile(userId)
       setLoading(false)
+      if (!profile) {
+        navigate(from && from !== "/login" ? from : "/dashboard", { replace: true })
+        return
+      }
       if (profile.role === "super_admin") {
         navigate("/admin", { replace: true })
       } else {
