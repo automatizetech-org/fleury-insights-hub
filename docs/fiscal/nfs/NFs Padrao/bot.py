@@ -4533,7 +4533,7 @@ class MainWindow(QMainWindow):
         show_act.triggered.connect(self._show_from_tray)
         menu.addAction(show_act)
         quit_act = QAction("Fechar robô", self)
-        quit_act.triggered.connect(lambda: QApplication.quit())
+        quit_act.triggered.connect(self._quit_from_tray)
         menu.addAction(quit_act)
         self._tray_icon.setContextMenu(menu)
         self._tray_icon.activated.connect(self._on_tray_activated)
@@ -5323,11 +5323,16 @@ class MainWindow(QMainWindow):
         event.ignore()
         self.hide()
         self._tray_icon.show()
+        # Não marcar como inativo nem parar o heartbeat: o robô continua em segundo plano (bandeja).
+
+    def _quit_from_tray(self) -> None:
+        """Chamado ao escolher 'Fechar robô' na bandeja: marca inativo e encerra o app."""
         if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "inactive")
         self._heartbeat_timer.stop()
         self._poll_timer.stop()
         self._display_config_timer.stop()
+        QApplication.quit()
 
     def _find_company_record(self, name: str, doc: str) -> Optional[Dict[str, str]]:
         name_norm = normalize_company_name(name)
