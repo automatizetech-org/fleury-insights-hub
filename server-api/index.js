@@ -24,7 +24,14 @@ const PORT = process.env.PORT || 3001;
 const BASE_PATH = process.env.BASE_PATH || "C:\\Users\\ROBO\\Documents";
 
 app.use(cors());
-app.use(express.json());
+
+// Não consumir o body nas rotas que o proxy repassa ao WhatsApp (senão o backend recebe body vazio e dá 408)
+const whatsappPaths = ["/send", "/status", "/groups", "/qr", "/connect", "/disconnect"];
+app.use((req, res, next) => {
+  const isWhatsApp = whatsappPaths.includes(req.path) || req.path.startsWith("/qr");
+  if (isWhatsApp) return next();
+  express.json()(req, res, next);
+});
 
 // Header para ngrok não bloquear
 app.use((req, res, next) => {

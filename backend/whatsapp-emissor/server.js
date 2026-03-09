@@ -329,12 +329,19 @@ function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
+  res.setHeader("Access-Control-Max-Age", "86400");
 }
 
 const server = http.createServer(async (req, res) => {
   cors(res);
   if (req.method === "OPTIONS") {
-    res.writeHead(204);
+    res.writeHead(204, {
+      "Content-Length": "0",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, ngrok-skip-browser-warning",
+      "Access-Control-Max-Age": "86400",
+    });
     res.end();
     return;
   }
@@ -473,60 +480,98 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/send" && req.method === "POST") {
+    const contentLength = Math.min(
+      parseInt(req.headers["content-length"], 10) || 0,
+      10 * 1024 * 1024
+    ); // máx 10MB
     let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", async () => {
-      if (!isReady || !client) {
-        sendJson(res, 503, { ok: false, error: "WhatsApp desconectado" });
-        return;
-      }
-      let data;
+    let bodyDone = false;
+    const sendOnce = (code, data) => {
+      if (res.writableEnded) return;
+      sendJson(res, code, data);
+    };
+
+    const processBody = () => {
+      if (bodyDone) return;
+      bodyDone = true;
+      clearTimeout(bodyTimeout);
+      if (contentLength > 0 && body.length > contentLength) body = body.slice(0, contentLength);
+      console.log("[SEND] Body completo,", body.length, "bytes");
+
       try {
-        data = JSON.parse(body || "{}");
-      } catch (_) {
-        sendJson(res, 400, { ok: false, error: "JSON inválido" });
-        return;
-      }
-      const groupId = (data.groupId || "").trim();
-      const message = typeof data.message === "string" ? data.message : "";
-      const attachments = Array.isArray(data.attachments) ? data.attachments : [];
-      if (!groupId) {
-        sendJson(res, 400, { ok: false, error: "groupId obrigatório" });
-        return;
-      }
-      console.log("[SEND] POST /send recebido: grupo=" + groupId + ", anexos=" + attachments.length);
-      const targetId = groupId.includes("@") ? groupId : `${groupId}@g.us`;
-      try {
-        await client.sendMessage(targetId, message || " ");
-        const delayMs = (ms) => new Promise((r) => setTimeout(r, ms));
-        if (attachments.length > 0) {
-          console.log("[SEND] Enviando", attachments.length, "anexo(s) em seguida à mensagem.");
-          await delayMs(1200);
+        if (!isReady || !client) {
+          sendOnce(503, { ok: false, error: "WhatsApp desconectado" });
+          return;
         }
-        for (const att of attachments) {
-          const mimetype = att.mimetype && typeof att.mimetype === "string" ? att.mimetype : "application/octet-stream";
-          const dataBase64 = att.dataBase64 && typeof att.dataBase64 === "string" ? att.dataBase64 : "";
-          const filename = att.filename && typeof att.filename === "string" ? att.filename : "documento";
-          if (!dataBase64) {
-            console.warn("[SEND] Anexo sem dataBase64 ignorado:", filename);
-            continue;
-          }
+        let data;
+        try {
+          data = JSON.parse(body || "{}");
+        } catch (_) {
+          sendOnce(400, { ok: false, error: "JSON inválido" });
+          return;
+        }
+        const groupId = (data.groupId || "").trim();
+        const message = typeof data.message === "string" ? data.message : "";
+        const attachments = Array.isArray(data.attachments) ? data.attachments : [];
+        if (!groupId) {
+          sendOnce(400, { ok: false, error: "groupId obrigatório" });
+          return;
+        }
+        const rawId = groupId.includes("@") ? groupId.split("@")[0] : groupId;
+        const targetId = rawId ? `${rawId.trim()}@g.us` : groupId;
+        console.log("[SEND] Aceito: grupo=" + targetId + ", anexos=" + attachments.length);
+        sendOnce(200, { ok: true });
+        (async () => {
+          const delayMs = (ms) => new Promise((r) => setTimeout(r, ms));
           try {
-            const media = new MessageMedia(mimetype, dataBase64, filename);
-            await client.sendMessage(targetId, media);
-            console.log("[SEND] Anexo enviado:", filename);
-            await delayMs(1000);
-          } catch (eAtt) {
-            console.error("[ERRO] Enviar anexo:", eAtt && eAtt.message ? eAtt.message : eAtt);
+            await client.sendMessage(targetId, message || " ");
+            if (attachments.length > 0) {
+              await delayMs(1200);
+              for (const att of attachments) {
+                const mimetype =
+                  att.mimetype && typeof att.mimetype === "string"
+                    ? att.mimetype
+                    : "application/octet-stream";
+                const dataBase64 =
+                  att.dataBase64 && typeof att.dataBase64 === "string" ? att.dataBase64 : "";
+                const filename =
+                  att.filename && typeof att.filename === "string" ? att.filename : "documento";
+                if (!dataBase64) continue;
+                const media = new MessageMedia(mimetype, dataBase64, filename);
+                await client.sendMessage(targetId, media);
+                await delayMs(800);
+              }
+            }
+            console.log("[SEND] Enviado com sucesso para", targetId);
+          } catch (e) {
+            console.error("[ERRO] Enviar para grupo (background):", e && e.message ? e.message : e);
           }
-        }
-        sendJson(res, 200, { ok: true });
-      } catch (e) {
-        console.error("[ERRO] Enviar para grupo:", e);
-        sendJson(res, 500, {
-          ok: false,
-          error: (e && e.message) || "Falha ao enviar",
-        });
+        })();
+      } catch (err) {
+        console.error("[ERRO] /send inesperado:", err && err.message ? err.message : err);
+        sendOnce(500, { ok: false, error: "Erro interno" });
+      }
+    };
+
+    const BODY_TIMEOUT_MS = 45_000;
+    const bodyTimeout = setTimeout(() => {
+      if (bodyDone) return;
+      bodyDone = true;
+      console.warn("[SEND] Timeout: body não recebido em", BODY_TIMEOUT_MS / 1000, "s");
+      sendOnce(408, { ok: false, error: "Tempo esgotado ao receber os dados. Tente novamente." });
+      req.destroy();
+    }, BODY_TIMEOUT_MS);
+
+    console.log("[SEND] POST /send recebido, aguardando body (Content-Length:", contentLength, ")...");
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (contentLength > 0 && body.length >= contentLength) processBody();
+    });
+    req.on("end", () => processBody());
+    req.on("error", () => {
+      if (!bodyDone) {
+        bodyDone = true;
+        clearTimeout(bodyTimeout);
       }
     });
     return;

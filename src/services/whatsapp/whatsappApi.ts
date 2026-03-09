@@ -103,6 +103,9 @@ export async function sendToGroup(
   attachments?: WhatsAppAttachment[]
 ): Promise<{ ok: boolean; error?: string }> {
   if (!BASE) return { ok: false, error: "API não configurada" };
+  const controller = new AbortController();
+  const timeoutMs = 90_000; // 90s para envio com anexos
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const body: { groupId: string; message: string; attachments?: WhatsAppAttachment[] } = {
       groupId,
@@ -113,14 +116,22 @@ export async function sendToGroup(
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      return { ok: false, error: (err as { error?: string }).error ?? "Falha ao enviar" };
+      const msg = (err as { error?: string }).error ?? "Falha ao enviar";
+      return { ok: false, error: res.status === 408 ? "Demorou para conectar na API. Tente de novo." : msg };
     }
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Erro de conexão" };
+    if (e instanceof Error) {
+      if (e.name === "AbortError") return { ok: false, error: "Tempo esgotado. Verifique a conexão com a API WhatsApp e tente novamente." };
+      return { ok: false, error: e.message };
+    }
+    return { ok: false, error: "Erro de conexão" };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
