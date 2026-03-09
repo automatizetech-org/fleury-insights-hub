@@ -54,6 +54,16 @@ backend/whatsapp-emissor/**/Cookies
 backend/whatsapp-emissor/**/LOCK
 backend/whatsapp-emissor/**/LOG
 backend/whatsapp-emissor/**/LOG.old
+Servidor/whatsapp-emissor/.wwebjs_auth/
+Servidor/whatsapp-emissor/.wwebjs_cache/
+Servidor/whatsapp-emissor/data/
+Servidor/whatsapp-emissor/**/session/
+Servidor/whatsapp-emissor/**/Default/
+Servidor/whatsapp-emissor/**/*.ldb
+Servidor/whatsapp-emissor/**/Cookies
+Servidor/whatsapp-emissor/**/LOCK
+Servidor/whatsapp-emissor/**/LOG
+Servidor/whatsapp-emissor/**/LOG.old
 
 # =============================================================================
 # Testes e cobertura

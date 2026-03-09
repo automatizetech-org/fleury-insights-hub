@@ -1,6 +1,6 @@
 /**
  * Cliente da API WhatsApp (QR, grupos, envio).
- * Servidor: backend/whatsapp-emissor/server.js — mesma lógica de conexão do WhatsApp_emissor.
+ * Servidor: Servidor/whatsapp-emissor/server.js — mesma lógica de conexão do WhatsApp_emissor.
  * Base URL: WHATSAPP_API (ex: http://localhost:3010)
  * Endpoints: GET /status, GET /qr, GET /groups, POST /send { groupId, message } — envia apenas para o grupo selecionado.
  */

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:vite\" \"npm run dev:wa\"",
     "dev:vite": "vite --config config/vite.config.ts",
-    "dev:wa": "cd backend/whatsapp-emissor && node launcher.js",
+    "dev:wa": "cd Servidor/whatsapp-emissor && node launcher.js",
     "icons:generate": "node scripts/generate-pwa-icons.mjs",
     "test:ngrok:list": "node scripts/test-ngrok-api.mjs list",
     "test:ngrok:sync": "node scripts/test-ngrok-api.mjs sync",
