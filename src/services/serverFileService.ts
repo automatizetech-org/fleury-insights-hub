@@ -64,6 +64,69 @@ export async function markFiscalDocumentDownloaded(documentId: string): Promise<
 }
 
 /**
+ * Baixa vários documentos fiscais em um único ZIP.
+ * ids: array de IDs dos documentos listados (com file_path); só esses arquivos entram no ZIP.
+ */
+export async function downloadFiscalDocumentsZip(ids: string[]): Promise<void> {
+  if (!SERVER_API_URL) {
+    throw new Error("SERVER_API_URL não configurada.");
+  }
+  const idsFiltered = ids.filter((id) => id && String(id).trim());
+  if (idsFiltered.length === 0) {
+    throw new Error("Nenhum documento selecionado para baixar.");
+  }
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error("Faça login para baixar.");
+  }
+  const url = `${SERVER_API_URL}/api/fiscal-documents/download-zip`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${session.access_token}`,
+  };
+  if (SERVER_API_URL.toLowerCase().includes("ngrok")) {
+    headers["ngrok-skip-browser-warning"] = "true";
+  }
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ids: idsFiltered }),
+  });
+
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("text/html")) {
+    const text = await res.text();
+    const msg = text.length > 200 ? text.slice(0, 200) + "…" : text;
+    throw new Error(
+      "A resposta veio em HTML em vez do ZIP. Verifique se SERVER_API_URL no .env aponta para a URL da API (ex.: do ngrok), não para a página do app. Detalhe: " + msg
+    );
+  }
+
+  if (!res.ok) {
+    let message = `Erro ${res.status} ao baixar ZIP`;
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      if (json && typeof json.error === "string") message = json.error;
+    } catch {
+      if (text && !text.startsWith("<")) message = text.slice(0, 150);
+    }
+    throw new Error(message);
+  }
+
+  if (!contentType.includes("application/zip") && !contentType.includes("application/octet-stream")) {
+    throw new Error("Resposta não é um ZIP (content-type: " + contentType + "). Verifique SERVER_API_URL.");
+  }
+
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "documentos-fiscais.zip";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/**
  * Sincroniza todos os arquivos fiscais da pasta EMPRESAS na VM para fiscal_documents (Supabase).
  * Usa o JWT da sessão atual. Chamar ao abrir Fiscal/Documentos ou ao clicar em "Sincronizar".
  */

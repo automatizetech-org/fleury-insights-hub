@@ -4,6 +4,7 @@
  * Uso: node server.js (ou npm run dev:wa a partir da raiz).
  * Pastas (tudo dentro de Servidor/whatsapp-emissor): .wwebjs_auth, .wwebjs_cache, data/
  * NUNCA apagar .wwebjs_auth — é a sessão salva; sem ela sempre pede QR de novo.
+ * A sessão é sempre preservada: ao reiniciar, o cliente restaura de .wwebjs_auth e /status volta connected: true sem novo QR.
  * Configure no frontend: WHATSAPP_API=http://localhost:3010
  */
 
@@ -31,6 +32,8 @@ let client = null;
 let isReady = false;
 let lastQR = null;
 let isStarting = false;
+/** Só logar QR_READY uma vez por ciclo (até conectar ou desconectar); evita flood no console. */
+let qrLoggedInCycle = false;
 
 // Cache de grupos: resposta imediata após o primeiro getChats (que é lento)
 const GROUPS_CACHE_TTL_MS = 90 * 1000; // 90s
@@ -192,12 +195,16 @@ function buildClient() {
       const qrDir = path.dirname(qrFile);
       if (!fs.existsSync(qrDir)) fs.mkdirSync(qrDir, { recursive: true });
       fs.writeFileSync(qrFile, png);
-      console.log("QR_READY");
+      if (!qrLoggedInCycle) {
+        qrLoggedInCycle = true;
+        console.log("QR_READY");
+      }
     } catch (_) {}
   });
 
   c.on("ready", () => {
     isReady = true;
+    qrLoggedInCycle = false; // próximo ciclo de QR poderá logar de novo
     lastQR = null;
     clearGroupsCache();
     try {
@@ -212,6 +219,7 @@ function buildClient() {
 
   c.on("disconnected", async (reason) => {
     isReady = false;
+    qrLoggedInCycle = false;
     lastQR = null;
     clearGroupsCache();
     if (client) {

@@ -24,19 +24,23 @@ Tudo que roda na VM fica aqui: **whatsapp-emissor** (porta 3010) e **server-api*
 
 4. **Uma única tarefa no Agendador de Tarefas**
    - **Ação:** Iniciar um programa  
-   - **Programa/script:** `C:\Windows\System32\cmd.exe`  
-   - **Argumentos:** `/c cd /d C:\Users\ROBO\Documents\Servidor && pm2 start ecosystem.config.cjs`  
-   - (Ajuste o caminho se a pasta Servidor estiver em outro lugar.)
-   - Assim sobem os dois processos: WhatsApp (3010) e server-api (3001).
+   - **Programa/script:** `C:\Users\ROBO\Documents\Servidor\start.bat`  
+   - **Iniciar em:** `C:\Users\ROBO\Documents\Servidor`  
+   - (Ou use **Programa:** `C:\Windows\System32\cmd.exe` e **Argumentos:** `/c "C:\Users\ROBO\Documents\Servidor\start.bat"`.)  
+   - Essa tarefa sobe: PM2 (whatsapp-emissor + server-api + ngrok).
 
-5. **Ngrok** continua apontando para a porta **3001** (server-api).
+5. **Pasta do Ngrok**  
+   O ngrok fica **dentro** da pasta Servidor: `C:\Users\ROBO\Documents\Servidor\Ngrok\ngrok.exe`.  
+   Coloque o executável do ngrok nessa pasta. O PM2 (ecosystem.config.cjs) inicia o ngrok automaticamente; não é preciso alterar a tarefa do Agendador.
 
 ## Estrutura
 
 ```
 Servidor/
-├── ecosystem.config.cjs   ← PM2 sobe os dois apps
-├── start.bat              ← atalho: abre cmd, roda pm2 start
+├── ecosystem.config.cjs   ← PM2 sobe os três apps (whatsapp-emissor, server-api, ngrok)
+├── start.bat              ← sobe PM2 (use na única tarefa do Agendador)
+├── Ngrok/                 ← coloque ngrok.exe aqui
+│   └── ngrok.exe
 ├── whatsapp-emissor/      ← porta 3010 (QR, grupos, envio WhatsApp)
 │   ├── server.js
 │   ├── launcher.js

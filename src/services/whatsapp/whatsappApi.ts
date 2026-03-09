@@ -29,16 +29,19 @@ export interface ConnectionStatus {
 export async function getConnectionStatus(): Promise<ConnectionStatus> {
   if (!BASE) return { connected: false };
   try {
-    const res = await fetch(`${BASE}/status`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${BASE}/status`, { method: "GET", headers: getHeaders(), cache: "no-store" });
     if (!res.ok) return { connected: false };
-    const data = await res.json();
-    return { connected: !!data?.connected };
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) return { connected: false };
+    const data = await res.json().catch(() => null);
+    const connected = data != null && (data.connected === true || data.connected === "true");
+    return { connected: !!connected };
   } catch {
     return { connected: false };
   }
 }
 
-/** Retorna a imagem do QR atual (base64 data URL). Retorna null se já conectado ou se o backend ainda não tem QR. */
+/** Retorna a imagem do QR atual (base64 data URL). Retorna null se já conectado ou se o backend ainda não tem QR. Não usa qr.png para evitar bloqueio e excesso de requisições. */
 export async function getQrImage(): Promise<string | null> {
   if (!BASE) return null;
   try {
@@ -48,18 +51,6 @@ export async function getQrImage(): Promise<string | null> {
     if (data?.connected) return null;
     const qr = data?.qr ?? data?.image ?? null;
     if (typeof qr === "string" && qr.startsWith("data:image/") && qr.length >= 200) return qr;
-    // Backend retornou que não tem QR ainda — não chamar /qr.png para evitar dezenas de requisições
-    if (qr === null || qr === undefined) return null;
-    const pngRes = await fetch(`${BASE.replace(/\/$/, "")}/qr.png?t=${Date.now()}`, { cache: "no-store", headers: getHeaders() });
-    if (pngRes.ok && pngRes.headers.get("content-type")?.startsWith("image/")) {
-      const blob = await pngRes.blob();
-      return await new Promise<string | null>((resolve) => {
-        const r = new FileReader();
-        r.onloadend = () => resolve(typeof r.result === "string" ? r.result : null);
-        r.onerror = () => resolve(null);
-        r.readAsDataURL(blob);
-      });
-    }
     return null;
   } catch {
     return null;

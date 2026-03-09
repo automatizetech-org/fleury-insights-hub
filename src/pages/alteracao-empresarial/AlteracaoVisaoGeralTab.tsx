@@ -29,7 +29,6 @@ import {
   formatAlteracaoMessage,
   getConnectionStatus,
   getQrImage,
-  getQrImageUrlWithTimestamp,
   getGroups,
   sendToGroup,
   connectWhatsApp,
@@ -126,7 +125,6 @@ export function AlteracaoVisaoGeralTab() {
   const lastQrFetchTime = useRef(0);
   const waQrRef = useRef<string | null>(null);
   const waGroupsFilledRef = useRef(false);
-  const [qrUrlKey, setQrUrlKey] = useState(0);
   const [anexos, setAnexos] = useState<File[]>([]);
   const [uploadDragOver, setUploadDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -181,14 +179,30 @@ export function AlteracaoVisaoGeralTab() {
 
   useEffect(() => {
     let cancelled = false;
-    const timeout = setTimeout(() => {
-      if (!cancelled) setWaConnected(false);
-    }, 8000);
-    getConnectionStatus()
-      .then((s) => { if (!cancelled) setWaConnected(s.connected); })
-      .catch(() => { if (!cancelled) setWaConnected(false); })
-      .finally(() => { clearTimeout(timeout); });
-    return () => { cancelled = true; clearTimeout(timeout); };
+    const check = () =>
+      getConnectionStatus()
+        .then((s) => {
+          if (cancelled) return;
+          setWaConnected(s.connected);
+          if (!s.connected) {
+            waAutoConnectTried.current = true;
+            connectWhatsApp().then(() => {});
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setWaConnected(false);
+            waAutoConnectTried.current = true;
+            connectWhatsApp().then(() => {});
+          }
+        });
+    check();
+    // Rechecagens rápidas para detectar sessão já conectada (backend pode levar 2–5s para restaurar)
+    const t1 = setTimeout(() => { if (!cancelled) check(); }, 1500);
+    const t2 = setTimeout(() => { if (!cancelled) check(); }, 3000);
+    const t3 = setTimeout(() => { if (!cancelled) check(); }, 5000);
+    const fallback = setTimeout(() => { if (!cancelled) setWaConnected((v) => (v === null ? false : v)); }, 6000);
+    return () => { cancelled = true; clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(fallback); };
   }, []);
 
   // Ao abrir a página: tenta conectar automaticamente se estiver desconectado (e API acessível). Se não conseguir, o polling traz o QR.
@@ -261,16 +275,11 @@ export function AlteracaoVisaoGeralTab() {
       }
     };
     tick();
-    const id = setInterval(tick, 3000);
+    const id = setInterval(tick, 4000);
     return () => clearInterval(id);
   }, [waConnected]);
 
-  // Atualiza a URL direta do QR a cada 4s quando desconectado (fallback para exibir a imagem mesmo se getQrImage falhar)
-  useEffect(() => {
-    if (waConnected !== false) return;
-    const id = setInterval(() => setQrUrlKey((k) => k + 1), 4000);
-    return () => clearInterval(id);
-  }, [waConnected]);
+  // QR só via /qr (base64); sem polling de qr.png para evitar infinitas requisições e bloqueio por ad blocker
 
   const handleBuscarCnpj = async () => {
     const digits = onlyDigits(cnpjBusca);
@@ -1129,18 +1138,10 @@ export function AlteracaoVisaoGeralTab() {
                 className="w-[280px] h-[280px] border border-border rounded-lg bg-white object-contain p-2"
                 style={{ imageRendering: "crisp-edges" }}
               />
-            ) : getQrImageUrlWithTimestamp(qrUrlKey) ? (
-              <img
-                key={qrUrlKey}
-                src={getQrImageUrlWithTimestamp(qrUrlKey)}
-                alt="QR Code WhatsApp Web"
-                className="w-[280px] h-[280px] border border-border rounded-lg bg-white object-contain p-2"
-                style={{ imageRendering: "crisp-edges" }}
-              />
             ) : (
               <div className="w-64 h-64 border border-dashed border-border rounded-lg flex flex-col items-center justify-center gap-2 bg-muted/30 p-4">
                 <QrCode className="h-12 w-12 text-muted-foreground" />
-                <p className="text-xs text-muted-foreground text-center">Aguardando QR. Se o backend estiver rodando, o QR aparecerá aqui em instantes. Se acabou de desconectar, aguarde o novo QR ser gerado.</p>
+                <p className="text-xs text-muted-foreground text-center">Aguardando QR. O backend renova o QR a cada ~50s. Se acabou de conectar, aguarde; se a sessão já existia, a conexão pode aparecer em instantes.</p>
               </div>
             )}
           </div>
