@@ -65,9 +65,11 @@ export async function markFiscalDocumentDownloaded(documentId: string): Promise<
 
 /**
  * Baixa vários documentos fiscais em um único ZIP.
- * ids: array de IDs dos documentos listados (com file_path); só esses arquivos entram no ZIP.
+ * A VM cria um ZIP temporário com os arquivos da lista solicitada, envia na resposta e apaga o temp em seguida.
+ * @param ids - IDs dos documentos
+ * @param filenameSuffix - Sufixo do nome do arquivo (ex.: "nfs", "nfe-nfc"); o download será documentos-fiscais-{suffix}.zip
  */
-export async function downloadFiscalDocumentsZip(ids: string[]): Promise<void> {
+export async function downloadFiscalDocumentsZip(ids: string[], filenameSuffix?: string): Promise<void> {
   if (!SERVER_API_URL) {
     throw new Error("SERVER_API_URL não configurada.");
   }
@@ -118,12 +120,19 @@ export async function downloadFiscalDocumentsZip(ids: string[]): Promise<void> {
     throw new Error("Resposta não é um ZIP (content-type: " + contentType + "). Verifique SERVER_API_URL.");
   }
 
+  const safeSuffix = filenameSuffix && /^[a-z0-9-]+$/i.test(filenameSuffix) ? filenameSuffix : "";
+  const zipFilename = safeSuffix ? `documentos-fiscais-${safeSuffix}.zip` : "documentos-fiscais.zip";
+
   const blob = await res.blob();
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "documentos-fiscais.zip";
+  a.download = zipFilename;
   a.click();
   URL.revokeObjectURL(a.href);
+
+  for (const id of idsFiltered) {
+    markFiscalDocumentDownloaded(id).catch(() => {});
+  }
 }
 
 /**

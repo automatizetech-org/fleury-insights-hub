@@ -6,9 +6,32 @@
 import { supabase } from "./supabaseClient"
 
 const KEY_FILE_RETENTION_DAYS = "file_retention_days"
+const KEY_BASE_PATH = "base_path"
 
 /** 0 = nunca excluir; 30, 60, 90, 120 = dias desde o último download */
 export type FileRetentionDays = 0 | 30 | 60 | 90 | 120
+
+/** Pasta base na VM (ex.: C:\Users\ROBO\Documents). Robôs e server-api usam essa raiz para EMPRESAS/... */
+export async function getBasePath(): Promise<string> {
+  const { data, error } = await supabase
+    .from("admin_settings")
+    .select("value")
+    .eq("key", KEY_BASE_PATH)
+    .maybeSingle()
+  if (error) throw error
+  const v = (data?.value ?? "").trim()
+  return v || ""
+}
+
+export async function setBasePath(value: string): Promise<void> {
+  const { error } = await supabase
+    .from("admin_settings")
+    .upsert(
+      { key: KEY_BASE_PATH, value: (value || "").trim(), updated_at: new Date().toISOString() },
+      { onConflict: "key" }
+    )
+  if (error) throw error
+}
 
 export async function getFileRetentionDays(): Promise<FileRetentionDays> {
   const { data, error } = await supabase

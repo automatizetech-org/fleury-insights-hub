@@ -1,7 +1,8 @@
 /**
  * API unificada — Fleury Insights Hub
  * Roda na VM na porta 3001. Atende rotas de arquivos e repassa o restante ao backend WhatsApp.
- * Configure BASE_PATH e WHATSAPP_BACKEND_URL no .env
+ * BASE_PATH: lido do Supabase (admin_settings.base_path) na inicialização; fallback para .env BASE_PATH.
+ * Configure WHATSAPP_BACKEND_URL, SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no .env
  */
 
 import path from "path";
@@ -14,14 +15,49 @@ dotenv.config({ path: path.join(__dirname, ".env") });
 import express from "express";
 import cors from "cors";
 import fs from "fs";
+import os from "os";
+import { randomBytes } from "crypto";
+import archiver from "archiver";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { createClient } from "@supabase/supabase-js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Base path dos arquivos na VM (ex: C:\Users\ROBO\Documents)
-const BASE_PATH = process.env.BASE_PATH || "C:\\Users\\ROBO\\Documents";
+// Base path: Supabase (admin) na inicialização; fallback para .env
+let BASE_PATH = (process.env.BASE_PATH || "C:\\Users\\ROBO\\Documents").trim();
+
+async function loadBasePathFromSupabase() {
+  const url = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return;
+  try {
+    const supabase = createClient(url, serviceKey);
+    const { data } = await supabase.from("admin_settings").select("value").eq("key", "base_path").maybeSingle();
+    if (data?.value && String(data.value).trim()) BASE_PATH = String(data.value).trim();
+  } catch (_) {}
+}
+
+/** Dado path lógico (ex.: FISCAL/NFS), encontra date_rule no nó folha da árvore. */
+function findDateRuleByPath(nodes, pathLogical) {
+  const parts = pathLogical.split("/").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
+  const byParentAndSlug = new Map();
+  for (const n of nodes) {
+    const slug = (n.slug || n.name || "").toLowerCase();
+    const key = `${n.parent_id ?? "root"}:${slug}`;
+    byParentAndSlug.set(key, n);
+  }
+  let parentId = null;
+  let node = null;
+  for (const part of parts) {
+    const key = `${parentId ?? "root"}:${part.toLowerCase()}`;
+    node = byParentAndSlug.get(key) ?? null;
+    if (!node) return null;
+    parentId = node.id;
+  }
+  return node?.date_rule ?? null;
+}
 
 app.use(cors());
 
@@ -140,6 +176,96 @@ app.get("/api/fiscal-documents/:id/download", async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * POST /api/fiscal-documents/download-zip
+ * Cria um ZIP temporário na VM com os arquivos dos documentos solicitados (mesma lista/filtro da tela),
+ * envia o ZIP na resposta e apaga o arquivo temporário em seguida.
+ * Body: { ids: string[] }. Requer JWT.
+ */
+app.post("/api/fiscal-documents/download-zip", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Token ausente" });
+  }
+  const token = authHeader.slice(7);
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id) => id && String(id).trim()) : [];
+  if (ids.length === 0) {
+    return res.status(400).json({ error: "Nenhum documento selecionado para baixar." });
+  }
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) {
+    return res.status(500).json({ error: "Supabase não configurado" });
+  }
+  const supabase = createClient(supabaseUrl, supabaseKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const { data: rows, error } = await supabase
+    .from("fiscal_documents")
+    .select("id, file_path")
+    .in("id", ids);
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+  const docs = (rows || []).filter((r) => r?.file_path && String(r.file_path).trim());
+  const baseResolved = path.resolve(BASE_PATH);
+  const toAdd = [];
+  for (const doc of docs) {
+    const fullPath = path.join(BASE_PATH, doc.file_path);
+    if (!path.resolve(fullPath).startsWith(baseResolved)) continue;
+    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) continue;
+    toAdd.push({ fullPath, name: path.basename(doc.file_path) });
+  }
+  if (toAdd.length === 0) {
+    return res.status(404).json({ error: "Nenhum arquivo encontrado no disco para os documentos solicitados." });
+  }
+  const usedNames = new Set();
+  const makeUniqueName = (name) => {
+    let n = name;
+    let i = 0;
+    while (usedNames.has(n)) {
+      i++;
+      const ext = path.extname(name);
+      const base = path.basename(name, ext);
+      n = `${base} (${i})${ext}`;
+    }
+    usedNames.add(n);
+    return n;
+  };
+  const tempPath = path.join(os.tmpdir(), `fiscal-zip-${Date.now()}-${randomBytes(4).toString("hex")}.zip`);
+  const out = fs.createWriteStream(tempPath);
+  const archive = archiver("zip", { zlib: { level: 9 } });
+  const cleanup = () => {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch (_) {}
+  };
+  archive.on("error", (err) => {
+    cleanup();
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  });
+  out.on("error", (err) => {
+    cleanup();
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  });
+  archive.pipe(out);
+  for (const { fullPath, name } of toAdd) {
+    archive.file(fullPath, { name: makeUniqueName(name) });
+  }
+  archive.finalize();
+  out.on("finish", () => {
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", 'attachment; filename="documentos-fiscais.zip"');
+    const stream = fs.createReadStream(tempPath);
+    stream.on("error", (err) => {
+      cleanup();
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+    stream.pipe(res);
+    res.on("finish", () => cleanup());
+  });
 });
 
 /**
@@ -405,6 +531,50 @@ app.get("/api/folder-structure", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/robot-config?technical_id=xxx
+ * Retorna configuração para o robô na VM: base_path (global), segment_path e date_rule do robô.
+ * Robôs usam isso em vez de BASE_PATH e ROBOT_SEGMENT_PATH no .env (que passam a ser opcionais).
+ */
+app.get("/api/robot-config", async (req, res) => {
+  const technicalId = (req.query.technical_id || "").toString().trim();
+  if (!technicalId) {
+    return res.status(400).json({ error: "technical_id é obrigatório" });
+  }
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) {
+    return res.status(500).json({ error: "Supabase não configurado" });
+  }
+  try {
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    const { data: robot, error: robotErr } = await supabase
+      .from("robots")
+      .select("segment_path, notes_mode")
+      .eq("technical_id", technicalId)
+      .maybeSingle();
+    if (robotErr) return res.status(500).json({ error: robotErr.message });
+    const segmentPath = (robot?.segment_path || "").trim() || null;
+    const notesMode = (robot?.notes_mode || "").trim() || null;
+    const { data: nodes, error: nodesErr } = await supabase
+      .from("folder_structure_nodes")
+      .select("id, parent_id, name, slug, date_rule, position")
+      .order("parent_id", { nullsFirst: true })
+      .order("position", { ascending: true });
+    if (nodesErr) return res.status(500).json({ error: nodesErr.message });
+    const dateRule = segmentPath ? findDateRuleByPath(nodes ?? [], segmentPath) : null;
+    return res.json({
+      base_path: BASE_PATH,
+      segment_path: segmentPath,
+      date_rule: dateRule,
+      notes_mode: notesMode,
+      folder_structure: nodes ?? [],
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // Repassa todo o restante para o backend WhatsApp (não mexe no backend; ele roda em outra porta na VM)
 const WHATSAPP_BACKEND_URL = process.env.WHATSAPP_BACKEND_URL || "http://localhost:3010";
 app.use(
@@ -459,9 +629,11 @@ function startFiscalWatcher() {
   }
 }
 
-app.listen(PORT, () => {
-  console.log(`API unificada em http://localhost:${PORT}`);
-  console.log(`BASE_PATH: ${BASE_PATH}`);
-  console.log(`Proxy WhatsApp: ${WHATSAPP_BACKEND_URL}`);
-  startFiscalWatcher();
+loadBasePathFromSupabase().then(() => {
+  app.listen(PORT, () => {
+    console.log(`API unificada em http://localhost:${PORT}`);
+    console.log(`BASE_PATH: ${BASE_PATH}`);
+    console.log(`Proxy WhatsApp: ${WHATSAPP_BACKEND_URL}`);
+    startFiscalWatcher();
+  });
 });

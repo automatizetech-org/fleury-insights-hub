@@ -1,5 +1,6 @@
 @echo off
 cd /d "%~dp0"
 
-REM PM2: WhatsApp (3010) + server-api (3001) + ngrok (túnel 3001)
-pm2 start ecosystem.config.cjs
+REM Usa o wrapper para que "Finalizar tarefa" no Agendador chame o stop (para tudo).
+REM Se a tarefa do Agendador rodar diretamente "node start-wrapper.js", ao clicar em Finalizar o stop roda.
+node "%~dp0start-wrapper.js"

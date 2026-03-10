@@ -112,9 +112,18 @@ EMITIDAS_URL = "https://www.nfse.gov.br/EmissorNacional/Notas/Emitidas"
 RECEBIDAS_URL = "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas"
 
 BASE_DIR = resolve_base_dir()
-# Carrega .env da pasta do script/.exe para BASE_PATH, SERVER_API_URL, ROBOT_SEGMENT_PATH
+
+# Pasta base dos robôs na VM: .env compartilhado (SERVER_API_URL, SUPABASE_*, etc.)
+ROBOTS_BASE_ENV_DIR = Path(r"C:\Users\ROBO\Documents\ROBOS")
+
+# Carrega .env: primeiro da base dos robôs (VM), depois da pasta do script/.exe (override local)
 try:
     from dotenv import load_dotenv
+    env_robos = ROBOTS_BASE_ENV_DIR / ".env"
+    if env_robos.exists():
+        load_dotenv(env_robos)
+    elif (ROBOTS_BASE_ENV_DIR / ".env.example").exists():
+        load_dotenv(ROBOTS_BASE_ENV_DIR / ".env.example")
     env_path = BASE_DIR / ".env"
     if not env_path.exists():
         env_path = BASE_DIR / ".env.example"
@@ -122,9 +131,10 @@ try:
         load_dotenv(env_path)
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).resolve().parent
-        load_dotenv(exe_dir / ".env")
-        if not (exe_dir / ".env").exists():
-            load_dotenv(exe_dir / ".env.example")
+        if exe_dir != ROBOTS_BASE_ENV_DIR:
+            load_dotenv(exe_dir / ".env")
+            if not (exe_dir / ".env").exists():
+                load_dotenv(exe_dir / ".env.example")
 except ImportError:
     pass
 
@@ -1235,11 +1245,47 @@ def save_output_base_path(path: Path) -> None:
     save_paths(path, report)
 
 
+def fetch_robot_config_from_api() -> Optional[Dict[str, Any]]:
+    """
+    Obtém base_path, segment_path, date_rule e notes_mode do server-api (config global no dashboard).
+    GET {SERVER_API_URL}/api/robot-config?technical_id=xxx
+    Retorna dict com base_path, segment_path, date_rule, notes_mode, folder_structure; ou None se falhar.
+    """
+    url_base = (os.environ.get("FOLDER_STRUCTURE_API_URL") or os.environ.get("SERVER_API_URL") or "").strip().rstrip("/")
+    if not url_base:
+        return None
+    try:
+        url = f"{url_base}/api/robot-config"
+        params = {"technical_id": ROBOT_TECHNICAL_ID}
+        headers = {}
+        if "ngrok" in url_base.lower():
+            headers["ngrok-skip-browser-warning"] = "true"
+        r = requests.get(url, params=params, headers=headers, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
+
+
+# Cache da config da API (base_path, segment_path, date_rule) para não depender do .env
+_robot_api_config: Optional[Dict[str, Any]] = None
+
+
+def get_robot_api_config() -> Optional[Dict[str, Any]]:
+    """Retorna a config do robô vinda da API (cache). Carrega uma vez."""
+    global _robot_api_config
+    if _robot_api_config is None:
+        _robot_api_config = fetch_robot_config_from_api()
+    return _robot_api_config
+
+
 def get_resolved_output_base() -> Optional[Path]:
     """
-    Pasta base para gravação: apenas BASE_PATH do .env.
-    Estrutura e departamento vêm do painel (robots.segment_path).
+    Pasta base para gravação: primeiro tenta base_path da API (dashboard); senão BASE_PATH do .env.
     """
+    cfg = get_robot_api_config()
+    if cfg and (cfg.get("base_path") or "").strip():
+        return Path((cfg["base_path"] or "").strip())
     base_env = os.environ.get("BASE_PATH", "").strip()
     if base_env:
         return Path(base_env)
@@ -1248,13 +1294,43 @@ def get_resolved_output_base() -> Optional[Path]:
 
 def fetch_central_folder_structure(path_logical: Optional[str] = None) -> Tuple[Optional[List[str]], Optional[str]]:
     """
-    Obtem da API a estrutura de pastas e retorna (segmentos para este robô, date_rule).
-    path_logical: caminho do departamento (ex. FISCAL/NFS); se None, usa ROBOT_SEGMENT_PATH do .env.
+    Obtém da API a estrutura de pastas e retorna (segmentos para este robô, date_rule).
+    path_logical: caminho do departamento (ex. FISCAL/NFS); se None, usa config da API ou ROBOT_SEGMENT_PATH do .env.
     """
+    path_logical = path_logical or (get_robot_api_config() or {}).get("segment_path") or os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip()
+    if not path_logical:
+        path_logical = "FISCAL/NFS"
     url_base = (os.environ.get("FOLDER_STRUCTURE_API_URL") or os.environ.get("SERVER_API_URL") or "").strip().rstrip("/")
     if not url_base:
         return (None, None)
-    path_logical = path_logical or os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip()
+    # Se já temos config da API com date_rule e folder_structure, podemos montar os segmentos a partir do path_logical
+    cfg = get_robot_api_config()
+    if cfg and isinstance(cfg.get("folder_structure"), list) and cfg.get("date_rule") is not None:
+        nodes = cfg["folder_structure"]
+        parts = [p.strip() for p in path_logical.split("/") if p.strip()]
+        if not parts:
+            return (None, None)
+        segment_path: List[str] = []
+        date_rule: Optional[str] = cfg.get("date_rule")
+        parent_id: Optional[str] = None
+        for part in parts:
+            found = None
+            for n in nodes:
+                n_pid = n.get("parent_id")
+                name_match = (n.get("slug") or n.get("name") or "").strip().upper() == part.upper()
+                parent_ok = (n_pid or None) == (parent_id or None)
+                if parent_ok and name_match:
+                    found = n
+                    break
+            if not found:
+                break
+            seg = (found.get("slug") or found.get("name") or "").strip()
+            if seg:
+                segment_path.append(seg)
+            parent_id = found["id"]
+        if segment_path:
+            return (segment_path, date_rule)
+    # Fallback: chamar /api/folder-structure como antes
     try:
         r = requests.get(f"{url_base}/api/folder-structure", timeout=10)
         r.raise_for_status()
@@ -1267,9 +1343,9 @@ def fetch_central_folder_structure(path_logical: Optional[str] = None) -> Tuple[
     parts = [p.strip() for p in path_logical.split("/") if p.strip()]
     if not parts:
         return (None, None)
-    segment_path: List[str] = []
-    date_rule: Optional[str] = None
-    parent_id: Optional[str] = None
+    segment_path = []
+    date_rule = None
+    parent_id = None
     for part in parts:
         found = None
         for n in nodes:
@@ -1318,7 +1394,9 @@ def register_robot(supabase_url: str, supabase_anon_key: str) -> Optional[str]:
     """Autocadastra o robô na tabela robots; não sobrescreve display_name nem segment_path se já existir."""
     try:
         client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        segment_from_api = (get_robot_api_config() or {}).get("segment_path") or ""
         segment_from_env = os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip()
+        segment_path = (segment_from_api or segment_from_env or "FISCAL/NFS").strip()
         r = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
         rows = getattr(r, "data", None) or []
         if rows:
@@ -1333,8 +1411,8 @@ def register_robot(supabase_url: str, supabase_anon_key: str) -> Optional[str]:
             "status": "active",
             "last_heartbeat_at": datetime.now().isoformat(),
         }
-        if segment_from_env:
-            payload["segment_path"] = segment_from_env
+        if segment_path:
+            payload["segment_path"] = segment_path
         ins = client.table("robots").insert(payload).select("id").execute()
         new_rows = getattr(ins, "data", None) or []
         return new_rows[0].get("id") if new_rows else None
@@ -3259,11 +3337,12 @@ class PathDialog(QDialog):
             target_line.setText(dlg_path)
 
     def _update_structure_preview(self) -> None:
-        base_env = os.environ.get("BASE_PATH", "").strip()
+        base_resolved = get_resolved_output_base()
+        base_from_api_or_env = str(base_resolved) if base_resolved else ""
         base_txt = self.line.text().strip()
-        base = base_env or base_txt
+        base = base_from_api_or_env or base_txt or os.environ.get("BASE_PATH", "").strip()
         if not base:
-            self.preview_text.setPlainText("Defina a pasta base acima ou configure BASE_PATH no .env")
+            self.preview_text.setPlainText("Defina a pasta base acima, ou no painel Admin (Pasta base na VM), ou BASE_PATH no .env")
             return
         lines = [base]
         if self._central_segment_path:
@@ -3286,9 +3365,9 @@ class PathDialog(QDialog):
             seg_indent = indent
             lines.append(f"{seg_indent}├── Emitidas" + (f"\\{date_ex}" if date_ex else ""))
             lines.append(f"{seg_indent}└── Recebidas" + (f"\\{date_ex}" if date_ex else ""))
-            if base_env:
+            if base_from_api_or_env:
                 lines.append("")
-                lines.append("(BASE_PATH do .env em uso)")
+                lines.append("(Pasta base do painel/API ou .env)")
         else:
             lines.append("  └── [nome_empresa]")
             lines.append("      ├── Emitidas")
@@ -3360,7 +3439,7 @@ class PathDialog(QDialog):
             "QTextEdit { background:#0F172A; color:#94A3B8; border:1px solid #334155; border-radius:6px; padding:8px; font-family:Consolas,Courier; font-size:9pt; }"
         )
         base = str(current)
-        lines = [base] if base else ["(BASE_PATH no .env)"]
+        lines = [base] if base else ["(Pasta base do painel ou .env)"]
         if central_segments:
             lines.append("  └── EMPRESAS")
             lines.append("      └── [nome_empresa]   ← mesmo nome do dashboard")
@@ -4279,7 +4358,8 @@ class MainWindow(QMainWindow):
         self.items: List[CompanyItem] = []
         self.worker: Optional[DownloadThread] = None
         self.output_base: Optional[Path] = get_resolved_output_base()
-        self._segment_path: Optional[str] = os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip() or "FISCAL/NFS"
+        api_cfg = get_robot_api_config()
+        self._segment_path = (api_cfg.get("segment_path") if api_cfg else None) or os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip() or "FISCAL/NFS"
         self.report_path: Optional[Path] = None
         self._default_notes_mode: Optional[str] = None
         url, key = get_robot_supabase()
@@ -4287,12 +4367,16 @@ class MainWindow(QMainWindow):
             self.companies = load_companies_from_supabase(url, key)
             self._robot_id = register_robot(url, key)
             if self._robot_id:
-                cfg = fetch_robot_config(url, key)
-                if cfg:
-                    if cfg.get("segment_path"):
-                        self._segment_path = cfg["segment_path"]
-                    if cfg.get("notes_mode") in ("recebidas", "emitidas", "both"):
-                        self._default_notes_mode = cfg["notes_mode"]
+                # Preferir notes_mode da API (dashboard); senão buscar do Supabase
+                if api_cfg and api_cfg.get("notes_mode") in ("recebidas", "emitidas", "both"):
+                    self._default_notes_mode = api_cfg["notes_mode"]
+                else:
+                    cfg = fetch_robot_config(url, key)
+                    if cfg:
+                        if cfg.get("segment_path"):
+                            self._segment_path = cfg["segment_path"]
+                        if cfg.get("notes_mode") in ("recebidas", "emitidas", "both"):
+                            self._default_notes_mode = cfg["notes_mode"]
             if self.output_base:
                 seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
                 self.report_path = self.output_base / "EMPRESAS" / seg_slug
@@ -4329,7 +4413,7 @@ class MainWindow(QMainWindow):
             print("[Robô] Conectado ao painel. Status: ativo.", file=sys.stderr)
 
         if not url or not key:
-            print("[Robô] SUPABASE_URL ou SUPABASE_ANON_KEY não definidos. Coloque no .env na pasta do bot.", file=sys.stderr)
+            print("[Robô] SUPABASE_URL ou SUPABASE_ANON_KEY não definidos. Coloque no .env em C:\\Users\\ROBO\\Documents\\ROBOS ou na pasta do bot.", file=sys.stderr)
         elif not self._robot_id:
             print("[Robô] Não foi possível registrar no painel. Veja a mensagem de erro acima.", file=sys.stderr)
 

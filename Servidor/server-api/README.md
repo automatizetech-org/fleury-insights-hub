@@ -35,8 +35,8 @@ C:\Users\ROBO\Documents\          ← BASE_PATH
 ## Configuração
 
 1. Copie `.env.example` para `.env` na pasta `server-api`
-2. Ajuste `BASE_PATH` se na VM a raiz for outra
-3. **WHATSAPP_BACKEND_URL** — URL do backend WhatsApp na VM (ex.: `http://localhost:3010`). O backend do WhatsApp deve rodar nessa porta; o server-api repassa para ela as rotas que não são de arquivos.
+2. **BASE_PATH** — Se o painel Admin tiver "Pasta base na VM" definida, o server-api lê desse valor no Supabase na inicialização. Caso contrário usa `BASE_PATH` do .env. Para ler do Supabase, configure **SUPABASE_SERVICE_ROLE_KEY** no .env (além de SUPABASE_URL).
+3. **WHATSAPP_BACKEND_URL** — URL do backend WhatsApp na VM (ex.: `http://localhost:3010`).
 
 ## Endpoints
 
@@ -45,6 +45,9 @@ C:\Users\ROBO\Documents\          ← BASE_PATH
 | GET | `/api/files/list?path=EMPRESAS/Grupo Fleury/NFS` | Lista XML/PDF da pasta |
 | GET | `/api/files/download?path=...` | Baixa arquivo por path (teste) |
 | GET | `/api/fiscal-documents/:id/download` | Baixa por ID (JWT obrigatório) |
+| POST | `/api/fiscal-documents/download-zip` | ZIP de vários documentos (JWT) |
+| GET | `/api/robot-config?technical_id=xxx` | Config do robô: base_path, segment_path, date_rule, folder_structure |
+| GET | `/api/folder-structure` | Árvore de nós (para robôs) |
 | POST | `/api/fiscal-sync` | Sincroniza pasta → `fiscal_documents` |
 
 ## Rodar na VM

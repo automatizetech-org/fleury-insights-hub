@@ -28,6 +28,7 @@ import { AdminFolderStructure } from "@/components/admin/AdminFolderStructure"
 import { AdminRobotsList } from "@/components/admin/AdminRobotsList"
 import { AdminScheduler } from "@/components/admin/AdminScheduler"
 import { AdminFileRetention } from "@/components/admin/AdminFileRetention"
+import { AdminBasePath } from "@/components/admin/AdminBasePath"
 import { getRobots } from "@/services/robotsService"
 import { PANEL_KEYS, PANEL_LABELS } from "@/lib/panelAccess"
 import { getPfxInfo } from "@/lib/validatePfxPassword"
@@ -548,7 +549,10 @@ export default function AdminPage() {
         <AdminScheduler isSuperAdmin={!!isSuperAdmin} />
       </div>
       {isSuperAdmin && (
-        <AdminFileRetention isSuperAdmin={!!isSuperAdmin} />
+        <>
+          <AdminBasePath isSuperAdmin={!!isSuperAdmin} />
+          <AdminFileRetention isSuperAdmin={!!isSuperAdmin} />
+        </>
       )}
 
       {isSuperAdmin && (
@@ -556,11 +560,11 @@ export default function AdminPage() {
           <div className="p-4 border-b border-border">
             <h3 className="text-sm font-semibold font-display">Caminhos padrão</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Estrutura onde o robô grava arquivos e relatório (conforme departamento configurado no robô).
+              Estrutura onde o robô grava arquivos (conforme departamento/segmento configurado em cada robô). A pasta base é definida acima.
             </p>
           </div>
           <div className="p-4 space-y-2 font-mono text-xs bg-muted/30">
-            <p><span className="text-muted-foreground">Base:</span> definido no .env do robô (BASE_PATH)</p>
+            <p><span className="text-muted-foreground">Base:</span> definida no painel (Pasta base na VM) — robôs leem do Supabase</p>
             <p><span className="text-muted-foreground">Estrutura:</span> EMPRESAS\{`{nome_empresa}`}\{segmentSlug}\{`{ano}`}\{`{mês}`}\{`{dia}`}</p>
             <p><span className="text-muted-foreground">Relatórios:</span> EMPRESAS\{segmentSlug}\relatorio nfs.pdf</p>
           </div>

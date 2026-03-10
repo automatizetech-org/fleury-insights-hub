@@ -567,8 +567,9 @@ export default function FiscalDetailPage() {
                   }
                   setDownloadingZip(true);
                   try {
-                    await downloadFiscalDocumentsZip(ids);
-                    toast.success(`Download iniciado: ${ids.length} arquivo(s) em documentos-fiscais.zip`);
+                    const zipName = type ? `documentos-fiscais-${type}.zip` : "documentos-fiscais.zip";
+                    await downloadFiscalDocumentsZip(ids, type ?? undefined);
+                    toast.success(`Download iniciado: ${ids.length} arquivo(s) em ${zipName}`);
                   } catch (e) {
                     toast.error(e instanceof Error ? e.message : "Erro ao baixar ZIP.");
                   } finally {
