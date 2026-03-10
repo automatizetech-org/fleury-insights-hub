@@ -1,5 +1,5 @@
 import { supabase } from "./supabaseClient"
-import type { Tables } from "@/types/database"
+import type { RobotNotesMode, Tables } from "@/types/database"
 
 export type ScheduleRule = Tables<"schedule_rules">
 
@@ -26,7 +26,7 @@ export async function getActiveScheduleRules(): Promise<ScheduleRule[]> {
 export async function createScheduleRule(params: {
   companyIds: string[]
   robotTechnicalIds: string[]
-  notesMode?: "recebidas" | "emitidas" | "both" | null
+  notesMode?: RobotNotesMode | null
   runAtDate: string
   runAtTime: string
   runDaily: boolean
@@ -57,7 +57,7 @@ export async function updateScheduleRule(
   params: {
     companyIds: string[]
     robotTechnicalIds: string[]
-    notesMode?: "recebidas" | "emitidas" | "both" | null
+    notesMode?: RobotNotesMode | null
     runAtDate: string
     runAtTime: string
     runDaily: boolean

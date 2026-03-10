@@ -11,6 +11,7 @@ import { pathSegmentsToNode } from "@/types/folderStructure"
 import type { FolderStructureNodeRow } from "@/types/folderStructure"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -29,6 +30,8 @@ import { Bot, Pencil, Loader2, Circle, Folder, FolderOpen, ChevronRight } from "
 import { toast } from "sonner"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
+import { getDefaultNotesMode, getNotesModeOptions, isNotesModeCompatible } from "@/lib/robotNotes"
+import type { FiscalNotesKind, RobotNotesMode } from "@/types/database"
 
 function statusLabel(s: Robot["status"]): string {
   switch (s) {
@@ -129,7 +132,9 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [editing, setEditing] = useState<Robot | null>(null)
   const [displayName, setDisplayName] = useState("")
   const [segmentPath, setSegmentPath] = useState("")
-  const [notesMode, setNotesMode] = useState<"recebidas" | "emitidas" | "both">("recebidas")
+  const [isFiscalNotesRobot, setIsFiscalNotesRobot] = useState(false)
+  const [fiscalNotesKind, setFiscalNotesKind] = useState<FiscalNotesKind>("nfs")
+  const [notesMode, setNotesMode] = useState<RobotNotesMode>("recebidas")
   const [dateExecutionMode, setDateExecutionMode] = useState<"competencia" | "interval">("interval")
   const [initialPeriodStart, setInitialPeriodStart] = useState("")
   const [initialPeriodEnd, setInitialPeriodEnd] = useState("")
@@ -155,7 +160,9 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       await updateRobot(editing.id, {
         display_name: displayName.trim(),
         segment_path: segmentPath.trim() || null,
-        notes_mode: notesMode,
+        is_fiscal_notes_robot: isFiscalNotesRobot,
+        fiscal_notes_kind: isFiscalNotesRobot ? fiscalNotesKind : null,
+        notes_mode: isFiscalNotesRobot ? notesMode : null,
         date_execution_mode: dateExecutionMode,
         initial_period_start: dateExecutionMode === "interval" && initialPeriodStart ? initialPeriodStart : null,
         initial_period_end: dateExecutionMode === "interval" && initialPeriodEnd ? initialPeriodEnd : null,
@@ -171,14 +178,19 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   }
 
   const openRename = (r: Robot) => {
+    const kind: FiscalNotesKind = r.fiscal_notes_kind ?? (r.notes_mode === "modelo_55" || r.notes_mode === "modelo_65" || r.notes_mode === "modelos_55_65" ? "nfe_nfc" : "nfs")
     setEditing(r)
     setDisplayName(r.display_name)
     setSegmentPath(r.segment_path ?? "")
-    setNotesMode((r.notes_mode === "emitidas" || r.notes_mode === "both" ? r.notes_mode : "recebidas") as "recebidas" | "emitidas" | "both")
+    setIsFiscalNotesRobot(Boolean(r.is_fiscal_notes_robot))
+    setFiscalNotesKind(kind)
+    setNotesMode(isNotesModeCompatible(kind, r.notes_mode) ? r.notes_mode : getDefaultNotesMode(kind))
     setDateExecutionMode((r.date_execution_mode === "competencia" ? "competencia" : "interval") as "competencia" | "interval")
     setInitialPeriodStart(r.initial_period_start ?? "")
     setInitialPeriodEnd(r.initial_period_end ?? "")
   }
+
+  const notesModeOptions = getNotesModeOptions(fiscalNotesKind)
 
   return (
     <>
@@ -331,21 +343,73 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                 </div>
               </div>
             )}
-            <div className="space-y-2">
-              <Label>Modo de notas</Label>
-              <select
-                value={notesMode}
-                onChange={(e) => setNotesMode(e.target.value as "recebidas" | "emitidas" | "both")}
-                disabled={saving}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-              >
-                <option value="recebidas">Recebidas</option>
-                <option value="emitidas">Emitidas</option>
-                <option value="both">Emitidas + Recebidas</option>
-              </select>
-              <p className="text-[10px] text-muted-foreground">
-                Define se o robô baixa recebidas, emitidas ou ambas ao rodar.
-              </p>
+            <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-3">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  checked={isFiscalNotesRobot}
+                  onCheckedChange={(checked) => {
+                    const enabled = checked === true
+                    setIsFiscalNotesRobot(enabled)
+                    if (enabled && !isNotesModeCompatible(fiscalNotesKind, notesMode)) {
+                      setNotesMode(getDefaultNotesMode(fiscalNotesKind))
+                    }
+                  }}
+                  disabled={saving}
+                />
+                <div className="space-y-1">
+                  <Label className="text-sm">Usa modos de notas fiscais</Label>
+                  <p className="text-[10px] text-muted-foreground">
+                    Ative apenas para robôs fiscais. Se desligado, o editor não exibe configuração de modo de notas.
+                  </p>
+                </div>
+              </div>
+
+              {isFiscalNotesRobot ? (
+                <>
+                  <div className="space-y-2">
+                    <Label>Família fiscal</Label>
+                    <select
+                      value={fiscalNotesKind}
+                      onChange={(e) => {
+                        const nextKind = e.target.value as FiscalNotesKind
+                        setFiscalNotesKind(nextKind)
+                        setNotesMode(getDefaultNotesMode(nextKind))
+                      }}
+                      disabled={saving}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+                    >
+                      <option value="nfs">NFS</option>
+                      <option value="nfe_nfc">NFE / NFC</option>
+                    </select>
+                    <p className="text-[10px] text-muted-foreground">
+                      NFS usa recebidas/emitidas. NFE/NFC usa modelos 55 e 65.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Modo de notas</Label>
+                    <select
+                      value={notesMode}
+                      onChange={(e) => setNotesMode(e.target.value as RobotNotesMode)}
+                      disabled={saving}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+                    >
+                      {notesModeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-muted-foreground">
+                      {notesModeOptions.find((option) => option.value === notesMode)?.description ?? "Selecione como o robô deve classificar as notas."}
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <p className="text-[10px] text-muted-foreground">
+                  Robôs que não baixam notas fiscais não devem carregar `notes_mode`.
+                </p>
+              )}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setEditing(null)} disabled={saving}>

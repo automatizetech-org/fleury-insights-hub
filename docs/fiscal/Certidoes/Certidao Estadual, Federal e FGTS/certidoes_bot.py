@@ -1,17 +1,64 @@
 import os, sys, json, re, unicodedata, base64
 import math
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Tuple, Dict, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Tuple, Dict, List, Optional, Any, Callable
 import subprocess, time
 
+
+def _configure_qt_platform_plugin_path() -> None:
+    base_candidates: List[Path] = []
+    if getattr(sys, "frozen", False):
+        base_candidates.append(Path(sys.executable).resolve().parent)
+    base_candidates.append(Path(__file__).resolve().parent)
+
+    os.environ.pop("QT_PLUGIN_PATH", None)
+
+    for base in base_candidates:
+        platforms_dir = base / "venv" / "Lib" / "site-packages" / "PySide6" / "plugins" / "platforms"
+        if platforms_dir.exists():
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(platforms_dir)
+            return
+
+
+_configure_qt_platform_plugin_path()
+
+
+def _load_app_icon() -> "QIcon":
+    icon = QIcon()
+    candidates: List[str] = []
+    for base in _bases():
+        for rel in ("data/image/logo.png", "data/Image/logo.png", "data/IMAGE/logo.png", "image/logo.png", "logo.png"):
+            cand = base / rel
+            if cand.exists():
+                candidates.append(str(cand))
+                break
+    if ICO_PATH and os.path.exists(ICO_PATH):
+        candidates.append(ICO_PATH)
+
+    for candidate in candidates:
+        try:
+            source = QPixmap(candidate)
+            if source.isNull():
+                continue
+            built_icon = QIcon()
+            for size in (16, 20, 24, 32, 40, 48, 64):
+                built_icon.addPixmap(
+                    source.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+            if not built_icon.isNull():
+                return built_icon
+        except Exception:
+            continue
+    return icon
+
 from PySide6.QtCore import Qt, Signal, QThread, QSize, QTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QPlainTextEdit,
     QScrollArea, QLineEdit, QHBoxLayout, QVBoxLayout, QFrame, QCheckBox,
     QFileDialog, QDialog, QDialogButtonBox, QMessageBox, QComboBox,
-    QSpacerItem, QSizePolicy, QStackedWidget, QLayout
+    QSpacerItem, QSizePolicy, QStackedWidget, QLayout, QSystemTrayIcon, QMenu, QStyle
 )
 
 from PIL import Image, ImageQt, ImageDraw, ImageFont, ImageFilter, ImageChops
@@ -52,6 +99,32 @@ def get_internal_dir():
 
 BASE_DIR = get_base_dir()
 INTERNAL_DIR = get_internal_dir()
+BASE_DIR_PATH = Path(BASE_DIR)
+ROBOTS_BASE_ENV_DIR = Path(r"C:\Users\ROBO\Documents\ROBOS")
+
+try:
+    from dotenv import load_dotenv
+
+    env_robos = ROBOTS_BASE_ENV_DIR / ".env"
+    if env_robos.exists():
+        load_dotenv(env_robos)
+    elif (ROBOTS_BASE_ENV_DIR / ".env.example").exists():
+        load_dotenv(ROBOTS_BASE_ENV_DIR / ".env.example")
+
+    env_path = BASE_DIR_PATH / ".env"
+    if not env_path.exists():
+        env_path = BASE_DIR_PATH / ".env.example"
+    if env_path.exists():
+        load_dotenv(env_path)
+
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        if exe_dir != ROBOTS_BASE_ENV_DIR:
+            load_dotenv(exe_dir / ".env")
+            if not (exe_dir / ".env").exists():
+                load_dotenv(exe_dir / ".env.example")
+except ImportError:
+    pass
 
 
 def get_data_dir() -> Path:
@@ -113,18 +186,38 @@ PORTAL_TIMEOUT = 90000
 CDP_PORT = 9222
 CHROME_EXE = DATA_DIR / "Chrome" / "chrome.exe"
 PROFILE_DIR = DATA_DIR / "chrome_cdp_profile"
+ROBOT_TECHNICAL_ID = "certidoes_fiscal"
+ROBOT_DISPLAY_NAME_DEFAULT = "Certidoes Fiscal"
+ROBOT_SEGMENT_PATH_DEFAULT = "FISCAL/CERTIDOES"
+AUTH_PASSWORD = "password"
+AUTH_CERTIFICATE = "certificate"
+CERTIDOES_DIRNAME = "Certidoes"
 
 # ICO fallback
-ICO_PATH = os.path.join(INTERNAL_DIR, "ICO", "app.ico")
-if not os.path.exists(ICO_PATH):
-    for base in _bases():
-        for rel in ("data/ICO/app.ico", "data/ico/app.ico", "ICO/app.ico", "ico/app.ico", "app.ico"):
-            cand = base / rel
-            if cand.exists():
-                ICO_PATH = str(cand)
-                break
-        if os.path.exists(ICO_PATH):
+ICO_PATH = ""
+ico_candidates = [
+    DATA_DIR / "ico" / "app.ico",
+    DATA_DIR / "ICO" / "app.ico",
+    Path(BASE_DIR) / "data" / "ico" / "app.ico",
+    Path(BASE_DIR) / "data" / "ICO" / "app.ico",
+]
+for base in _bases():
+    ico_candidates.extend(
+        [
+            base / "data" / "ico" / "app.ico",
+            base / "data" / "ICO" / "app.ico",
+            base / "ico" / "app.ico",
+            base / "ICO" / "app.ico",
+            base / "app.ico",
+        ]
+    )
+for cand in ico_candidates:
+    try:
+        if cand.exists():
+            ICO_PATH = str(cand.resolve())
             break
+    except Exception:
+        continue
 
 # =============================================================================
 # Estilo de botões (mesmo padrão usado no bot principal)
@@ -556,6 +649,495 @@ def ensure_license_valid(app) -> bool:
         if confirm.exec() == QDialog.Accepted:
             return False
         # se escolher voltar, reabre o diálogo de licença
+# =============================================================================
+# Robot infra helpers
+# =============================================================================
+def only_digits(text: str) -> str:
+    return "".join(ch for ch in str(text or "") if ch.isdigit())
+
+
+def _robot_log(message: str) -> None:
+    try:
+        print(message, file=sys.stderr)
+    except Exception:
+        pass
+
+
+def get_robot_supabase(preferences: Optional[Dict[str, Any]] = None) -> Tuple[Optional[str], Optional[str]]:
+    url = os.environ.get("SUPABASE_URL", "").strip()
+    key = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+    if url and key:
+        return (url, key)
+    return (None, None)
+
+
+_robot_api_config: Optional[Dict[str, Any]] = None
+
+
+def fetch_robot_config_from_api() -> Optional[Dict[str, Any]]:
+    url_base = (os.environ.get("FOLDER_STRUCTURE_API_URL") or os.environ.get("SERVER_API_URL") or "").strip().rstrip("/")
+    if not url_base:
+        return None
+    try:
+        headers = {}
+        if "ngrok" in url_base.lower():
+            headers["ngrok-skip-browser-warning"] = "true"
+        response = requests.get(
+            f"{url_base}/api/robot-config",
+            params={"technical_id": ROBOT_TECHNICAL_ID},
+            headers=headers,
+            timeout=15,
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception:
+        return None
+
+
+def get_robot_api_config() -> Optional[Dict[str, Any]]:
+    global _robot_api_config
+    if _robot_api_config is None:
+        _robot_api_config = fetch_robot_config_from_api()
+    return _robot_api_config
+
+
+def get_resolved_output_base() -> Optional[Path]:
+    cfg = get_robot_api_config()
+    if cfg and (cfg.get("base_path") or "").strip():
+        try:
+            return Path((cfg.get("base_path") or "").strip())
+        except Exception:
+            return None
+    base_env = os.environ.get("BASE_PATH", "").strip()
+    if base_env:
+        try:
+            return Path(base_env)
+        except Exception:
+            return None
+    return None
+
+
+def load_companies_from_supabase(supabase_url: str, supabase_anon_key: str) -> List[Dict[str, str]]:
+    if not (supabase_url and supabase_anon_key):
+        return []
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        res = (
+            client.table("company_robot_config")
+            .select("companies(id,name,document,auth_mode,cert_blob_b64,cert_password)")
+            .eq("robot_technical_id", ROBOT_TECHNICAL_ID)
+            .eq("enabled", True)
+            .execute()
+        )
+        rows = getattr(res, "data", None) or []
+        companies: List[Dict[str, str]] = []
+        for row in rows:
+            company = row.get("companies") or {}
+            company_id = company.get("id")
+            if not company_id:
+                continue
+            companies.append(
+                {
+                    "id": company_id,
+                    "name": (company.get("name") or "").strip(),
+                    "doc": only_digits(company.get("document") or ""),
+                    "cnpj": only_digits(company.get("document") or ""),
+                    "auth_mode": (company.get("auth_mode") or AUTH_PASSWORD).strip().lower(),
+                    "cert_blob_b64": company.get("cert_blob_b64") or "",
+                    "cert_password": company.get("cert_password") or "",
+                }
+            )
+        companies.sort(key=lambda item: (item.get("name") or "").lower())
+        return companies
+    except Exception:
+        return []
+
+
+def load_companies_from_supabase_by_ids(
+    supabase_url: str, supabase_anon_key: str, company_ids: List[str]
+) -> List[Dict[str, str]]:
+    if not (supabase_url and supabase_anon_key and company_ids):
+        return []
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        res = (
+            client.table("companies")
+            .select("id,name,document,auth_mode,cert_blob_b64,cert_password")
+            .in_("id", company_ids)
+            .eq("active", True)
+            .execute()
+        )
+        rows = getattr(res, "data", None) or []
+        companies: List[Dict[str, str]] = []
+        for row in rows:
+            company_id = row.get("id")
+            if not company_id:
+                continue
+            companies.append(
+                {
+                    "id": company_id,
+                    "name": (row.get("name") or "").strip(),
+                    "doc": only_digits(row.get("document") or ""),
+                    "cnpj": only_digits(row.get("document") or ""),
+                    "auth_mode": (row.get("auth_mode") or AUTH_PASSWORD).strip().lower(),
+                    "cert_blob_b64": row.get("cert_blob_b64") or "",
+                    "cert_password": row.get("cert_password") or "",
+                }
+            )
+        order_map = {company_id: idx for idx, company_id in enumerate(company_ids)}
+        companies.sort(key=lambda item: order_map.get(item.get("id"), 10**9))
+        return companies
+    except Exception:
+        return []
+
+
+def fetch_robot_display_config(supabase_url: str, supabase_anon_key: str) -> Optional[Dict[str, Any]]:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        res = (
+            client.table("robot_display_config")
+            .select("*")
+            .eq("robot_technical_id", ROBOT_TECHNICAL_ID)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(res, "data", None) or []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def register_robot(supabase_url: str, supabase_anon_key: str) -> Optional[str]:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        api_cfg = get_robot_api_config() or {}
+        segment_path = (api_cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
+        res = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
+        rows = getattr(res, "data", None) or []
+        if rows:
+            robot_id = rows[0]["id"]
+            upd = client.table("robots").update(
+                {
+                    "status": "active",
+                    "segment_path": segment_path,
+                    "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).eq("id", robot_id).execute()
+            upd_rows = getattr(upd, "data", None)
+            if upd_rows is None:
+                _robot_log("[Robô] Aviso: update em robots não retornou linhas. Verifique RLS/permissões.")
+            return robot_id
+        ins = (
+            client.table("robots")
+            .insert(
+                {
+                    "technical_id": ROBOT_TECHNICAL_ID,
+                    "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
+                    "status": "active",
+                    "segment_path": segment_path,
+                    "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .select("id")
+            .execute()
+        )
+        data = getattr(ins, "data", None) or []
+        if data:
+            return data[0].get("id")
+        _robot_log("[Robô] Insert em robots retornou vazio. Verifique RLS/permissões na tabela robots para a anon key.")
+        return None
+    except Exception as exc:
+        _robot_log(f"[Robô] Falha ao registrar no dashboard (robots): {exc}")
+        return None
+
+
+def register_robot_compat(supabase_url: str, supabase_anon_key: str) -> Optional[str]:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        api_cfg = get_robot_api_config() or {}
+        segment_path = (api_cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
+        res = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
+        rows = getattr(res, "data", None) or []
+        if rows:
+            robot_id = rows[0]["id"]
+            upd = client.table("robots").update(
+                {
+                    "status": "active",
+                    "segment_path": segment_path,
+                    "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).eq("id", robot_id).execute()
+            upd_rows = getattr(upd, "data", None)
+            if upd_rows is None:
+                _robot_log("[Robô] Aviso: update em robots não retornou linhas. Verifique RLS/permissões.")
+            return robot_id
+
+        ins = client.table("robots").insert(
+            {
+                "technical_id": ROBOT_TECHNICAL_ID,
+                "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
+                "status": "active",
+                "segment_path": segment_path,
+                "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).execute()
+        ins_data = getattr(ins, "data", None)
+        if ins_data is None:
+            _robot_log("[Robô] Insert em robots não retornou data. Vou tentar reler pelo technical_id.")
+
+        reread = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
+        reread_rows = getattr(reread, "data", None) or []
+        if reread_rows:
+            return reread_rows[0].get("id")
+
+        _robot_log("[Robô] Insert em robots não ficou visível. Verifique RLS/permissões na tabela robots para a anon key.")
+        return None
+    except Exception as exc:
+        _robot_log(f"[Robô] Falha ao registrar no dashboard (robots): {exc}")
+        return None
+
+
+def fetch_robot_config(supabase_url: str, supabase_anon_key: str) -> Optional[Dict[str, Any]]:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        res = (
+            client.table("robots")
+            .select("segment_path")
+            .eq("technical_id", ROBOT_TECHNICAL_ID)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(res, "data", None) or []
+        if not rows:
+            return None
+        return {"segment_path": (rows[0].get("segment_path") or "").strip() or None}
+    except Exception:
+        return None
+
+
+def update_robot_heartbeat(supabase_url: str, supabase_anon_key: str, robot_id: str) -> None:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        client.table("robots").update(
+            {
+                "status": "active",
+                "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("id", robot_id).execute()
+    except Exception as exc:
+        _robot_log(f"[Robô] Falha ao atualizar heartbeat: {exc}")
+        pass
+
+
+def update_robot_status(supabase_url: str, supabase_anon_key: str, robot_id: str, status: str) -> None:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        client.table("robots").update(
+            {
+                "status": status,
+                "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("id", robot_id).execute()
+    except Exception as exc:
+        _robot_log(f"[Robô] Falha ao atualizar status '{status}': {exc}")
+        pass
+
+
+def _get_active_schedule_rule_ids(client: Any) -> Optional[List[str]]:
+    try:
+        res = (
+            client.table("schedule_rules")
+            .select("id")
+            .eq("status", "active")
+            .eq("run_daily", True)
+            .execute()
+        )
+        rows = getattr(res, "data", None) or []
+        return [row["id"] for row in rows if row.get("id")]
+    except Exception:
+        return None
+
+
+def claim_execution_request(
+    supabase_url: str,
+    supabase_anon_key: str,
+    robot_id: str,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Optional[Dict[str, Any]]:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        active_rule_ids = _get_active_schedule_rule_ids(client)
+        res = (
+            client.table("execution_requests")
+            .select("*")
+            .eq("status", "pending")
+            .order("created_at")
+            .limit(10)
+            .execute()
+        )
+        rows = getattr(res, "data", None) or []
+        for row in rows:
+            schedule_rule_id = row.get("schedule_rule_id")
+            if schedule_rule_id is not None and active_rule_ids:
+                if schedule_rule_id not in active_rule_ids:
+                    continue
+            tech_ids = row.get("robot_technical_ids") or []
+            if "all" in tech_ids or ROBOT_TECHNICAL_ID in tech_ids:
+                client.table("execution_requests").update(
+                    {
+                        "status": "running",
+                        "robot_id": robot_id,
+                        "claimed_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                ).eq("id", row["id"]).eq("status", "pending").execute()
+                return row
+        return None
+    except Exception as exc:
+        if log_callback:
+            log_callback(f"[Robô] Erro ao buscar job da fila: {exc}")
+        return None
+
+
+def complete_execution_request(
+    supabase_url: str,
+    supabase_anon_key: str,
+    request_id: str,
+    success: bool,
+    error_message: Optional[str] = None,
+) -> None:
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        client.table("execution_requests").update(
+            {
+                "status": "completed" if success else "failed",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "error_message": error_message,
+            }
+        ).eq("id", request_id).execute()
+    except Exception:
+        pass
+
+
+def resolve_reports_root(config: Dict[str, Any]) -> Path:
+    base = (
+        config.get("_resolved_output_base")
+        or config.get("reports_path")
+        or BASE_DIR
+    )
+    base_path = Path(base)
+    root = base_path / "EMPRESAS"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def resolve_date_segments(config: Dict[str, Any], reference_dt: Optional[datetime] = None) -> List[str]:
+    dt = reference_dt or datetime.now()
+    rule = str((config or {}).get("_date_rule") or "").strip().lower()
+    year = f"{dt.year}"
+    month = f"{dt.month:02d}"
+    day = f"{dt.day:02d}"
+    if rule == "year":
+        return [year]
+    if rule == "year_month":
+        return [year, month]
+    if rule == "year_month_day":
+        return [year, month, day]
+    return []
+
+
+def resolve_company_output_dir(config: Dict[str, Any], company_name: str, reference_dt: Optional[datetime] = None) -> Path:
+    reports_root = resolve_reports_root(config)
+    segment_slug = str((config.get("_segment_path") or ROBOT_SEGMENT_PATH_DEFAULT)).strip().replace("/", os.sep)
+    safe_name = _sanitize_name(company_name)
+    out_dir = reports_root / safe_name / segment_slug
+    for part in resolve_date_segments(config, reference_dt):
+        out_dir = out_dir / part
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
+def resolve_report_output_path(config: Dict[str, Any], reference_dt: Optional[datetime] = None) -> Path:
+    reports_root = resolve_reports_root(config)
+    segment_slug = str((config.get("_segment_path") or ROBOT_SEGMENT_PATH_DEFAULT)).strip().replace("/", os.sep)
+    report_dir = reports_root / segment_slug
+    for part in resolve_date_segments(config, reference_dt):
+        report_dir = report_dir / part
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir / "Relatorio de Certidoes.pdf"
+
+
+def normalize_result_status(status_text: str) -> str:
+    norm = _normalize_status_text(status_text)
+    if "positiva com efeito de negativa" in norm or "positiva com efeitos de negativa" in norm:
+        return "regular"
+    if "regular" in norm:
+        return "regular"
+    if "negativa" in norm:
+        return "negativa"
+    if "positiva" in norm:
+        return "positiva"
+    return "irregular"
+
+
+def sync_certidao_result(
+    supabase_url: str,
+    supabase_anon_key: str,
+    company_id: str,
+    tipo_certidao: str,
+    status_text: str,
+    pdf_path: Optional[Path],
+    data_consulta: datetime,
+) -> None:
+    if not (supabase_url and supabase_anon_key and company_id and tipo_certidao):
+        return
+    file_value = str(pdf_path) if pdf_path else None
+    periodo = data_consulta.strftime("%Y-%m")
+    document_date = data_consulta.strftime("%Y-%m-%d")
+    payload = {
+        "company_id": company_id,
+        "tipo_certidao": tipo_certidao,
+        "status": normalize_result_status(status_text),
+        "arquivo_pdf": file_value,
+        "data_consulta": data_consulta.isoformat(),
+        "periodo": periodo,
+        "document_date": document_date,
+        "robot_technical_id": ROBOT_TECHNICAL_ID,
+    }
+    try:
+        base_url = supabase_url.strip().rstrip("/")
+        anon_key = supabase_anon_key.strip()
+        idem_key = f"{company_id}:{tipo_certidao}:{document_date}"
+        headers = {
+            "apikey": anon_key,
+            "Authorization": f"Bearer {anon_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            requests.delete(
+                f"{base_url}/rest/v1/sync_events",
+                params={"idempotency_key": f"eq.{idem_key}"},
+                headers={**headers, "Prefer": "return=minimal"},
+                timeout=20,
+            )
+        except Exception:
+            pass
+        response = requests.post(
+            f"{base_url}/rest/v1/sync_events",
+            headers={**headers, "Prefer": "return=minimal"},
+            json={
+                "company_id": company_id,
+                "tipo": "certidao_resultado",
+                "payload": json.dumps(payload, ensure_ascii=False),
+                "status": "sucesso",
+                "idempotency_key": idem_key,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        print(f"[Robô] Falha ao sincronizar certidão '{tipo_certidao}' da empresa {company_id}: {exc}", file=sys.stderr)
+
+
 # =============================================================================
 # UI helpers
 # =============================================================================
@@ -1170,11 +1752,23 @@ class AutomationThread(QThread):
     log = Signal(str)
     finished = Signal(dict)
 
-    def __init__(self, companies: List[dict], config: dict, hide_browser: bool, parent=None):
+    def __init__(
+        self,
+        companies: List[dict],
+        config: dict,
+        hide_browser: bool,
+        supabase_url: Optional[str] = None,
+        supabase_anon_key: Optional[str] = None,
+        job: Optional[Dict[str, Any]] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.companies = companies
         self.config = config
         self.hide_browser = hide_browser
+        self.supabase_url = (supabase_url or "").strip()
+        self.supabase_anon_key = (supabase_anon_key or "").strip()
+        self.job = job
         self.results: Dict[str, str] = {}
         self.results_details: Dict[str, Dict[str, str]] = {}
         self.started_at: Optional[datetime] = None
@@ -1314,6 +1908,194 @@ class AutomationThread(QThread):
         self.log.emit("📗 📗 Playwright/Chrome inicializados com sucesso.")
         return pw, browser, ctx, page, None
 
+    def _download_pdf_viewer_by_text(self, pdf_page, dest_path: Path, label: str = "PDF", timeout_ms: int = 2200) -> bool:
+        """
+        Tenta baixar pelo botão semântico do visualizador (inclusive shadow-root do pdf-viewer)
+        antes de recorrer ao clique por coordenadas.
+        """
+        baixar_exact_rx = re.compile(r"^\s*baixar\s*$", re.IGNORECASE)
+        name_rx = re.compile(r"baixar|download|save|salvar", re.IGNORECASE)
+
+        def _header_ci(headers: dict | None, key: str) -> str:
+            if not headers:
+                return ""
+            lk = (key or "").lower()
+            try:
+                for hk, hv in headers.items():
+                    if str(hk).lower() == lk:
+                        return str(hv or "")
+            except Exception:
+                return ""
+            return ""
+
+        def _looks_like_pdf_response(resp) -> bool:
+            try:
+                status = int(resp.status or 0)
+            except Exception:
+                status = 0
+            if status < 200 or status >= 400:
+                return False
+
+            try:
+                url = str(resp.url or "").lower()
+            except Exception:
+                url = ""
+
+            try:
+                headers = resp.headers or {}
+            except Exception:
+                headers = {}
+
+            ctype = _header_ci(headers, "content-type").lower()
+            cdisp = _header_ci(headers, "content-disposition").lower()
+
+            if "application/pdf" in ctype:
+                return True
+            if "attachment" in cdisp and (".pdf" in cdisp or "filename=" in cdisp):
+                return True
+            if ".pdf" in url:
+                return True
+            if any(tok in url for tok in ("download", "baixar", "save", "certidao", "relatorio", "report")):
+                if "octet-stream" in ctype or "application/" in ctype or "attachment" in cdisp:
+                    return True
+            return False
+
+        def _save_response_body(resp, source_desc: str) -> bool:
+            try:
+                data = resp.body()
+                if not data:
+                    return False
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                dest_path.write_bytes(data)
+                self.log.emit(f"✅ {label} baixado por request/response em {source_desc} (url: {resp.url}).")
+                return True
+            except Exception:
+                return False
+
+        def _trigger_and_capture(action, source_desc: str) -> bool:
+            try:
+                with pdf_page.expect_download(timeout=timeout_ms) as dl_info:
+                    action()
+                download = dl_info.value
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                download.save_as(str(dest_path))
+                self.log.emit(f"✅ {label} baixado pelo botão semântico em {source_desc}.")
+                return True
+            except Exception:
+                pass
+
+            try:
+                with pdf_page.expect_response(lambda r: _looks_like_pdf_response(r), timeout=timeout_ms) as resp_info:
+                    action()
+                resp = resp_info.value
+                if _save_response_body(resp, source_desc):
+                    return True
+            except Exception:
+                pass
+
+            return False
+
+        try:
+            viewport = pdf_page.viewport_size or {"width": 1366, "height": 768}
+            pdf_page.mouse.move((viewport.get("width", 1366) or 1366) / 2, (viewport.get("height", 768) or 768) / 2)
+            pdf_page.wait_for_timeout(120)
+        except Exception:
+            pass
+
+        scopes = [("page", pdf_page)]
+        try:
+            for idx, fr in enumerate(pdf_page.frames):
+                scopes.append((f"frame#{idx}", fr))
+        except Exception:
+            pass
+
+        def _scope_locators(scope):
+            return [
+                ("role_button_baixar_exact", scope.get_by_role("button", name=baixar_exact_rx)),
+                ("role_button_baixar_literal", scope.get_by_role("button", name="Baixar")),
+                ("role_aria_baixar_exact", scope.locator("[role='button'][aria-label='Baixar'], [role='button'][aria-label='baixar']")),
+                ("role_title_baixar_exact", scope.locator("[role='button'][title='Baixar'], [role='button'][title='baixar']")),
+                ("role_button_name", scope.get_by_role("button", name=name_rx)),
+                ("role_aria_label", scope.locator("[role='button'][aria-label*='Baixar' i], [role='button'][aria-label*='Download' i], [role='button'][aria-label*='Save' i], [role='button'][aria-label*='Salvar' i]")),
+                ("role_title", scope.locator("[role='button'][title*='Baixar' i], [role='button'][title*='Download' i], [role='button'][title*='Save' i], [role='button'][title*='Salvar' i]")),
+                ("cr_icon_button_id_save", scope.locator("cr-icon-button#save")),
+                ("cr_icon_button_id_download", scope.locator("cr-icon-button#download")),
+                ("save_id_role_button", scope.locator("#save[role='button']")),
+                ("download_id_role_button", scope.locator("#download[role='button']")),
+                ("save_id_button", scope.locator("#save")),
+                ("download_id_button", scope.locator("#download")),
+                ("text_baixar_exact", scope.get_by_text(baixar_exact_rx)),
+                ("text_fallback", scope.get_by_text(name_rx)),
+            ]
+
+        for scope_name, scope in scopes:
+            for desc, loc in _scope_locators(scope):
+                try:
+                    cnt = loc.count()
+                except Exception:
+                    cnt = 0
+                if cnt <= 0:
+                    continue
+
+                for i in range(min(cnt, 5)):
+                    btn = loc.nth(i)
+                    try:
+                        btn.scroll_into_view_if_needed()
+                    except Exception:
+                        pass
+
+                    actions = (
+                        lambda: btn.click(no_wait_after=True),
+                        lambda: btn.click(force=True, no_wait_after=True),
+                        lambda: btn.evaluate("el => el.click()"),
+                    )
+
+                    for action in actions:
+                        if _trigger_and_capture(action, f"{scope_name}/{desc}"):
+                            return True
+
+        js_has_save_btn = """() => {
+            const viewer = document.querySelector('pdf-viewer#viewer') || document.querySelector('pdf-viewer');
+            if (!viewer || !viewer.shadowRoot) return false;
+            const toolbar = viewer.shadowRoot.querySelector('viewer-toolbar#toolbar') || viewer.shadowRoot.querySelector('viewer-toolbar');
+            if (!toolbar || !toolbar.shadowRoot) return false;
+            const downloads = toolbar.shadowRoot.querySelector('viewer-download-controls#downloads') || toolbar.shadowRoot.querySelector('viewer-download-controls');
+            if (!downloads || !downloads.shadowRoot) return false;
+            return !!downloads.shadowRoot.querySelector('#save,#download,[id="save"],[id="download"]');
+        }"""
+        js_click_save_btn = """() => {
+            const viewer = document.querySelector('pdf-viewer#viewer') || document.querySelector('pdf-viewer');
+            if (!viewer || !viewer.shadowRoot) return false;
+            const toolbar = viewer.shadowRoot.querySelector('viewer-toolbar#toolbar') || viewer.shadowRoot.querySelector('viewer-toolbar');
+            if (!toolbar || !toolbar.shadowRoot) return false;
+            const downloads = toolbar.shadowRoot.querySelector('viewer-download-controls#downloads') || toolbar.shadowRoot.querySelector('viewer-download-controls');
+            if (!downloads || !downloads.shadowRoot) return false;
+            const saveBtn = downloads.shadowRoot.querySelector('#save,#download,[id="save"],[id="download"]');
+            if (!saveBtn) return false;
+            saveBtn.click();
+            return true;
+        }"""
+
+        for scope_name, scope in scopes:
+            try:
+                has_btn = bool(scope.evaluate(js_has_save_btn))
+            except Exception:
+                has_btn = False
+            if not has_btn:
+                continue
+
+            try:
+                def _click_shadow_save():
+                    clicked = bool(scope.evaluate(js_click_save_btn))
+                    if not clicked:
+                        raise Exception("save_button_not_clicked")
+                if _trigger_and_capture(_click_shadow_save, f"{scope_name}/shadow-save"):
+                    return True
+            except Exception:
+                continue
+
+        self.log.emit(f"ℹ️ Não encontrei/clickou botão semântico 'Baixar/Salvar' no viewer (escopos verificados: {len(scopes)}).")
+        return False
 
     def _download_pdf_viewer(self, pdf_page, dest_path: Path, label: str = "PDF") -> bool:
         try:
@@ -1332,11 +2114,30 @@ class AutomationThread(QThread):
         else:
             self._minimize_browser_window(pdf_page.context, pdf_page, log_once=True)
 
+        try:
+            if self._download_pdf_viewer_by_text(pdf_page, dest_path, label=label, timeout_ms=2200):
+                self._minimize_browser_window(pdf_page.context, pdf_page, log_once=True)
+                return True
+        except Exception as e:
+            self.log.emit(f"⚠️ Falha ao tentar o botão semântico de download do {label}: {e}")
+
         viewport = pdf_page.viewport_size or {"width": 1366, "height": 768}
         vw = viewport.get("width", 1366) or 1366
         vh = viewport.get("height", 768) or 768
 
         self.log.emit("ℹ️ Vou estimar onde clicar para baixar.")
+
+        # Coordenada validada manualmente via Playwright no viewer do Chrome/Edge da SEFAZ GO:
+        # o ícone de download fica aproximadamente 104px da borda direita no toolbar superior.
+        toolbar_download_points = [
+            (max(1, vw - 104), 28),
+            (max(1, vw - 104), 30),
+            (max(1, vw - 106), 28),
+            (max(1, vw - 102), 28),
+            (max(1, vw - 104), 26),
+            (max(1, vw - 108), 28),
+            (max(1, vw - 100), 28),
+        ]
 
         # estimativa baseada em resolução (metade superior/direita)
         def build_coords(box=None):
@@ -1385,7 +2186,7 @@ class AutomationThread(QThread):
                 grid = [(area_x1 - side * 0.2, top_row_y)]
             return prim + grid
 
-        candidates = build_coords()
+        candidates = toolbar_download_points + build_coords()
 
         print_deadzone = None
         try:
@@ -1500,7 +2301,7 @@ class AutomationThread(QThread):
             pass
         page.locator("#Certidao\\.NumeroDocumentoCNPJ").fill(cnpj)
         pdf_bytes: List[bytes] = []
-        dest_path = out_dir / "certidao_estadual.pdf"
+        dest_path = out_dir / "estadual_go.pdf"
 
         def on_resp(resp):
             ctype = resp.headers.get("content-type", "").lower()
@@ -1531,18 +2332,38 @@ class AutomationThread(QThread):
         pop.on("response", on_pop_resp)
 
         try:
-            with pop.expect_response(lambda r: "certidao.asp" in r.url.lower() and "pdf" in r.headers.get("content-type", "").lower(), timeout=15000) as resp_info:
-                pop.locator("#Certidao\\.ConfirmaNomeContribuinteSim").click()
-            resp = resp_info.value
-            try:
-                pop_pdf.append(resp.body())
-            except Exception:
-                pass
+            pop.wait_for_timeout(800)
         except Exception:
+            pass
+
+        confirm_btn = pop.locator("#Certidao\\.ConfirmaNomeContribuinteSim")
+        confirm_needed = False
+        try:
+            confirm_needed = confirm_btn.count() > 0 and confirm_btn.first.is_visible(timeout=1200)
+        except Exception:
+            confirm_needed = False
+
+        if confirm_needed:
+            self.log.emit("ℹ️ SEFAZ GO pediu confirmação do contribuinte. Vou clicar em 'Sim'.")
             try:
-                pop.locator("#Certidao\\.ConfirmaNomeContribuinteSim").click()
+                with pop.expect_response(
+                    lambda r: "certidao.asp" in r.url.lower()
+                    and "pdf" in r.headers.get("content-type", "").lower(),
+                    timeout=15000,
+                ) as resp_info:
+                    confirm_btn.first.click(timeout=2000)
+                resp = resp_info.value
+                try:
+                    pop_pdf.append(resp.body())
+                except Exception:
+                    pass
             except Exception:
-                self.log.emit("⚠️ Não encontrei botão de confirmação na SEFAZ GO.")
+                try:
+                    confirm_btn.first.click(timeout=2000)
+                except Exception:
+                    self.log.emit("⚠️ Não consegui clicar no botão de confirmação da SEFAZ GO.")
+        else:
+            self.log.emit("ℹ️ A SEFAZ GO abriu direto no PDF; seguindo para o download.")
         pop.wait_for_timeout(4000)
 
         try:
@@ -1565,7 +2386,7 @@ class AutomationThread(QThread):
             return dest_path
         try:
             container_html = pop.locator("#container").evaluate("el => el.outerHTML")
-            fallback = out_dir / "certidao_estadual_container.html"
+            fallback = out_dir / "estadual_go_container.html"
             fallback.write_text(container_html or "", encoding="utf-8")
             self.log.emit(f"💾 Container salvo em {fallback} (PDF não interceptado).")
         except Exception as e:
@@ -1579,7 +2400,7 @@ class AutomationThread(QThread):
             pdf_bytes: List[bytes] = []
             alert_seen = False
             loader_selector = "div.backdrop div.loading-container"
-            dest_path = out_dir / "certidao_federal.pdf"
+            dest_path = out_dir / "federal.pdf"
 
             def on_resp(resp):
                 ctype = resp.headers.get("content-type", "").lower()
@@ -1796,7 +2617,7 @@ class AutomationThread(QThread):
         except Exception:
             self.log.emit("⚠️ Não consegui clicar em Visualizar antes de salvar a certidão FGTS.")
 
-        out = out_dir / "certidao_fgts.pdf"
+        out = out_dir / "fgts.pdf"
         ok = self._save_page_as_pdf(page, out)
         if ok:
             self.log.emit(f"📄 Certidão FGTS salva: {out}")
@@ -1812,10 +2633,6 @@ class AutomationThread(QThread):
             self.log.emit("⚠️ Nenhuma empresa selecionada.")
             self.finished.emit({})
             return
-        companies_path = Path(self.config.get("companies_path") or BASE_DIR)
-        reports_path = Path(self.config.get("reports_path") or companies_path)
-        os.makedirs(reports_path, exist_ok=True)
-
         pw = browser = context = proc = base_page = None
         try:
             pw, browser, context, base_page, proc = self._start_playwright_cdp()
@@ -1838,24 +2655,28 @@ class AutomationThread(QThread):
             def process_company(comp: dict, attempt: int, prev_detail: Optional[Dict[str, str]] = None) -> Optional[Dict[str, str]]:
                 name = (comp.get("name", "") or "").strip() or "EMPRESA"
                 name_disp = name.upper()
-                cnpj_raw = re.sub(r"\D", "", comp.get("cnpj", "") or "")
+                company_id = (comp.get("id") or "").strip()
+                cnpj_raw = only_digits(comp.get("doc") or comp.get("cnpj") or "")
                 cnpj_fmt = _format_cnpj(cnpj_raw)
                 if len(cnpj_raw) != 14:
                     self.log.emit(f"⚠️ CNPJ inválido para {name_disp}. Pulando.")
                     return None
-                safe_name = _sanitize_name(name)
-                out_dir = Path(companies_path) / safe_name
-                os.makedirs(out_dir, exist_ok=True)
                 base_detail = prev_detail.copy() if isinstance(prev_detail, dict) else {}
                 detail = {
+                    "company_id": company_id,
                     "cnpj": cnpj_fmt,
                     "Estadual": base_detail.get("Estadual", "Não processado"),
                     "Federal": base_detail.get("Federal", "Não processado"),
                     "FGTS": base_detail.get("FGTS", "Não processado"),
                 }
+                consulta_at = datetime.now()
+                out_dir = resolve_company_output_dir(self.config, name, consulta_at)
                 suffix = f" (tentativa {attempt})" if attempt > 1 else ""
                 self.log.emit("")  # separador visual
                 self.log.emit(f"━━━━━━━━ EMPRESA: {name_disp} - {cnpj_fmt}{suffix} ━━━━━━━━")
+                pdf_est = None
+                pdf_fed = None
+                pdf_fgts = None
                 try:
                     current_page = self._ensure_single_tab(context)
                     # Estadual
@@ -1911,6 +2732,34 @@ class AutomationThread(QThread):
                     self.log.emit(f"⚠️ Erro geral para {name_disp}: {e}")
 
                 # garante apenas uma aba antes de seguir para a próxima empresa
+                if company_id and (attempt >= max_attempts or not _detail_has_error(detail)):
+                    sync_certidao_result(
+                        self.supabase_url,
+                        self.supabase_anon_key,
+                        company_id,
+                        "estadual_go",
+                        detail.get("Estadual", ""),
+                        pdf_est,
+                        consulta_at,
+                    )
+                    sync_certidao_result(
+                        self.supabase_url,
+                        self.supabase_anon_key,
+                        company_id,
+                        "federal",
+                        detail.get("Federal", ""),
+                        pdf_fed,
+                        consulta_at,
+                    )
+                    sync_certidao_result(
+                        self.supabase_url,
+                        self.supabase_anon_key,
+                        company_id,
+                        "fgts",
+                        detail.get("FGTS", ""),
+                        pdf_fgts,
+                        consulta_at,
+                    )
                 try:
                     self._ensure_single_tab(context)
                 except Exception:
@@ -1992,18 +2841,13 @@ class MainWindow(QMainWindow):
                 break
         if icon:
             self.setWindowIcon(QIcon(icon))
+        else:
+            app_icon = _load_app_icon()
+            if not app_icon.isNull():
+                self.setWindowIcon(app_icon)
 
         self.json_dir = self.data_dir / "json"
         self.json_dir.mkdir(parents=True, exist_ok=True)
-        self.companies_file = self.json_dir / "empresas_certidoes.json"
-        if not self.companies_file.exists():
-            self.companies_file.write_text("[]", encoding="utf-8")
-        try:
-            self.companies = json.loads(self.companies_file.read_text(encoding="utf-8") or "[]")
-        except Exception:
-            self.companies = []
-        self._sort_companies()
-
         self.config_file = self.json_dir / "config_certidoes.json"
         if self.config_file.exists():
             try:
@@ -2013,24 +2857,213 @@ class MainWindow(QMainWindow):
         else:
             self.config = {}
         if "reports_path" not in self.config:
-            self.config["reports_path"] = str(self.base_dir / "Certidoes_PDF")
+            self.config["reports_path"] = str(self.base_dir)
+        if "companies_path" not in self.config:
+            self.config["companies_path"] = str(self.base_dir)
+
+        self.companies: List[Dict[str, str]] = []
+        self.output_base: Optional[Path] = get_resolved_output_base()
+        api_cfg = get_robot_api_config() or {}
+        self._segment_path: str = (api_cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip() or ROBOT_SEGMENT_PATH_DEFAULT
+        self._date_rule: str = (api_cfg.get("date_rule") or "").strip()
+        self._robot_supabase_url: Optional[str] = None
+        self._robot_supabase_key: Optional[str] = None
+        self._robot_id: Optional[str] = None
+        self._last_display_config_updated_at: str = ""
+        self._active_job: Optional[Dict[str, Any]] = None
 
         self.schedule_timer = QTimer(self)
         self.schedule_timer.timeout.connect(self._on_schedule_tick)
         self.scheduled_start: Optional[datetime] = None
         self.schedule_pending = False
 
+        self.heartbeat_timer = QTimer(self)
+        self.heartbeat_timer.timeout.connect(self._on_robot_heartbeat)
+        self.display_config_timer = QTimer(self)
+        self.display_config_timer.timeout.connect(self._on_display_config_poll)
+        self.job_poll_timer = QTimer(self)
+        self.job_poll_timer.timeout.connect(self._on_robot_poll_job)
+
         self.thread: Optional[AutomationThread] = None
         self._build_ui()
+        self._setup_tray_icon()
+        self._init_robot_integration()
 
     # ---------- persistence ----------
     def _save_companies(self):
-        with open(self.companies_file, "w", encoding="utf-8") as f:
-            json.dump(self.companies, f, indent=2, ensure_ascii=False)
+        return
 
     def _save_config(self):
         with open(self.config_file, "w", encoding="utf-8") as f:
             json.dump(self.config, f, indent=2, ensure_ascii=False)
+
+    def _log(self, msg: str):
+        try:
+            self.log_message(msg)
+        except Exception:
+            pass
+
+    def _init_robot_integration(self):
+        url, key = get_robot_supabase()
+        self._robot_supabase_url = url
+        self._robot_supabase_key = key
+        if self.output_base:
+            self.config["_resolved_output_base"] = str(self.output_base)
+        self.config["_segment_path"] = self._segment_path
+        self.config["_date_rule"] = self._date_rule
+        if url and key:
+            self.companies = load_companies_from_supabase(url, key)
+            self._sort_companies()
+            self._robot_id = register_robot_compat(url, key)
+            if not (get_robot_api_config() or {}).get("segment_path"):
+                robot_cfg = fetch_robot_config(url, key)
+                if robot_cfg and robot_cfg.get("segment_path"):
+                    self._segment_path = robot_cfg["segment_path"]
+                    self.config["_segment_path"] = self._segment_path
+            if self._robot_id:
+                self.heartbeat_timer.start(60000)
+                self.display_config_timer.start(10000)
+                self.job_poll_timer.start(10000)
+                QTimer.singleShot(500, self._on_display_config_poll)
+                QTimer.singleShot(1500, self._on_robot_poll_job)
+                self._log("[Robô] Conectado ao dashboard. Status: ativo.")
+            else:
+                self._log("[Robô] Supabase encontrado, mas falhou ao registrar em robots.")
+        else:
+            self._log("[Robô] SUPABASE_URL ou SUPABASE_ANON_KEY não definidos.")
+        self._reload_company_list()
+
+    def _refresh_companies_from_supabase(self):
+        if not self._robot_supabase_url or not self._robot_supabase_key:
+            self.companies = []
+            self._reload_company_list()
+            return
+        self.companies = load_companies_from_supabase(self._robot_supabase_url, self._robot_supabase_key)
+        self._sort_companies()
+        self._reload_company_list()
+
+    def _on_robot_heartbeat(self):
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_heartbeat(self._robot_supabase_url, self._robot_supabase_key, self._robot_id)
+
+    def _on_display_config_poll(self):
+        if not self._robot_supabase_url or not self._robot_supabase_key or self.thread and self.thread.isRunning():
+            return
+        cfg = fetch_robot_display_config(self._robot_supabase_url, self._robot_supabase_key)
+        if not cfg:
+            return
+        updated = (cfg.get("updated_at") or "").strip()
+        if updated and updated == self._last_display_config_updated_at:
+            return
+        self._last_display_config_updated_at = updated
+        company_ids = cfg.get("company_ids")
+        if isinstance(company_ids, list):
+            self.companies = load_companies_from_supabase_by_ids(
+                self._robot_supabase_url, self._robot_supabase_key, company_ids
+            )
+        else:
+            self.companies = load_companies_from_supabase(
+                self._robot_supabase_url, self._robot_supabase_key
+            )
+        self._sort_companies()
+        self._reload_company_list()
+
+    def _on_robot_poll_job(self):
+        if not self._robot_id or not self._robot_supabase_url or not self._robot_supabase_key:
+            return
+        if self.thread and self.thread.isRunning():
+            return
+        job = claim_execution_request(
+            self._robot_supabase_url, self._robot_supabase_key, self._robot_id, log_callback=self._log
+        )
+        if job:
+            self._log("[Robô] Job da fila iniciado.")
+            self._run_job(job)
+
+    def _run_job(self, job: Dict[str, Any]):
+        company_ids = job.get("company_ids") or []
+        if not company_ids:
+            complete_execution_request(
+                self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Nenhuma empresa no job"
+            )
+            return
+        records = load_companies_from_supabase_by_ids(
+            self._robot_supabase_url or "",
+            self._robot_supabase_key or "",
+            company_ids,
+        )
+        if not records:
+            complete_execution_request(
+                self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Nenhuma empresa encontrada"
+            )
+            self._log("[Robô] Nenhuma empresa retornada pelo dashboard para este job.")
+            return
+        self._active_job = job
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "processing")
+        self.thread = AutomationThread(
+            records,
+            self.config,
+            hide_browser=self.chk.isChecked(),
+            supabase_url=self._robot_supabase_url,
+            supabase_anon_key=self._robot_supabase_key,
+            job=job,
+            parent=self,
+        )
+        self.thread.log.connect(self.log_message)
+        self.thread.finished.connect(self.on_automation_finished)
+        self.thread.start()
+        self.btn_start.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self.btn_mgr.setEnabled(False)
+
+    def _setup_tray_icon(self):
+        self._tray_icon = QSystemTrayIcon(self)
+        app_icon = _load_app_icon()
+        if app_icon.isNull():
+            app_icon = self.windowIcon()
+        if app_icon.isNull():
+            app_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        self._tray_icon.setIcon(app_icon)
+        menu = QMenu()
+        show_act = QAction("Abrir janela", self)
+        show_act.triggered.connect(self._show_from_tray)
+        menu.addAction(show_act)
+        quit_act = QAction("Fechar robô", self)
+        quit_act.triggered.connect(self._quit_from_tray)
+        menu.addAction(quit_act)
+        self._tray_icon.setContextMenu(menu)
+        self._tray_icon.activated.connect(self._on_tray_activated)
+        self._tray_icon.setToolTip("Certidões - Federal / Estadual GO / FGTS")
+
+    def _show_from_tray(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
+        if not self.heartbeat_timer.isActive():
+            self.heartbeat_timer.start(60000)
+        if not self.display_config_timer.isActive():
+            self.display_config_timer.start(10000)
+        if not self.job_poll_timer.isActive():
+            self.job_poll_timer.start(10000)
+
+    def _on_tray_activated(self, reason: int):
+        if reason == QSystemTrayIcon.DoubleClick:
+            self._show_from_tray()
+
+    def _quit_from_tray(self):
+        if self.thread and self.thread.isRunning():
+            self.thread.terminate()
+            self.thread.wait(2000)
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "inactive")
+        self.heartbeat_timer.stop()
+        self.display_config_timer.stop()
+        self.job_poll_timer.stop()
+        self._tray_icon.hide()
+        QApplication.instance().quit()
 
     # ---------- ui ----------
     def _build_ui(self):
@@ -2067,7 +3100,7 @@ class MainWindow(QMainWindow):
         self.btn_clear_sel.clicked.connect(self._clear_all_companies)
         bar2.addWidget(self.btn_clear_sel)
 
-        self.btn_mgr = QPushButton("🧾 Gerenciar Empresas")
+        self.btn_mgr = QPushButton("Atualizar Empresas")
         self._style_button(self.btn_mgr, "#8E44AD", "#7D3C98", "#6C3483")
         self.btn_mgr.clicked.connect(self.open_companies_manager)
         bar2.addWidget(self.btn_mgr)
@@ -2208,9 +3241,7 @@ class MainWindow(QMainWindow):
         try:
             if not finished_at:
                 finished_at = datetime.now()
-            reports_dir = Path(self.config.get("reports_path") or self.base_dir)
-            reports_dir.mkdir(parents=True, exist_ok=True)
-            pdf_path = reports_dir / "Relatorio de Certidoes.pdf"
+            pdf_path = resolve_report_output_path(self.config, finished_at)
 
             # A4 em ~300dpi para melhor qualidade
             width, height = 2480, 3508
@@ -2697,14 +3728,8 @@ class MainWindow(QMainWindow):
 
     # ---------- dialogs ----------
     def open_companies_manager(self):
-        dlg = ManageCompaniesDialog(
-            companies=self.companies,
-            save_cb=self._save_companies,
-            refresh_cb=self._reload_company_list,
-            log_cb=self.log_message,
-            parent=self
-        )
-        dlg.exec()
+        self._refresh_companies_from_supabase()
+        self.log_message("🔄 Empresas recarregadas do dashboard.")
 
     def _open_config_dialog(self):
         dlg = ConfigDialog(self.config, self)
@@ -2751,7 +3776,17 @@ class MainWindow(QMainWindow):
                 self.btn_mgr.setEnabled(True)
                 self.lbl_sched_countdown.setText("⏳ Aguardando")
             return
-        self.thread = AutomationThread(selected, self.config, hide_browser=self.chk.isChecked(), parent=self)
+        self._active_job = None
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "processing")
+        self.thread = AutomationThread(
+            selected,
+            self.config,
+            hide_browser=self.chk.isChecked(),
+            supabase_url=self._robot_supabase_url,
+            supabase_anon_key=self._robot_supabase_key,
+            parent=self,
+        )
         self.thread.log.connect(self.log_message)
         self.thread.finished.connect(self.on_automation_finished)
         self.thread.start()
@@ -2793,9 +3828,19 @@ class MainWindow(QMainWindow):
             self._reset_schedule(keep_date=True)
             self.btn_mgr.setEnabled(True)
             return
+        stopped_job = self._active_job
         if self.thread and self.thread.isRunning():
             self.thread.terminate()
             self.thread.wait(2000)
+        if stopped_job and self._robot_supabase_url and self._robot_supabase_key:
+            complete_execution_request(
+                self._robot_supabase_url,
+                self._robot_supabase_key,
+                stopped_job["id"],
+                False,
+                "Execução interrompida manualmente",
+            )
+        self._active_job = None
         self.on_automation_finished({})
         self.log_message("⛔ Automação interrompida manualmente.")
 
@@ -2817,15 +3862,26 @@ class MainWindow(QMainWindow):
                 if pdf_path:
                     self.log_message("📄 Relatório PDF gerado com sucesso:")
                     self.log_message(f"    {pdf_path}")
-                    try:
-                        os.startfile(pdf_path)
-                    except Exception:
-                        pass
         except Exception as e:
             self.log_message(f"⚠️ Não consegui gerar o relatório PDF: {e}")
         # Sincronizar status e atualização no Monday.com
-        if details:
-            self._sync_to_monday(details)
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
+        if self._active_job and self._robot_supabase_url and self._robot_supabase_key:
+            complete_execution_request(
+                self._robot_supabase_url,
+                self._robot_supabase_key,
+                self._active_job["id"],
+                True,
+                None,
+            )
+            self._active_job = None
+
+    def closeEvent(self, event) -> None:
+        event.ignore()
+        self.hide()
+        if not self._tray_icon.icon().isNull():
+            self._tray_icon.show()
 
     def _sync_to_monday(self, details: Dict[str, Dict[str, str]]) -> None:
         """Atualiza a tarefa no Monday: status (Feito/Pendente) e atualização (observação por empresa)."""
@@ -2926,7 +3982,9 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     try:
-        app.setWindowIcon(QIcon(ICO_PATH))
+        app_icon = _load_app_icon()
+        if not app_icon.isNull():
+            app.setWindowIcon(app_icon)
     except Exception:
         pass
     if not ensure_license_valid(app):

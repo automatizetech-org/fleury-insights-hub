@@ -110,12 +110,16 @@ app.get("/api/files/list", (req, res) => {
  * Baixa um arquivo por path direto (para testes, sem JWT).
  */
 app.get("/api/files/download", (req, res) => {
-  const relPath = req.query.path;
-  if (!relPath || typeof relPath !== "string") {
+  const inputPath = req.query.path;
+  if (!inputPath || typeof inputPath !== "string") {
     return res.status(400).json({ error: "Query 'path' é obrigatória" });
   }
-  const fullPath = path.join(BASE_PATH, relPath);
-  if (!path.resolve(fullPath).startsWith(path.resolve(BASE_PATH))) {
+  const baseResolved = path.resolve(BASE_PATH);
+  const normalizedInput = inputPath.trim();
+  const fullPath = path.isAbsolute(normalizedInput)
+    ? path.resolve(normalizedInput)
+    : path.resolve(path.join(BASE_PATH, normalizedInput));
+  if (!fullPath.startsWith(baseResolved)) {
     return res.status(403).json({ error: "Path fora do diretório base" });
   }
   try {
@@ -637,3 +641,5 @@ loadBasePathFromSupabase().then(() => {
     startFiscalWatcher();
   });
 });
+
+

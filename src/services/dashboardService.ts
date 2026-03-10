@@ -98,6 +98,82 @@ export async function getFiscalDocumentsNfeNfc(companyIds: string[] | null) {
   }))
 }
 
+export async function getCertidoesDocuments(companyIds: string[] | null) {
+  let q = supabase
+    .from("sync_events")
+    .select("id, company_id, tipo, payload, created_at")
+    .eq("tipo", "certidao_resultado")
+    .order("created_at", { ascending: false })
+  if (companyIds && companyIds.length > 0) {
+    q = q.in("company_id", companyIds)
+  }
+  const { data, error } = await q
+  if (error) throw error
+  const list = (data ?? []).map((row) => {
+    let payload: Record<string, unknown> = {}
+    try {
+      payload = JSON.parse((row as { payload?: string | null }).payload || "{}")
+    } catch {
+      payload = {}
+    }
+    return {
+      id: row.id,
+      company_id: row.company_id,
+      created_at: row.created_at,
+      tipo: row.tipo,
+      payload,
+    }
+  })
+  const companyIdsList = [...new Set(list.map((d) => d.company_id).filter(Boolean))]
+  if (companyIdsList.length === 0) return []
+  const { data: companies } = await supabase.from("companies").select("id, name, document").in("id", companyIdsList)
+  const names = new Map((companies ?? []).map((c) => [c.id, c.name]))
+  const documents = new Map((companies ?? []).map((c) => [c.id, c.document]))
+  const tipoLabel: Record<string, string> = {
+    federal: "Federal",
+    estadual_go: "Estadual (GO)",
+    fgts: "FGTS",
+  }
+  const latestByCompanyAndType = new Map<string, {
+    id: string
+    company_id: string
+    periodo: string | null
+    status: string | null
+    document_date: string | null
+    tipo_certidao: string
+    file_path: string | null
+    created_at: string
+  }>()
+  for (const d of list) {
+    const payload = d.payload || {}
+    const tipoCertidao = String(payload.tipo_certidao || "").trim()
+    if (!tipoCertidao) continue
+    const key = `${d.company_id}:${tipoCertidao}`
+    const current = latestByCompanyAndType.get(key)
+    const candidate = {
+      id: d.id,
+      company_id: String(d.company_id || ""),
+      periodo: String(payload.periodo || "") || null,
+      status: String(payload.status || "") || null,
+      document_date: String(payload.document_date || payload.data_consulta || "").slice(0, 10) || null,
+      tipo_certidao: tipoCertidao,
+      file_path: String(payload.arquivo_pdf || "") || null,
+      created_at: String(d.created_at || ""),
+    }
+    if (!current || candidate.created_at > current.created_at) {
+      latestByCompanyAndType.set(key, candidate)
+    }
+  }
+  return [...latestByCompanyAndType.values()].map((d) => {
+    return {
+      ...d,
+      empresa: names.get(d.company_id) ?? "",
+      cnpj: documents.get(d.company_id) ?? "",
+      tipo_certidao: tipoLabel[d.tipo_certidao] ?? d.tipo_certidao,
+    }
+  })
+}
+
 /** Resumo fiscal para a visão geral: totais por tipo (NFS, NFE, NFC) com métricas (total, disponíveis, este mês). Opcional: period YYYY-MM para filtrar por período. */
 export async function getFiscalSummary(companyIds: string[] | null, period?: string) {
   let q = supabase.from("fiscal_documents").select("type, file_path, created_at, periodo")

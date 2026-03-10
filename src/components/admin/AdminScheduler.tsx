@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getCompaniesForUser } from "@/services/companiesService"
 import { getRobots, updateRobot } from "@/services/robotsService"
@@ -11,7 +11,7 @@ import {
   pauseScheduleRule,
 } from "@/services/scheduleRulesService"
 import { getPendingOrRunningExecutionRequests, cancelPendingByScheduleRuleId, markRunningAsCancelledByScheduleRuleId } from "@/services/executionRequestsService"
-import { upsertRobotDisplayConfigForRobots } from "@/services/robotDisplayConfigService"
+import { upsertRobotDisplayConfig } from "@/services/robotDisplayConfigService"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -22,6 +22,7 @@ import { format, startOfMonth, endOfMonth, addDays, subDays, startOfDay, isBefor
 import { ptBR } from "date-fns/locale"
 import type { Robot } from "@/services/robotsService"
 import type { ScheduleRule } from "@/services/scheduleRulesService"
+import { getCommonRobotNotesMode, getRobotNotesMode } from "@/lib/robotNotes"
 
 const DEBOUNCE_MS = 800
 
@@ -187,29 +188,45 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     }
   }, [activeRule?.id])
 
-  const firstRobotNotesMode = allRobots ? null : (robots.find((r) => robotIdsOrdered.includes(r.technical_id))?.notes_mode ?? null)
-  const robotIdsForConfig = robotIdsOrdered
+  const selectedRobots = useMemo(
+    () =>
+      allRobots
+        ? robots
+        : robotIdsOrdered
+            .map((id) => robots.find((r) => r.technical_id === id))
+            .filter((r): r is Robot => !!r),
+    [allRobots, robotIdsOrdered, robots]
+  )
+  const commonSelectedRobotNotesMode = useMemo(
+    () => getCommonRobotNotesMode(selectedRobots),
+    [selectedRobots]
+  )
 
   const persistDisplayConfig = useCallback(() => {
-    const robotIdsToUpdate = robotIdsForConfig.length > 0 ? robotIdsForConfig : robots.map((r) => r.technical_id)
-    if (robotIdsToUpdate.length === 0) return
-    upsertRobotDisplayConfigForRobots(robotIdsToUpdate, {
-      companyIds: Array.from(companyIds),
-      notesMode: firstRobotNotesMode ?? undefined,
-    }).catch(() => {})
-  }, [companyIds, firstRobotNotesMode, robotIdsForConfig, robots])
+    const robotsToUpdate = selectedRobots.length > 0 ? selectedRobots : robots
+    if (robotsToUpdate.length === 0) return
+    Promise.all(
+      robotsToUpdate.map((robot) =>
+        upsertRobotDisplayConfig({
+          robotTechnicalId: robot.technical_id,
+          companyIds: Array.from(companyIds),
+          notesMode: getRobotNotesMode(robot) ?? undefined,
+        })
+      )
+    ).catch(() => {})
+  }, [companyIds, selectedRobots, robots])
 
   useEffect(() => {
     const t = setTimeout(persistDisplayConfig, DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [companyIds, firstRobotNotesMode, robotIdsForConfig, persistDisplayConfig])
+  }, [companyIds, selectedRobots, persistDisplayConfig])
 
   const persistScheduleRule = useCallback(() => {
     if (!activeRule?.id || !runDaily || companyIds.size === 0 || (robotIdsOrdered.length === 0 && !allRobots)) return
     const payload = {
       companyIds: Array.from(companyIds),
       robotTechnicalIds: allRobots ? robots.map((r) => r.technical_id) : robotIdsOrdered,
-      notesMode: firstRobotNotesMode ?? undefined,
+      notesMode: commonSelectedRobotNotesMode ?? undefined,
       runAtDate,
       runAtTime: runAtTime.slice(0, 5),
       runDaily: true,
@@ -220,7 +237,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         queryClient.invalidateQueries({ queryKey: ["schedule-rules-active"] })
       })
       .catch(() => {})
-  }, [activeRule?.id, runDaily, runAtDate, runAtTime, companyIds, robotIdsOrdered, allRobots, robots, firstRobotNotesMode, queryClient])
+  }, [activeRule?.id, runDaily, runAtDate, runAtTime, companyIds, robotIdsOrdered, allRobots, robots, commonSelectedRobotNotesMode, queryClient])
 
   useEffect(() => {
     if (!activeRule?.id || !runDaily) return
@@ -312,7 +329,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         const payload = {
           companyIds: Array.from(companyIds),
           robotTechnicalIds: robotIdsOrdered.length > 0 ? robotIdsOrdered : ["all"],
-          notesMode: firstRobotNotesMode ?? undefined,
+          notesMode: commonSelectedRobotNotesMode ?? undefined,
           runAtDate,
           runAtTime: runAtTime.slice(0, 5),
           runDaily: true,
@@ -360,7 +377,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
               robotTechnicalIds: [robot.technical_id],
               periodStart,
               periodEnd,
-              notesMode: robot.notes_mode ?? firstRobotNotesMode ?? undefined,
+              notesMode: getRobotNotesMode(robot) ?? undefined,
               scheduleRuleId: ruleId,
             })
           }
@@ -373,10 +390,15 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         } else {
           toast.success("Agendamento ativado. Execução na data/hora definida e depois a cada 24h.")
         }
-        await upsertRobotDisplayConfigForRobots(robotIdsForConfig, {
-          companyIds: Array.from(companyIds),
-          notesMode: firstRobotNotesMode ?? undefined,
-        })
+        await Promise.all(
+          selectedRobots.map((robot) =>
+            upsertRobotDisplayConfig({
+              robotTechnicalId: robot.technical_id,
+              companyIds: Array.from(companyIds),
+              notesMode: getRobotNotesMode(robot) ?? undefined,
+            })
+          )
+        )
         queryClient.invalidateQueries({ queryKey: ["schedule-rules"] })
         queryClient.invalidateQueries({ queryKey: ["schedule-rules-active"] })
       } else {
@@ -391,13 +413,18 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
             robotTechnicalIds: [robot.technical_id],
             periodStart,
             periodEnd,
-            notesMode: robot.notes_mode ?? firstRobotNotesMode ?? undefined,
+            notesMode: getRobotNotesMode(robot) ?? undefined,
           })
         }
-        await upsertRobotDisplayConfigForRobots(robotIdsForConfig, {
-          companyIds: Array.from(companyIds),
-          notesMode: firstRobotNotesMode ?? undefined,
-        })
+        await Promise.all(
+          selectedRobots.map((robot) =>
+            upsertRobotDisplayConfig({
+              robotTechnicalId: robot.technical_id,
+              companyIds: Array.from(companyIds),
+              notesMode: getRobotNotesMode(robot) ?? undefined,
+            })
+          )
+        )
         queryClient.invalidateQueries({ queryKey: ["execution-requests"] })
         queryClient.invalidateQueries({ queryKey: ["execution-requests-running"] })
         queryClient.invalidateQueries({ queryKey: ["execution-requests-pending-running"] })

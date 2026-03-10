@@ -6,6 +6,16 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[]
 
+export type RobotNotesMode =
+  | "recebidas"
+  | "emitidas"
+  | "both"
+  | "modelo_55"
+  | "modelo_65"
+  | "modelos_55_65"
+
+export type FiscalNotesKind = "nfs" | "nfe_nfc"
+
 export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.1"
@@ -33,24 +43,24 @@ export type Database = {
         Update: { id?: string; parent_id?: string | null; name?: string; slug?: string | null; date_rule?: "year" | "year_month" | "year_month_day" | null; position?: number; created_at?: string; updated_at?: string }
       }
       robots: {
-        Row: { id: string; technical_id: string; display_name: string; status: "active" | "inactive" | "processing"; last_heartbeat_at: string | null; segment_path: string | null; notes_mode: "recebidas" | "emitidas" | "both" | null; date_execution_mode: "competencia" | "interval" | null; initial_period_start: string | null; initial_period_end: string | null; last_period_end: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; technical_id: string; display_name: string; status?: "active" | "inactive" | "processing"; last_heartbeat_at?: string | null; segment_path?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; date_execution_mode?: "competencia" | "interval" | null; initial_period_start?: string | null; initial_period_end?: string | null; last_period_end?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; technical_id?: string; display_name?: string; status?: "active" | "inactive" | "processing"; last_heartbeat_at?: string | null; segment_path?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; date_execution_mode?: "competencia" | "interval" | null; initial_period_start?: string | null; initial_period_end?: string | null; last_period_end?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; technical_id: string; display_name: string; status: "active" | "inactive" | "processing"; last_heartbeat_at: string | null; segment_path: string | null; is_fiscal_notes_robot: boolean; fiscal_notes_kind: FiscalNotesKind | null; notes_mode: RobotNotesMode | null; date_execution_mode: "competencia" | "interval" | null; initial_period_start: string | null; initial_period_end: string | null; last_period_end: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; technical_id: string; display_name: string; status?: "active" | "inactive" | "processing"; last_heartbeat_at?: string | null; segment_path?: string | null; is_fiscal_notes_robot?: boolean; fiscal_notes_kind?: FiscalNotesKind | null; notes_mode?: RobotNotesMode | null; date_execution_mode?: "competencia" | "interval" | null; initial_period_start?: string | null; initial_period_end?: string | null; last_period_end?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; technical_id?: string; display_name?: string; status?: "active" | "inactive" | "processing"; last_heartbeat_at?: string | null; segment_path?: string | null; is_fiscal_notes_robot?: boolean; fiscal_notes_kind?: FiscalNotesKind | null; notes_mode?: RobotNotesMode | null; date_execution_mode?: "competencia" | "interval" | null; initial_period_start?: string | null; initial_period_end?: string | null; last_period_end?: string | null; created_at?: string; updated_at?: string }
       }
       execution_requests: {
-        Row: { id: string; company_ids: string[]; robot_technical_ids: string[]; status: "pending" | "running" | "completed" | "failed"; robot_id: string | null; claimed_at: string | null; completed_at: string | null; error_message: string | null; period_start: string | null; period_end: string | null; notes_mode: "recebidas" | "emitidas" | "both" | null; schedule_rule_id: string | null; created_at: string; created_by: string | null }
-        Insert: { id?: string; company_ids: string[]; robot_technical_ids: string[]; status?: "pending" | "running" | "completed" | "failed"; robot_id?: string | null; claimed_at?: string | null; completed_at?: string | null; error_message?: string | null; period_start?: string | null; period_end?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; schedule_rule_id?: string | null; created_at?: string; created_by?: string | null }
-        Update: { id?: string; company_ids?: string[]; robot_technical_ids?: string[]; status?: "pending" | "running" | "completed" | "failed"; robot_id?: string | null; claimed_at?: string | null; completed_at?: string | null; error_message?: string | null; period_start?: string | null; period_end?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; schedule_rule_id?: string | null; created_at?: string; created_by?: string | null }
+        Row: { id: string; company_ids: string[]; robot_technical_ids: string[]; status: "pending" | "running" | "completed" | "failed"; robot_id: string | null; claimed_at: string | null; completed_at: string | null; error_message: string | null; period_start: string | null; period_end: string | null; notes_mode: RobotNotesMode | null; schedule_rule_id: string | null; created_at: string; created_by: string | null }
+        Insert: { id?: string; company_ids: string[]; robot_technical_ids: string[]; status?: "pending" | "running" | "completed" | "failed"; robot_id?: string | null; claimed_at?: string | null; completed_at?: string | null; error_message?: string | null; period_start?: string | null; period_end?: string | null; notes_mode?: RobotNotesMode | null; schedule_rule_id?: string | null; created_at?: string; created_by?: string | null }
+        Update: { id?: string; company_ids?: string[]; robot_technical_ids?: string[]; status?: "pending" | "running" | "completed" | "failed"; robot_id?: string | null; claimed_at?: string | null; completed_at?: string | null; error_message?: string | null; period_start?: string | null; period_end?: string | null; notes_mode?: RobotNotesMode | null; schedule_rule_id?: string | null; created_at?: string; created_by?: string | null }
       }
       schedule_rules: {
-        Row: { id: string; company_ids: string[]; robot_technical_ids: string[]; notes_mode: "recebidas" | "emitidas" | "both" | null; period_start: string | null; period_end: string | null; run_at_date: string | null; run_at_time: string; run_daily: boolean; status: "active" | "paused" | "completed"; last_run_at: string | null; created_by: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; company_ids: string[]; robot_technical_ids: string[]; notes_mode?: "recebidas" | "emitidas" | "both" | null; period_start?: string | null; period_end?: string | null; run_at_date?: string | null; run_at_time: string; run_daily?: boolean; status?: "active" | "paused" | "completed"; last_run_at?: string | null; created_by?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; company_ids?: string[]; robot_technical_ids?: string[]; notes_mode?: "recebidas" | "emitidas" | "both" | null; period_start?: string | null; period_end?: string | null; run_at_date?: string | null; run_at_time?: string; run_daily?: boolean; status?: "active" | "paused" | "completed"; last_run_at?: string | null; created_by?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; company_ids: string[]; robot_technical_ids: string[]; notes_mode: RobotNotesMode | null; period_start: string | null; period_end: string | null; run_at_date: string | null; run_at_time: string; run_daily: boolean; status: "active" | "paused" | "completed"; last_run_at: string | null; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; company_ids: string[]; robot_technical_ids: string[]; notes_mode?: RobotNotesMode | null; period_start?: string | null; period_end?: string | null; run_at_date?: string | null; run_at_time: string; run_daily?: boolean; status?: "active" | "paused" | "completed"; last_run_at?: string | null; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; company_ids?: string[]; robot_technical_ids?: string[]; notes_mode?: RobotNotesMode | null; period_start?: string | null; period_end?: string | null; run_at_date?: string | null; run_at_time?: string; run_daily?: boolean; status?: "active" | "paused" | "completed"; last_run_at?: string | null; created_by?: string | null; created_at?: string; updated_at?: string }
       }
       robot_display_config: {
-        Row: { robot_technical_id: string; company_ids: string[]; period_start: string | null; period_end: string | null; notes_mode: "recebidas" | "emitidas" | "both" | null; updated_at: string }
-        Insert: { robot_technical_id: string; company_ids?: string[]; period_start?: string | null; period_end?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; updated_at?: string }
-        Update: { robot_technical_id?: string; company_ids?: string[]; period_start?: string | null; period_end?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null; updated_at?: string }
+        Row: { robot_technical_id: string; company_ids: string[]; period_start: string | null; period_end: string | null; notes_mode: RobotNotesMode | null; updated_at: string }
+        Insert: { robot_technical_id: string; company_ids?: string[]; period_start?: string | null; period_end?: string | null; notes_mode?: RobotNotesMode | null; updated_at?: string }
+        Update: { robot_technical_id?: string; company_ids?: string[]; period_start?: string | null; period_end?: string | null; notes_mode?: RobotNotesMode | null; updated_at?: string }
       }
       company_robot_config: {
         Row: { id: string; company_id: string; robot_technical_id: string; enabled: boolean; auth_mode: "password" | "certificate"; nfs_password: string | null; created_at: string; updated_at: string }

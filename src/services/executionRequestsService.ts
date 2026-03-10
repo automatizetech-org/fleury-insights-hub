@@ -1,5 +1,5 @@
 import { supabase } from "./supabaseClient"
-import type { Tables } from "@/types/database"
+import type { RobotNotesMode, Tables } from "@/types/database"
 
 export type ExecutionRequest = Tables<"execution_requests">
 
@@ -8,7 +8,7 @@ export async function createExecutionRequest(params: {
   robotTechnicalIds: string[]
   periodStart?: string | null
   periodEnd?: string | null
-  notesMode?: "recebidas" | "emitidas" | "both" | null
+  notesMode?: RobotNotesMode | null
   scheduleRuleId?: string | null
 }): Promise<ExecutionRequest> {
   const { data: { user } } = await supabase.auth.getUser()

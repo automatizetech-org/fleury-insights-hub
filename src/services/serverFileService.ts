@@ -16,6 +16,14 @@ export function hasServerApi(): boolean {
   return SERVER_API_URL.length > 0;
 }
 
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 /**
  * Baixa o XML de um documento fiscal via API do servidor.
  * O servidor valida o JWT e devolve o arquivo do disco.
@@ -47,11 +55,40 @@ export async function downloadFiscalDocument(documentId: string, suggestedName?:
     disposition?.match(/filename="?([^";]+)"?/)?.[1]?.trim() ||
     suggestedName ||
     `documento-${documentId}.xml`;
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  triggerBlobDownload(blob, filename);
+}
+
+export async function downloadServerFileByPath(filePath: string, suggestedName?: string): Promise<void> {
+  if (!SERVER_API_URL) {
+    throw new Error("SERVER_API_URL não configurada.");
+  }
+  const normalizedPath = String(filePath || "").trim();
+  if (!normalizedPath) {
+    throw new Error("Caminho do arquivo não informado.");
+  }
+  const url = new URL(`${SERVER_API_URL}/api/files/download`);
+  url.searchParams.set("path", normalizedPath);
+  const headers: Record<string, string> = {};
+  if (SERVER_API_URL.toLowerCase().includes("ngrok")) {
+    headers["ngrok-skip-browser-warning"] = "true";
+  }
+  const res = await fetch(url.toString(), {
+    method: "GET",
+    headers,
+  });
+  if (!res.ok) {
+    if (res.status === 404) throw new Error("Arquivo não encontrado no servidor.");
+    if (res.status === 403) throw new Error("Sem permissão para baixar este arquivo.");
+    throw new Error(`Erro ao baixar arquivo: ${res.status}`);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition");
+  const filename =
+    disposition?.match(/filename="?([^";]+)"?/)?.[1]?.trim() ||
+    suggestedName ||
+    normalizedPath.split(/[\\/]/).pop() ||
+    "arquivo.pdf";
+  triggerBlobDownload(blob, filename);
 }
 
 /** Marca o documento fiscal como baixado (atualiza last_downloaded_at para retenção). */
@@ -124,11 +161,7 @@ export async function downloadFiscalDocumentsZip(ids: string[], filenameSuffix?:
   const zipFilename = safeSuffix ? `documentos-fiscais-${safeSuffix}.zip` : "documentos-fiscais.zip";
 
   const blob = await res.blob();
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = zipFilename;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  triggerBlobDownload(blob, zipFilename);
 
   for (const id of idsFiltered) {
     markFiscalDocumentDownloaded(id).catch(() => {});

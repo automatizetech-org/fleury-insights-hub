@@ -3,22 +3,16 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { MiniChart } from "@/components/dashboard/Charts";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { useParams } from "react-router-dom";
-import { FileText, FileDown, CalendarDays, Download, AlertCircle, XCircle, ThumbsUp, Copy, Eye, FileArchive, DollarSign, ListOrdered, Calendar, ChevronLeft, ChevronRight, Medal } from "lucide-react";
+import { FileText, FileDown, CalendarDays, Download, AlertCircle, ThumbsUp, FileArchive, DollarSign, ListOrdered, Calendar, ChevronLeft, ChevronRight, Medal } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
-import { getFiscalDocumentsByType, getFiscalDocumentsNfeNfc, getNfsStatsByDateRange } from "@/services/dashboardService";
-import { downloadFiscalDocument, hasServerApi, markFiscalDocumentDownloaded, downloadFiscalDocumentsZip } from "@/services/serverFileService";
+import { getCertidoesDocuments, getFiscalDocumentsByType, getFiscalDocumentsNfeNfc, getNfsStatsByDateRange } from "@/services/dashboardService";
+import { downloadFiscalDocument, downloadServerFileByPath, hasServerApi, markFiscalDocumentDownloaded, downloadFiscalDocumentsZip } from "@/services/serverFileService";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell } from "recharts";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type ServiceCodeRow = { code: string; description: string; total_value: number };
 
@@ -214,124 +208,93 @@ function buildVolumeMensalDataNfs(
   });
 }
 
-/** Dados mock para gráfico de certidões (totais por situação). */
-const CERTIDOES_CHART_DATA = [
-  { name: "Negativas (sem débito)", value: 10, color: "hsl(160, 84%, 39%)" },
-  { name: "Próximas do vencimento", value: 4, color: "hsl(38, 92%, 50%)" },
-  { name: "Vencidas", value: 2, color: "hsl(0, 72%, 51%)" },
-];
-
-type CertidaoStatus = "negativa" | "proxima_vencimento" | "vencida";
-
-interface CertidaoMock {
-  id: string;
-  empresa: string;
-  tipo: string;
-  dataAtualizacao: string;
-  status: CertidaoStatus;
-  temPdf: boolean;
-  debitos?: string[];
-}
-
-/** Lista mock de certidões (front apenas; integração virá depois). */
-const CERTIDOES_LIST_MOCK: CertidaoMock[] = [
-  { id: "c1", empresa: "Empresa Alpha Ltda", tipo: "Federal", dataAtualizacao: "2025-03-09", status: "negativa", temPdf: true },
-  { id: "c2", empresa: "Empresa Alpha Ltda", tipo: "Estadual (GO)", dataAtualizacao: "2025-03-08", status: "proxima_vencimento", temPdf: true },
-  { id: "c3", empresa: "Empresa Beta S.A.", tipo: "Federal", dataAtualizacao: "2025-03-07", status: "vencida", temPdf: true, debitos: ["INSS – competência 01/2025 – R$ 2.340,00", "FGTS – competência 01/2025 – R$ 1.150,00", "IRRF – competência 02/2025 – R$ 890,50"] },
-  { id: "c4", empresa: "Empresa Beta S.A.", tipo: "Estadual (GO)", dataAtualizacao: "2025-03-05", status: "negativa", temPdf: true },
-  { id: "c5", empresa: "Empresa Gama ME", tipo: "Federal", dataAtualizacao: "2025-03-01", status: "vencida", temPdf: true, debitos: ["PIS – competência 12/2024 – R$ 450,00", "COFINS – competência 12/2024 – R$ 1.220,00"] },
-  { id: "c6", empresa: "Empresa Gama ME", tipo: "Estadual (GO)", dataAtualizacao: "2025-02-28", status: "proxima_vencimento", temPdf: false },
-];
-
 function formatarDataCertidao(iso: string) {
   const d = new Date(iso + "T12:00:00");
   return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-/** Formata débitos para colar no WhatsApp (organizado e legível). */
-function formatarDebitosParaWhatsApp(empresa: string, tipo: string, dataAtualizacao: string, debitos: string[]): string {
-  const dataFmt = formatarDataCertidao(dataAtualizacao);
-  const linhas = [
-    `*Débitos – ${tipo}*`,
-    `${empresa}`,
-    `_Atualizado em: ${dataFmt}_`,
-    "",
-    ...debitos.map((d) => `• ${d}`),
-  ];
-  return linhas.join("\n");
-}
-
-function CertidoesContent() {
+function CertidoesContent({ companyFilter }: { companyFilter: string[] | null }) {
   const [search, setSearch] = useState("");
-  const [debitosAberto, setDebitosAberto] = useState<CertidaoMock | null>(null);
+  const [tipoFiltro, setTipoFiltro] = useState("all");
+  const { data: certidoes = [], isLoading } = useQuery({
+    queryKey: ["certidoes-documents", companyFilter],
+    queryFn: () => getCertidoesDocuments(companyFilter),
+  });
 
   const filteredList = useMemo(() => {
-    if (!search.trim()) return CERTIDOES_LIST_MOCK;
-    const q = search.toLowerCase();
-    return CERTIDOES_LIST_MOCK.filter(
-      (c) =>
-        c.empresa.toLowerCase().includes(q) ||
-        c.tipo.toLowerCase().includes(q)
-    );
-  }, [search]);
+    const q = search.trim().toLowerCase();
+    return certidoes.filter((c) => {
+      const matchesSearch =
+        !q ||
+        String(c.empresa || "").toLowerCase().includes(q) ||
+        String(c.tipo_certidao || "").toLowerCase().includes(q) ||
+        String(c.cnpj || "").toLowerCase().includes(q);
+      const tipoNormalizado = String(c.tipo_certidao || "").toLowerCase();
+      const matchesTipo =
+        tipoFiltro === "all" ||
+        (tipoFiltro === "federal" && tipoNormalizado === "federal") ||
+        (tipoFiltro === "fgts" && tipoNormalizado === "fgts") ||
+        (tipoFiltro === "estadual_go" && tipoNormalizado.includes("estadual"));
+      return matchesSearch && matchesTipo;
+    });
+  }, [certidoes, search, tipoFiltro]);
 
-  const handleCopiarDebitos = (cert: CertidaoMock) => {
-    if (!cert.debitos?.length) return;
-    const texto = formatarDebitosParaWhatsApp(cert.empresa, cert.tipo, cert.dataAtualizacao, cert.debitos);
-    navigator.clipboard.writeText(texto).then(
-      () => toast.success("Débitos copiados! Cole no WhatsApp para enviar ao cliente."),
-      () => toast.error("Não foi possível copiar.")
-    );
-  };
+  const chartData = useMemo(() => {
+    const rows = [
+      { name: "Negativas", value: 0, color: "hsl(214, 84%, 56%)" },
+      { name: "Irregulares", value: 0, color: "hsl(0, 72%, 51%)" },
+    ];
+    for (const cert of certidoes) {
+      const status = String(cert.status || "").toLowerCase();
+      if (status === "regular" || status === "negativa") rows[0].value += 1;
+      else rows[1].value += 1;
+    }
+    return rows;
+  }, [certidoes]);
 
-  const handleBaixarPdf = (cert: CertidaoMock) => {
-    if (!cert.temPdf) {
-      toast.error("PDF ainda não disponível para esta certidão.");
+  const handleBaixarPdf = async (filePath: string | null, tipoCertidao: string) => {
+    if (!filePath) {
+      toast.error("PDF não disponível para esta certidão.");
       return;
     }
-    toast.info("Download do PDF será implementado com a integração das certidões.");
+    if (!hasServerApi()) {
+      toast.error("SERVER_API_URL não configurada para baixar o PDF.");
+      return;
+    }
+    try {
+      await downloadServerFileByPath(filePath, `${String(tipoCertidao || "certidao").toLowerCase()}.pdf`);
+      toast.success("PDF baixado com sucesso.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível baixar o PDF.");
+    }
   };
 
-  const totalProximas = CERTIDOES_CHART_DATA.find((d) => d.name === "Próximas do vencimento")?.value ?? 0;
-  const totalVencidas = CERTIDOES_CHART_DATA.find((d) => d.name === "Vencidas")?.value ?? 0;
-  const totalNegativas = CERTIDOES_CHART_DATA.find((d) => d.name === "Negativas (sem débito)")?.value ?? 0;
+  const statusBadge = (statusRaw: string) => {
+    const status = String(statusRaw || "").toLowerCase();
+    if (status === "regular") return <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">Negativa</span>;
+    if (status === "negativa") return <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">Negativa</span>;
+    if (status === "positiva") return <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-400">Positiva</span>;
+    return <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">Irregular</span>;
+  };
 
   return (
     <div className="space-y-6">
-      {/* Resumo visual: donut + cards */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <GlassCard className="lg:col-span-5 p-6 flex flex-col items-center justify-center">
           <h3 className="text-sm font-semibold font-display mb-2 w-full text-left">Situação das certidões</h3>
-          <p className="text-xs text-muted-foreground mb-4 w-full text-left">Visão geral por situação</p>
+          <p className="text-xs text-muted-foreground mb-4 w-full text-left">Dados reais vindos do robô e do Supabase</p>
           <div className="w-full max-w-[260px] h-[240px] flex items-center justify-center">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart margin={{ top: 36, right: 36, left: 36, bottom: 36 }}>
-                <Pie
-                  data={CERTIDOES_CHART_DATA}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={52}
-                  outerRadius={72}
-                  paddingAngle={2}
-                  dataKey="value"
-                  stroke="transparent"
-                  label={({ value }) => value}
-                  labelLine={false}
-                >
-                  {CERTIDOES_CHART_DATA.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
+                <Pie data={chartData} cx="50%" cy="50%" innerRadius={52} outerRadius={72} paddingAngle={2} dataKey="value" stroke="transparent" label={({ value }) => value} labelLine={false}>
+                  {chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
                 </Pie>
-                <Tooltip
-                  formatter={(value: number) => [value, "certidões"]}
-                  contentStyle={{ borderRadius: "10px", border: "1px solid hsl(var(--border))", fontSize: "12px" }}
-                  labelFormatter={(label) => label}
-                />
+                <Tooltip formatter={(value: number) => [value, "certidões"]} contentStyle={{ borderRadius: "10px", border: "1px solid hsl(var(--border))", fontSize: "12px" }} labelFormatter={(label) => label} />
               </PieChart>
             </ResponsiveContainer>
           </div>
           <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-2 text-xs">
-            {CERTIDOES_CHART_DATA.map((entry) => (
+            {chartData.map((entry) => (
               <span key={entry.name} className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
                 {entry.name}
@@ -339,47 +302,43 @@ function CertidoesContent() {
             ))}
           </div>
         </GlassCard>
-        <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <GlassCard className="p-5 border-l-4 border-l-amber-500 bg-amber-500/5 dark:bg-amber-500/10">
-            <div className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
-              <AlertCircle className="h-5 w-5 shrink-0" />
-              <span className="text-sm font-medium">Próximas do vencimento</span>
-            </div>
-            <p className="text-2xl font-bold mt-2">{totalProximas}</p>
-            <p className="text-xs text-muted-foreground mt-1">Certidões que vencem em breve</p>
+        <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          <GlassCard className="p-5 border-l-4 border-l-sky-500 bg-sky-500/5 dark:bg-sky-500/10">
+            <div className="flex items-center gap-2 text-sky-600 dark:text-sky-500"><FileText className="h-5 w-5 shrink-0" /><span className="text-sm font-medium">Negativas</span></div>
+            <p className="text-2xl font-bold mt-2">{chartData[0]?.value ?? 0}</p>
+            <p className="text-xs text-muted-foreground mt-1">Certidões negativas e regulares</p>
           </GlassCard>
           <GlassCard className="p-5 border-l-4 border-l-red-500 bg-red-500/5 dark:bg-red-500/10">
-            <div className="flex items-center gap-2 text-red-600 dark:text-red-500">
-              <XCircle className="h-5 w-5 shrink-0" />
-              <span className="text-sm font-medium">Vencidas</span>
-            </div>
-            <p className="text-2xl font-bold mt-2">{totalVencidas}</p>
-            <p className="text-xs text-muted-foreground mt-1">Requerem renovação</p>
-          </GlassCard>
-          <GlassCard className="p-5 border-l-4 border-l-emerald-500 bg-emerald-500/5 dark:bg-emerald-500/10">
-            <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-500">
-              <ThumbsUp className="h-5 w-5 shrink-0" />
-              <span className="text-sm font-medium">Negativas</span>
-            </div>
-            <p className="text-2xl font-bold mt-2">{totalNegativas}</p>
-            <p className="text-xs text-muted-foreground mt-1">Sem débito (em dia)</p>
+            <div className="flex items-center gap-2 text-red-600 dark:text-red-500"><AlertCircle className="h-5 w-5 shrink-0" /><span className="text-sm font-medium">Irregulares</span></div>
+            <p className="text-2xl font-bold mt-2">{chartData[1]?.value ?? 0}</p>
+            <p className="text-xs text-muted-foreground mt-1">Positivas ou com irregularidade</p>
           </GlassCard>
         </div>
       </div>
 
-      {/* Lista de certidões */}
       <GlassCard className="overflow-hidden">
         <div className="p-3 sm:p-4 border-b border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <h3 className="text-sm font-semibold font-display">Certidões</h3>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por empresa ou tipo..."
-            className="rounded-lg border border-border bg-background px-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-full min-w-0 sm:w-48 sm:max-w-[16rem]"
-          />
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            <Select value={tipoFiltro} onValueChange={setTipoFiltro}>
+              <SelectTrigger className="h-auto w-full rounded-lg border-border bg-background px-3 py-2 text-xs focus:ring-1 focus:ring-ring focus:ring-offset-0 sm:w-[180px] sm:py-1.5">
+                <SelectValue placeholder="Filtrar tipo" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas</SelectItem>
+                <SelectItem value="federal">Federal</SelectItem>
+                <SelectItem value="fgts">FGTS</SelectItem>
+                <SelectItem value="estadual_go">Estadual (GO)</SelectItem>
+              </SelectContent>
+            </Select>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por empresa, CNPJ ou tipo..." className="rounded-lg border border-border bg-background px-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-full min-w-0 sm:w-64 sm:max-w-[18rem]" />
+          </div>
         </div>
         <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
-          {filteredList.length === 0 ? (
+          {isLoading ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">Carregando certidões...</div>
+          ) : filteredList.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhuma certidão encontrada.</div>
           ) : (
             <table className="w-full text-xs">
@@ -387,7 +346,8 @@ function CertidoesContent() {
                 <tr className="border-b border-border bg-muted/50">
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Empresa</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Tipo</th>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Data atualização</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Competência</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Atualização</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Situação</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Ações</th>
                 </tr>
@@ -395,44 +355,19 @@ function CertidoesContent() {
               <tbody>
                 {filteredList.map((cert) => (
                   <tr key={cert.id} className="border-b border-border hover:bg-muted/30 transition-colors">
-                    <td className="px-4 py-3 font-medium">{cert.empresa}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{cert.tipo}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{formatarDataCertidao(cert.dataAtualizacao)}</td>
                     <td className="px-4 py-3">
-                      {cert.status === "negativa" && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">Negativa</span>
-                      )}
-                      {cert.status === "proxima_vencimento" && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">Próxima do vencimento</span>
-                      )}
-                      {cert.status === "vencida" && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-400">Vencida</span>
-                      )}
+                      <div className="font-medium">{cert.empresa}</div>
+                      <div className="text-muted-foreground">{cert.cnpj || "—"}</div>
                     </td>
+                    <td className="px-4 py-3 text-muted-foreground">{cert.tipo_certidao}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{cert.periodo || "—"}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{cert.document_date ? formatarDataCertidao(cert.document_date) : "—"}</td>
+                    <td className="px-4 py-3">{statusBadge(cert.status)}</td>
                     <td className="px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-xs gap-1"
-                          onClick={() => handleBaixarPdf(cert)}
-                          disabled={!cert.temPdf}
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          PDF
-                        </Button>
-                        {cert.status !== "negativa" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-xs gap-1"
-                            onClick={() => setDebitosAberto(cert)}
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                            Ver débitos
-                          </Button>
-                        )}
-                      </div>
+                      <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => handleBaixarPdf(cert.file_path, cert.tipo_certidao)} disabled={!cert.file_path}>
+                        <Download className="h-3.5 w-3.5" />
+                        PDF
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -441,46 +376,6 @@ function CertidoesContent() {
           )}
         </div>
       </GlassCard>
-
-      {/* Modal débitos */}
-      <Dialog open={!!debitosAberto} onOpenChange={(open) => !open && setDebitosAberto(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Débitos identificados</DialogTitle>
-            <DialogDescription>
-              {debitosAberto && `${debitosAberto.empresa} – ${debitosAberto.tipo}. Atualizado em ${formatarDataCertidao(debitosAberto.dataAtualizacao)}.`}
-            </DialogDescription>
-          </DialogHeader>
-          {debitosAberto && (
-            <div className="space-y-3">
-              {debitosAberto.debitos && debitosAberto.debitos.length > 0 ? (
-                <>
-                  <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1.5 max-h-48 overflow-y-auto pr-2">
-                    {debitosAberto.debitos.map((d, i) => (
-                      <li key={i}>{d}</li>
-                    ))}
-                  </ul>
-                  <Button
-                    className="w-full gap-2"
-                    onClick={() => {
-                      handleCopiarDebitos(debitosAberto);
-                      setDebitosAberto(null);
-                    }}
-                  >
-                    <Copy className="h-4 w-4" />
-                    Copiar para WhatsApp
-                  </Button>
-                  <p className="text-[10px] text-muted-foreground">
-                    O texto será copiado formatado (negrito, itálico e marcadores) para colar no WhatsApp e enviar ao cliente.
-                  </p>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">Nenhum débito informado para esta certidão.</p>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -744,7 +639,7 @@ export default function FiscalDetailPage() {
 
       {isObrigacao ? (
         type === "certidoes" ? (
-          <CertidoesContent />
+          <CertidoesContent companyFilter={companyFilter} />
         ) : (
           <GlassCard className="p-8">
             <p className="text-sm text-muted-foreground">Conteúdo específico desta obrigação será exibido aqui.</p>
@@ -1048,3 +943,7 @@ export default function FiscalDetailPage() {
     </div>
   );
 }
+
+
+
+

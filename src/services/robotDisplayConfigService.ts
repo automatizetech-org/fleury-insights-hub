@@ -1,5 +1,5 @@
 import { supabase } from "./supabaseClient"
-import type { Tables } from "@/types/database"
+import type { RobotNotesMode, Tables } from "@/types/database"
 
 export type RobotDisplayConfig = Tables<"robot_display_config">
 
@@ -22,7 +22,7 @@ export async function upsertRobotDisplayConfig(params: {
   companyIds: string[]
   periodStart?: string | null
   periodEnd?: string | null
-  notesMode?: "recebidas" | "emitidas" | "both" | null
+  notesMode?: RobotNotesMode | null
 }): Promise<RobotDisplayConfig> {
   const { data, error } = await supabase
     .from("robot_display_config")
@@ -49,7 +49,7 @@ export async function upsertRobotDisplayConfigForRobots(
     companyIds: string[]
     periodStart?: string | null
     periodEnd?: string | null
-    notesMode?: "recebidas" | "emitidas" | "both" | null
+    notesMode?: RobotNotesMode | null
   }
 ): Promise<void> {
   for (const id of robotTechnicalIds) {
