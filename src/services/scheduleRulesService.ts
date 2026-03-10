@@ -27,8 +27,7 @@ export async function createScheduleRule(params: {
   companyIds: string[]
   robotTechnicalIds: string[]
   notesMode?: "recebidas" | "emitidas" | "both" | null
-  periodStart: string
-  periodEnd: string
+  runAtDate: string
   runAtTime: string
   runDaily: boolean
 }): Promise<ScheduleRule> {
@@ -39,8 +38,9 @@ export async function createScheduleRule(params: {
       company_ids: params.companyIds,
       robot_technical_ids: params.robotTechnicalIds,
       notes_mode: params.notesMode ?? null,
-      period_start: params.periodStart,
-      period_end: params.periodEnd,
+      period_start: null,
+      period_end: null,
+      run_at_date: params.runAtDate,
       run_at_time: params.runAtTime,
       run_daily: params.runDaily,
       status: "active",
@@ -58,24 +58,27 @@ export async function updateScheduleRule(
     companyIds: string[]
     robotTechnicalIds: string[]
     notesMode?: "recebidas" | "emitidas" | "both" | null
-    periodStart: string
-    periodEnd: string
+    runAtDate: string
     runAtTime: string
     runDaily: boolean
+    lastRunAt?: string | null
   }
 ): Promise<ScheduleRule> {
+  const update: Record<string, unknown> = {
+    company_ids: params.companyIds,
+    robot_technical_ids: params.robotTechnicalIds,
+    notes_mode: params.notesMode ?? null,
+    period_start: null,
+    period_end: null,
+    run_at_date: params.runAtDate,
+    run_at_time: params.runAtTime,
+    run_daily: params.runDaily,
+    status: "active",
+    last_run_at: params.lastRunAt !== undefined ? params.lastRunAt : null,
+  }
   const { data, error } = await supabase
     .from("schedule_rules")
-    .update({
-      company_ids: params.companyIds,
-      robot_technical_ids: params.robotTechnicalIds,
-      notes_mode: params.notesMode ?? null,
-      period_start: params.periodStart,
-      period_end: params.periodEnd,
-      run_at_time: params.runAtTime,
-      run_daily: params.runDaily,
-      status: "active",
-    })
+    .update(update)
     .eq("id", id)
     .select()
     .single()
@@ -101,6 +104,7 @@ export async function updateScheduleRuleStatus(
   return data as ScheduleRule
 }
 
+/** Pausa a regra e zera last_run_at para que, ao reativar, a próxima execução seja na data/hora configurada. */
 export async function pauseScheduleRule(id: string): Promise<ScheduleRule> {
   return updateScheduleRuleStatus(id, "paused")
 }

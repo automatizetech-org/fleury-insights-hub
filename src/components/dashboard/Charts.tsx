@@ -14,9 +14,20 @@ interface MiniChartProps {
   type?: "area" | "bar";
   color?: string;
   height?: number;
+  /** Rótulo da métrica no tooltip (ex.: "Notas" em vez de "Value") */
+  valueLabel?: string;
 }
 
-export function MiniChart({ data, type = "area", color = CHART_COLORS[0], height = 200 }: MiniChartProps) {
+export function MiniChart({ data, type = "area", color = CHART_COLORS[0], height = 200, valueLabel }: MiniChartProps) {
+  const tooltipFormatter = valueLabel ? (value: number) => [value, valueLabel] : undefined;
+  const tooltipStyle = {
+    background: "hsl(var(--background))",
+    color: "hsl(var(--foreground))",
+    border: "1px solid hsl(var(--border))",
+    borderRadius: "8px",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+    fontSize: "12px",
+  };
   if (type === "bar") {
     return (
       <ResponsiveContainer width="100%" height={height}>
@@ -25,13 +36,8 @@ export function MiniChart({ data, type = "area", color = CHART_COLORS[0], height
           <XAxis dataKey="name" tick={{ fontSize: 11, fill: "hsl(220, 10%, 46%)" }} axisLine={false} tickLine={false} />
           <YAxis tick={{ fontSize: 11, fill: "hsl(220, 10%, 46%)" }} axisLine={false} tickLine={false} />
           <Tooltip
-            contentStyle={{
-              background: "hsl(0, 0%, 100%)",
-              border: "1px solid hsl(220, 15%, 90%)",
-              borderRadius: "8px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-              fontSize: "12px",
-            }}
+            contentStyle={tooltipStyle}
+            formatter={tooltipFormatter}
           />
           <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} />
         </BarChart>
@@ -52,13 +58,8 @@ export function MiniChart({ data, type = "area", color = CHART_COLORS[0], height
         <XAxis dataKey="name" tick={{ fontSize: 11, fill: "hsl(220, 10%, 46%)" }} axisLine={false} tickLine={false} />
         <YAxis tick={{ fontSize: 11, fill: "hsl(220, 10%, 46%)" }} axisLine={false} tickLine={false} />
         <Tooltip
-          contentStyle={{
-            background: "hsl(0, 0%, 100%)",
-            border: "1px solid hsl(220, 15%, 90%)",
-            borderRadius: "8px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-            fontSize: "12px",
-          }}
+          contentStyle={tooltipStyle}
+          formatter={tooltipFormatter}
         />
         <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2} fillOpacity={1} fill="url(#colorValue)" />
       </AreaChart>
@@ -72,6 +73,14 @@ interface DonutChartProps {
 }
 
 export function DonutChart({ data, height = 200 }: DonutChartProps) {
+  const tooltipStyle = {
+    background: "hsl(var(--background))",
+    color: "hsl(var(--foreground))",
+    border: "1px solid hsl(var(--border))",
+    borderRadius: "8px",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+    fontSize: "12px",
+  };
   return (
     <ResponsiveContainer width="100%" height={height}>
       <PieChart>
@@ -90,13 +99,7 @@ export function DonutChart({ data, height = 200 }: DonutChartProps) {
           ))}
         </Pie>
         <Tooltip
-          contentStyle={{
-            background: "hsl(0, 0%, 100%)",
-            border: "1px solid hsl(220, 15%, 90%)",
-            borderRadius: "8px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-            fontSize: "12px",
-          }}
+          contentStyle={tooltipStyle}
         />
       </PieChart>
     </ResponsiveContainer>

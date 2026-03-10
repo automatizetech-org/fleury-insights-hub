@@ -2,6 +2,13 @@ import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getRobots, updateRobot } from "@/services/robotsService"
 import type { Robot } from "@/services/robotsService"
+import {
+  getFolderStructureFlat,
+  buildFolderTree,
+} from "@/services/folderStructureService"
+import type { FolderStructureNodeTree } from "@/types/folderStructure"
+import { pathSegmentsToNode } from "@/types/folderStructure"
+import type { FolderStructureNodeRow } from "@/types/folderStructure"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,7 +20,12 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Bot, Pencil, Loader2, Circle } from "lucide-react"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import { Bot, Pencil, Loader2, Circle, Folder, FolderOpen, ChevronRight } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -44,12 +56,83 @@ function statusClass(s: Robot["status"]): string {
   }
 }
 
+function DepartmentTreeItem({
+  node,
+  depth,
+  flatNodes,
+  selectedPath,
+  onSelect,
+}: {
+  node: FolderStructureNodeTree
+  depth: number
+  flatNodes: FolderStructureNodeRow[]
+  selectedPath: string
+  onSelect: (path: string) => void
+}) {
+  const [open, setOpen] = useState(depth < 2)
+  const hasChildren = node.children.length > 0
+  const path = pathSegmentsToNode(flatNodes, node.id).join("/")
+  const isSelected = path === selectedPath
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div className="flex items-center gap-1 py-0.5 rounded group" style={{ paddingLeft: `${depth * 14}px` }}>
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="flex items-center gap-1 min-w-0 flex-1 text-left hover:bg-muted/50 rounded px-1 -mx-1 py-0.5"
+          >
+            {hasChildren ? (
+              <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+            ) : (
+              <span className="w-3.5 shrink-0" />
+            )}
+            {hasChildren ? (
+              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            ) : (
+              <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <span className={`text-xs truncate ${isSelected ? "font-semibold text-primary" : ""}`}>{node.name}</span>
+          </button>
+        </CollapsibleTrigger>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 text-[10px] shrink-0"
+          onClick={(e) => {
+            e.stopPropagation()
+            onSelect(path)
+          }}
+        >
+          Selecionar
+        </Button>
+      </div>
+      <CollapsibleContent>
+        {node.children.map((child) => (
+          <DepartmentTreeItem
+            key={child.id}
+            node={child}
+            depth={depth + 1}
+            flatNodes={flatNodes}
+            selectedPath={selectedPath}
+            onSelect={onSelect}
+          />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
 export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState<Robot | null>(null)
   const [displayName, setDisplayName] = useState("")
   const [segmentPath, setSegmentPath] = useState("")
   const [notesMode, setNotesMode] = useState<"recebidas" | "emitidas" | "both">("recebidas")
+  const [dateExecutionMode, setDateExecutionMode] = useState<"competencia" | "interval">("interval")
+  const [initialPeriodStart, setInitialPeriodStart] = useState("")
+  const [initialPeriodEnd, setInitialPeriodEnd] = useState("")
   const [saving, setSaving] = useState(false)
 
   const { data: robots = [], isLoading } = useQuery({
@@ -57,6 +140,12 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     queryFn: getRobots,
     refetchOnWindowFocus: true,
   })
+
+  const { data: flatNodes = [] } = useQuery({
+    queryKey: ["folder-structure-flat"],
+    queryFn: getFolderStructureFlat,
+  })
+  const folderTree = flatNodes.length > 0 ? buildFolderTree(flatNodes) : []
 
   const handleRename = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -67,6 +156,9 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         display_name: displayName.trim(),
         segment_path: segmentPath.trim() || null,
         notes_mode: notesMode,
+        date_execution_mode: dateExecutionMode,
+        initial_period_start: dateExecutionMode === "interval" && initialPeriodStart ? initialPeriodStart : null,
+        initial_period_end: dateExecutionMode === "interval" && initialPeriodEnd ? initialPeriodEnd : null,
       })
       queryClient.invalidateQueries({ queryKey: ["admin-robots"] })
       setEditing(null)
@@ -83,6 +175,9 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     setDisplayName(r.display_name)
     setSegmentPath(r.segment_path ?? "")
     setNotesMode((r.notes_mode === "emitidas" || r.notes_mode === "both" ? r.notes_mode : "recebidas") as "recebidas" | "emitidas" | "both")
+    setDateExecutionMode((r.date_execution_mode === "competencia" ? "competencia" : "interval") as "competencia" | "interval")
+    setInitialPeriodStart(r.initial_period_start ?? "")
+    setInitialPeriodEnd(r.initial_period_end ?? "")
   }
 
   return (
@@ -91,7 +186,7 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         <div className="p-4 border-b border-border">
           <h3 className="text-sm font-semibold font-display">Robôs vinculados</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Renomeie apenas o nome de exibição.
+            Nome de exibição, departamento (estrutura de pastas) e modo de execução de datas.
           </p>
         </div>
         <div className="divide-y divide-border">
@@ -117,6 +212,9 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{r.display_name}</p>
                     <p className="text-[10px] text-muted-foreground font-mono truncate">{r.technical_id}</p>
+                    {r.segment_path && (
+                      <p className="text-[10px] text-muted-foreground truncate">Departamento: {r.segment_path}</p>
+                    )}
                     {r.status === "inactive" && r.last_heartbeat_at && (
                       <p className="text-[10px] text-muted-foreground mt-0.5">
                         Última vez ativo: {format(new Date(r.last_heartbeat_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
@@ -136,7 +234,7 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                       size="icon"
                       className="h-8 w-8"
                       onClick={() => openRename(r)}
-                      aria-label="Renomear"
+                      aria-label="Editar"
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
@@ -149,7 +247,7 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       </GlassCard>
 
       <Dialog open={!!editing} onOpenChange={(open) => !open && !saving && setEditing(null)}>
-        <DialogContent>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar robô</DialogTitle>
           </DialogHeader>
@@ -168,17 +266,71 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
               />
             </div>
             <div className="space-y-2">
-              <Label>Departamento (caminho na estrutura)</Label>
-              <Input
-                value={segmentPath}
-                onChange={(e) => setSegmentPath(e.target.value)}
-                placeholder="Ex.: FISCAL/NFS"
-                disabled={saving}
-              />
+              <Label>Departamento</Label>
               <p className="text-[10px] text-muted-foreground">
-                Deve corresponder à estrutura de pastas do painel. Relatórios e arquivos usam essa pasta como base.
+                Selecione na estrutura de pastas onde os arquivos do robô serão salvos (ex.: FISCAL / NFS).
+              </p>
+              <div className="rounded border border-input bg-muted/20 p-2 max-h-48 overflow-y-auto">
+                {folderTree.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Nenhuma pasta na estrutura. Configure em Estrutura de pastas.</p>
+                ) : (
+                  folderTree.map((node) => (
+                    <DepartmentTreeItem
+                      key={node.id}
+                      node={node}
+                      depth={0}
+                      flatNodes={flatNodes}
+                      selectedPath={segmentPath}
+                      onSelect={setSegmentPath}
+                    />
+                  ))
+                )}
+              </div>
+              {segmentPath && (
+                <p className="text-xs text-primary font-medium">Selecionado: {segmentPath}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Modo de execução de datas</Label>
+              <select
+                value={dateExecutionMode}
+                onChange={(e) => setDateExecutionMode(e.target.value as "competencia" | "interval")}
+                disabled={saving}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+              >
+                <option value="competencia">Por competência</option>
+                <option value="interval">Por intervalo de datas</option>
+              </select>
+              <p className="text-[10px] text-muted-foreground">
+                {dateExecutionMode === "competencia"
+                  ? "Executa para uma competência mensal (ex.: 03/2026)."
+                  : "Primeira execução usa o intervalo abaixo; depois o sistema usa apenas o dia anterior (incremental)."}
               </p>
             </div>
+            {dateExecutionMode === "interval" && (
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[10px]">Data inicial (primeiro intervalo)</Label>
+                  <input
+                    type="date"
+                    value={initialPeriodStart}
+                    onChange={(e) => setInitialPeriodStart(e.target.value)}
+                    disabled={saving}
+                    className="w-full rounded border border-input bg-background px-2 py-1.5 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px]">Data final (primeiro intervalo)</Label>
+                  <input
+                    type="date"
+                    value={initialPeriodEnd}
+                    onChange={(e) => setInitialPeriodEnd(e.target.value)}
+                    disabled={saving}
+                    className="w-full rounded border border-input bg-background px-2 py-1.5 text-xs"
+                  />
+                </div>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Modo de notas</Label>
               <select
@@ -192,7 +344,7 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                 <option value="both">Emitidas + Recebidas</option>
               </select>
               <p className="text-[10px] text-muted-foreground">
-                Define se o robô baixa recebidas, emitidas ou ambas ao rodar (pode ser sobrescrito pela execução).
+                Define se o robô baixa recebidas, emitidas ou ambas ao rodar.
               </p>
             </div>
             <DialogFooter>

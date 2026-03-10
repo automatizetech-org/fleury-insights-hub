@@ -9,19 +9,22 @@ export async function createExecutionRequest(params: {
   periodStart?: string | null
   periodEnd?: string | null
   notesMode?: "recebidas" | "emitidas" | "both" | null
+  scheduleRuleId?: string | null
 }): Promise<ExecutionRequest> {
   const { data: { user } } = await supabase.auth.getUser()
+  const row: Record<string, unknown> = {
+    company_ids: params.companyIds,
+    robot_technical_ids: params.robotTechnicalIds,
+    period_start: params.periodStart ?? null,
+    period_end: params.periodEnd ?? null,
+    notes_mode: params.notesMode ?? null,
+    status: "pending",
+    created_by: user?.id ?? null,
+  }
+  if (params.scheduleRuleId != null) row.schedule_rule_id = params.scheduleRuleId
   const { data, error } = await supabase
     .from("execution_requests")
-    .insert({
-      company_ids: params.companyIds,
-      robot_technical_ids: params.robotTechnicalIds,
-      period_start: params.periodStart ?? null,
-      period_end: params.periodEnd ?? null,
-      notes_mode: params.notesMode ?? null,
-      status: "pending",
-      created_by: user?.id ?? null,
-    })
+    .insert(row)
     .select()
     .single()
   if (error) throw error
@@ -50,4 +53,39 @@ export async function getRunningExecutionRequests(scheduleRuleId?: string | null
   const { data, error } = await q
   if (error) throw error
   return (data ?? []) as ExecutionRequest[]
+}
+
+/** Pending ou running da regra: usado para esconder o contador até todos os robôs terminarem. */
+export async function getPendingOrRunningExecutionRequests(scheduleRuleId: string | null): Promise<ExecutionRequest[]> {
+  if (!scheduleRuleId) return []
+  const { data, error } = await supabase
+    .from("execution_requests")
+    .select("*")
+    .eq("schedule_rule_id", scheduleRuleId)
+    .in("status", ["pending", "running"])
+  if (error) throw error
+  return (data ?? []) as ExecutionRequest[]
+}
+
+/** Cancela (remove) todos os jobs pendentes da regra de agendamento. Usado ao parar o agendamento. */
+export async function cancelPendingByScheduleRuleId(scheduleRuleId: string): Promise<void> {
+  const { error } = await supabase
+    .from("execution_requests")
+    .delete()
+    .eq("schedule_rule_id", scheduleRuleId)
+    .eq("status", "pending")
+  if (error) throw error
+}
+
+/** Marca como falha os jobs em execução da regra (para o painel sair de "Executando agora" ao parar). */
+export async function markRunningAsCancelledByScheduleRuleId(scheduleRuleId: string): Promise<void> {
+  const { error } = await supabase
+    .from("execution_requests")
+    .update({
+      status: "failed",
+      error_message: "Cancelado ao parar agendamento",
+    })
+    .eq("schedule_rule_id", scheduleRuleId)
+    .eq("status", "running")
+  if (error) throw error
 }

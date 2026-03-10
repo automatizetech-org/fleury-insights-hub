@@ -501,6 +501,8 @@ def _parse_brl_decimal(text: str) -> Optional[Decimal]:
 def extract_nfse_value(xml_path: Path) -> Optional[float]:
     """
     Extrai o valor de servicos de uma NFS-e, priorizando tags conhecidas.
+    Considera texto do elemento e atributos (ex.: ValorTotal="123,45").
+    Fallback: coleta qualquer tag com 'valor'/'total'/'liq' e retorna o maior valor (evita impostos).
     Retorna float ou None se nao conseguir ler.
     """
     try:
@@ -514,6 +516,16 @@ def extract_nfse_value(xml_path: Path) -> Optional[float]:
         if "}" in tag:
             tag = tag.split("}", 1)[1]
         return tag
+
+    def collect_numeric_candidates(el: ET.Element, tag: str) -> List[Optional[Decimal]]:
+        out: List[Optional[Decimal]] = []
+        txt = (el.text or "").strip()
+        if txt:
+            out.append(_parse_brl_decimal(txt))
+        for _attr, attr_val in el.attrib.items():
+            if attr_val and isinstance(attr_val, str):
+                out.append(_parse_brl_decimal(attr_val.strip()))
+        return out
 
     priority_order = [
         "valorservicos",
@@ -536,42 +548,49 @@ def extract_nfse_value(xml_path: Path) -> Optional[float]:
         "vservico",
         "vserv",
         "vnf",
+        "valorliquido",
+        "valorliquidonota",
+        "vlrtotal",
+        "vlrservico",
+        "vlrservicos",
     ]
     priority_index = {name: idx for idx, name in enumerate(priority_order)}
 
     best_val: Optional[Decimal] = None
     best_score = -1
+    fallback_vals: List[Decimal] = []
 
     for el in root.iter():
-        txt = (el.text or "").strip()
-        if not txt:
-            continue
-        val = _parse_brl_decimal(txt)
-        if val is None:
-            continue
         tag = tag_clean(el.tag)
+        for val in collect_numeric_candidates(el, tag):
+            if val is None:
+                continue
+            if val <= 0:
+                continue
+            score = -1
+            if tag in priority_index:
+                score = 100 - priority_index[tag]
+            elif any(kw in tag for kw in NFSE_VALUE_TAGS):
+                score = 80
+            else:
+                if "valor" in tag and ("serv" in tag or "liq" in tag or "total" in tag or "nfse" in tag):
+                    score = 60
+                elif "valor" in tag or "total" in tag:
+                    score = 50
+                elif "serv" in tag or "vliq" in tag or "vserv" in tag:
+                    score = 40
+            if score >= 0:
+                if score > best_score or (score == best_score and val > (best_val or Decimal("0"))):
+                    best_score = score
+                    best_val = val
+            if score >= 0 or "valor" in tag or "total" in tag or "liq" in tag:
+                fallback_vals.append(val)
 
-        score = -1
-        if tag in priority_index:
-            score = 100 - priority_index[tag]  # prefer ordem de prioridade
-        elif any(kw in tag for kw in NFSE_VALUE_TAGS):
-            score = 80
-        else:
-            if "valor" in tag and "serv" in tag:
-                score = 60
-            elif "valor" in tag:
-                score = 50
-            elif "serv" in tag:
-                score = 40
-
-        if score < 0:
-            continue
-
-        if score > best_score or (score == best_score and val > (best_val or Decimal("0"))):
-            best_score = score
-            best_val = val
-
-    return float(best_val) if best_val is not None else None
+    if best_val is not None:
+        return float(best_val)
+    if fallback_vals:
+        return float(max(fallback_vals))
+    return None
 
 
 def _find_local_text(root: ET.Element, names: Tuple[str, ...]) -> Optional[str]:
@@ -1445,21 +1464,46 @@ def update_robot_status(
         pass
 
 
+def _get_active_schedule_rule_ids(
+    client: Any,
+) -> Optional[list]:
+    """Retorna lista de ids de schedule_rules ativas (status=active, run_daily=true). None em erro."""
+    try:
+        r = (
+            client.table("schedule_rules")
+            .select("id")
+            .eq("status", "active")
+            .eq("run_daily", True)
+            .execute()
+        )
+        rows = getattr(r, "data", None) or []
+        return [row["id"] for row in rows if row.get("id")]
+    except Exception:
+        return None
+
+
 def claim_execution_request(
     supabase_url: str,
     supabase_anon_key: str,
     robot_id: str,
     log_callback: Optional[Callable[[str], None]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Busca um pending compatível com este robô e marca como running; retorna o job ou None."""
+    """Busca um pending compatível com este robô e marca como running; retorna o job ou None.
+    Considera jobs de regras ativas (schedule_rule_id na lista de regras active) ou manuais (schedule_rule_id null).
+    Se não conseguir ler as regras ativas (ex.: RLS retorna vazio), ainda assim permite pegar jobs agendados
+    para o robô não ficar parado."""
     try:
         client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        active_rule_ids = _get_active_schedule_rule_ids(client)
         r = client.table("execution_requests").select("*").eq("status", "pending").order("created_at").limit(10).execute()
         rows = getattr(r, "data", None) or []
         for row in rows:
+            schedule_rule_id = row.get("schedule_rule_id")
+            if schedule_rule_id is not None and active_rule_ids is not None and len(active_rule_ids) > 0:
+                if schedule_rule_id not in active_rule_ids:
+                    continue
             tech_ids = row.get("robot_technical_ids") or []
             if "all" in tech_ids or ROBOT_TECHNICAL_ID in tech_ids:
-                # supabase-py v2: update().eq().eq() não tem .select(); executamos e retornamos o row que já temos
                 client.table("execution_requests").update({
                     "status": "running",
                     "robot_id": robot_id,
@@ -1487,6 +1531,104 @@ def complete_execution_request(
         }).eq("id", request_id).execute()
     except Exception:
         pass
+
+
+def _service_codes_ranking(section: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Retorna lista de códigos de serviço da seção (emitidas ou recebidas) ordenada por total_value desc."""
+    items = (section or {}).get("service_codes") or []
+    result: List[Dict[str, Any]] = []
+    for item in items:
+        code = str(item.get("code", "")).strip()
+        desc = str(item.get("description", "")).strip()
+        try:
+            val = float(item.get("total_value") or 0)
+        except (TypeError, ValueError):
+            val = 0.0
+        result.append({"code": code, "description": desc, "total_value": round(val, 2)})
+    result.sort(key=lambda it: (-(it["total_value"] or 0), str(it.get("code", "")), str(it.get("description", ""))))
+    return result
+
+
+def _merge_service_codes_for_stats(emitidas: Dict[str, Any], recebidas: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Junta service_codes de emitidas e recebidas, somando total_value por (code, description)."""
+    index: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for section in (emitidas or {}, recebidas or {}):
+        for item in section.get("service_codes") or []:
+            code = str(item.get("code", "")).strip()
+            desc = str(item.get("description", "")).strip()
+            key = (code, desc)
+            if key not in index:
+                index[key] = {"code": code, "description": desc, "total_value": 0.0}
+            try:
+                index[key]["total_value"] += float(item.get("total_value") or 0)
+            except (TypeError, ValueError):
+                pass
+    result = list(index.values())
+    result.sort(key=lambda it: (only_digits(str(it.get("code", "")).zfill(6)), str(it.get("description", ""))))
+    return result
+
+
+def upsert_nfs_stats(
+    supabase_url: str,
+    supabase_anon_key: str,
+    job: Dict[str, Any],
+    summary: Dict[str, Any],
+) -> None:
+    """Envia totais e ranking de códigos de serviço NFS para o Supabase (nfs_stats)."""
+    company_ids = job.get("company_ids") or []
+    companies_summary = summary.get("companies") or []
+    period_start_raw = job.get("period_start")
+    if period_start_raw is None:
+        return
+    if hasattr(period_start_raw, "isoformat"):
+        period_start = period_start_raw.isoformat()[:10]
+    else:
+        period_start = (str(period_start_raw).strip().split("T")[0].split(" ")[0]) if period_start_raw else ""
+    if not period_start or len(period_start) < 7:
+        return
+    period = period_start[:7]
+    if not re.match(r"^\d{4}-\d{2}$", period):
+        return
+    if not company_ids:
+        return
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+    except Exception:
+        raise
+    rows: List[Dict[str, Any]] = []
+    for i, company_id in enumerate(company_ids):
+        if i >= len(companies_summary):
+            break
+        comp = companies_summary[i]
+        emitidas = comp.get("emitidas") or {}
+        recebidas = comp.get("recebidas") or {}
+        qty_emitidas = int(emitidas.get("downloaded") or 0)
+        qty_recebidas = int(recebidas.get("downloaded") or 0)
+        try:
+            valor_emitidas = float(emitidas.get("total_value") or 0)
+        except (TypeError, ValueError):
+            valor_emitidas = 0.0
+        try:
+            valor_recebidas = float(recebidas.get("total_value") or 0)
+        except (TypeError, ValueError):
+            valor_recebidas = 0.0
+        service_codes = _merge_service_codes_for_stats(emitidas, recebidas)
+        service_codes_emitidas = _service_codes_ranking(emitidas)
+        service_codes_recebidas = _service_codes_ranking(recebidas)
+        rows.append({
+            "company_id": str(company_id),
+            "period": period,
+            "qty_emitidas": qty_emitidas,
+            "qty_recebidas": qty_recebidas,
+            "valor_emitidas": round(valor_emitidas, 2),
+            "valor_recebidas": round(valor_recebidas, 2),
+            "service_codes": service_codes,
+            "service_codes_emitidas": service_codes_emitidas,
+            "service_codes_recebidas": service_codes_recebidas,
+        })
+    if not rows:
+        return
+    client.rpc("nfs_stats_upsert_batch", {"rows": rows}).execute()
 
 
 def fetch_robot_display_config(supabase_url: str, supabase_anon_key: str) -> Optional[Dict[str, Any]]:
@@ -2796,6 +2938,12 @@ class CompanyEditDialog(QDialog):
     def _on_lookup_finished(self) -> None:
         self.lookup_thread = None
 
+    def closeEvent(self, event) -> None:
+        if self.lookup_thread and self.lookup_thread.isRunning():
+            self.lookup_thread.requestInterruption()
+            self.lookup_thread.wait(3000)
+        super().closeEvent(event)
+
     def _update_state(self) -> None:
         name_ok = bool(self.name_edit.text().strip())
         doc = self.doc_edit.text()
@@ -3589,6 +3737,8 @@ class DownloadThread(QThread):
         finally:
             self.summary_data["finished_at"] = datetime.now().isoformat()
             self.summary_data["totals"] = self._compute_totals(self.summary_data["companies"])
+            self.summary_data["period_start"] = self.period_start.strftime("%Y-%m-%d")
+            self.summary_data["period_end"] = self.period_end.strftime("%Y-%m-%d")
             self.summary_ready.emit(self.summary_data)
             self.finished.emit()
 
@@ -4379,7 +4529,13 @@ class MainWindow(QMainWindow):
                             self._default_notes_mode = cfg["notes_mode"]
             if self.output_base:
                 seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
-                self.report_path = self.output_base / "EMPRESAS" / seg_slug
+                # Pasta de relatório = base da empresa (EMPRESAS/nome_empresa/segmento), não só EMPRESAS/segmento
+                if self.companies:
+                    first_name = self.companies[0].get("name") or self.companies[0].get("doc") or "sem_nome"
+                    folder_label = safe_folder_name(first_name)
+                    self.report_path = self.output_base / "EMPRESAS" / folder_label / seg_slug
+                else:
+                    self.report_path = self.output_base / "EMPRESAS" / seg_slug
         else:
             self._robot_id = None
         self.preferences: Dict[str, Any] = load_path_preferences()
@@ -4395,6 +4551,7 @@ class MainWindow(QMainWindow):
         self._robot_supabase_url: Optional[str] = None
         self._robot_supabase_key: Optional[str] = None
         self._current_job_id: Optional[str] = None
+        self._current_job: Optional[Dict[str, Any]] = None
         self._heartbeat_timer = QTimer(self)
         self._poll_timer = QTimer(self)
         self._display_config_timer = QTimer(self)
@@ -5194,7 +5351,9 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(False)
         summary = self.last_summary
         job_id = self._current_job_id
+        job = self._current_job
         self._current_job_id = None
+        self._current_job = None
         self.worker = None
         if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
@@ -5202,6 +5361,31 @@ class MainWindow(QMainWindow):
             complete_execution_request(
                 self._robot_supabase_url, self._robot_supabase_key, job_id, True, None
             )
+        if summary and job and self._robot_supabase_url and self._robot_supabase_key:
+            try:
+                upsert_nfs_stats(
+                    self._robot_supabase_url, self._robot_supabase_key, job, summary
+                )
+                self._log("[NFS] Totais e ranking enviados para o painel.")
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"[NFS] Falha ao enviar totais para o painel: {exc}")
+        elif summary and self._robot_supabase_url and self._robot_supabase_key and not job:
+            cfg = fetch_robot_display_config(self._robot_supabase_url, self._robot_supabase_key)
+            company_ids = (cfg.get("company_ids") or []) if cfg else []
+            period_start = (summary.get("period_start") or summary.get("period", {}).get("start") or "").strip()
+            if company_ids and period_start and len(period_start) >= 7:
+                try:
+                    fake_job = {
+                        "company_ids": company_ids,
+                        "period_start": period_start[:10],
+                        "period_end": (summary.get("period_end") or summary.get("period", {}).get("end") or period_start)[:10],
+                    }
+                    upsert_nfs_stats(
+                        self._robot_supabase_url, self._robot_supabase_key, fake_job, summary
+                    )
+                    self._log("[NFS] Totais e ranking enviados para o painel (execução manual).")
+                except Exception as exc:  # noqa: BLE001
+                    self._log(f"[NFS] Falha ao enviar totais para o painel: {exc}")
         self._log("Processo concluido.")
         if summary:
             try:
@@ -5209,7 +5393,7 @@ class MainWindow(QMainWindow):
                 if pdf_path:
                     pdf_label = friendly_path_display(pdf_path, keep_parts=3)
                     self._log(f"Relatorio salvo em: {pdf_label}")
-                    self._open_pdf(pdf_path)
+                    # Não abrir o PDF automaticamente; o usuário pode abrir pela pasta se quiser.
             except Exception as exc:  # noqa: BLE001
                 self._log(f"Falha ao gerar relatorio: {exc}")
 
@@ -5231,12 +5415,21 @@ class MainWindow(QMainWindow):
         if not company_ids:
             self.companies = []
             self._reload_items()
+            self.report_path = None
         else:
             records = load_companies_from_supabase_by_ids(
                 self._robot_supabase_url, self._robot_supabase_key, company_ids
             )
             self.companies = records
             self._reload_items()
+            if self.output_base and self.companies:
+                seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
+                first_name = self.companies[0].get("name") or self.companies[0].get("doc") or "sem_nome"
+                folder_label = safe_folder_name(first_name)
+                self.report_path = self.output_base / "EMPRESAS" / folder_label / seg_slug
+            elif self.output_base:
+                seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
+                self.report_path = self.output_base / "EMPRESAS" / seg_slug
         period_start = (cfg.get("period_start") or "").strip() or None
         period_end = (cfg.get("period_end") or "").strip() or None
         if period_start and period_end:
@@ -5377,6 +5570,7 @@ class MainWindow(QMainWindow):
             )
             return
         self._current_job_id = job["id"]
+        self._current_job = job
         if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "processing")
         self._finish_logged = False
@@ -5404,6 +5598,11 @@ class MainWindow(QMainWindow):
         self._log(f"[Agendador] Iniciando job para {len(selected)} empresa(s), periodo {start_dt:%d/%m/%Y} a {end_dt:%d/%m/%Y}")
 
     def closeEvent(self, event) -> None:
+        if self.worker and self.worker.isRunning():
+            self.worker.request_stop()
+            if not self.worker.wait(5000):
+                self.worker.terminate()
+                self.worker.wait(1000)
         event.ignore()
         self.hide()
         self._tray_icon.show()
@@ -5411,6 +5610,11 @@ class MainWindow(QMainWindow):
 
     def _quit_from_tray(self) -> None:
         """Chamado ao escolher 'Fechar robô' na bandeja: marca inativo e encerra o app."""
+        if self.worker and self.worker.isRunning():
+            self.worker.request_stop()
+            if not self.worker.wait(5000):
+                self.worker.terminate()
+                self.worker.wait(1000)
         if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "inactive")
         self._heartbeat_timer.stop()

@@ -29,7 +29,15 @@ export async function updateRobotDisplayName(
 
 export async function updateRobot(
   id: string,
-  updates: { display_name?: string; segment_path?: string | null; notes_mode?: "recebidas" | "emitidas" | "both" | null }
+  updates: {
+    display_name?: string
+    segment_path?: string | null
+    notes_mode?: "recebidas" | "emitidas" | "both" | null
+    date_execution_mode?: "competencia" | "interval" | null
+    initial_period_start?: string | null
+    initial_period_end?: string | null
+    last_period_end?: string | null
+  }
 ): Promise<Robot> {
   const { data, error } = await supabase
     .from("robots")

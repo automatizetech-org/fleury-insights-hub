@@ -51,6 +51,7 @@ export default function FiscalPage() {
         queryClient.invalidateQueries({ queryKey: ["fiscal-recent"] });
         queryClient.invalidateQueries({ queryKey: ["fiscal-documents"] });
         queryClient.invalidateQueries({ queryKey: ["fiscal-documents-nfe-nfc"] });
+        queryClient.invalidateQueries({ queryKey: ["nfs-stats"] });
         const parts = [];
         if (r.inserted > 0) parts.push(`${r.inserted} inserido(s)`);
         if (r.deleted > 0) parts.push(`${r.deleted} removido(s)`);

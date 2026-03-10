@@ -4,11 +4,13 @@ O agendamento diário dos robôs roda **dentro do Supabase**, sem cron externo (
 
 ## Como funciona
 
-1. **pg_cron** (extensão no Postgres) executa a cada **1 minuto** o job `process_schedules`.
-2. O job chama a função **`public.process_schedules_cron()`**, que:
-   - Busca regras em `schedule_rules` com `status = 'active'`, `run_daily = true`, período vigente e horário já passado hoje.
-   - Para cada regra, insere uma linha em **`execution_requests`** (com `schedule_rule_id`) e atualiza **`last_run_at`** na regra.
-3. Os **robôs** (NFS etc.) fazem poll na fila `execution_requests`, dão claim no job e executam. Ao terminar, fica **Aguardando** até o próximo dia.
+1. **pg_cron** executa a cada **1 minuto** o job `process_schedules`.
+2. O job chama **`public.process_schedules_cron()`**, que **apenas verifica** se alguma regra atingiu a "próxima execução":
+   - **Próxima execução** = primeira vez: `run_at_date` + `run_at_time`; depois: `last_run_at` + 24h.
+   - Se **agora < próxima execução** → não faz nada.
+   - Se **agora >= próxima execução** e não há `execution_requests` pending/running dessa regra → cria os `execution_requests` (um por robô) e atualiza `last_run_at` na regra (próxima execução = daqui a 24h).
+3. **Sem agendamento ativo** (nenhuma regra com `status = 'active'` e `run_daily = true`) → o cron não cria nenhum request.
+4. Os **robôs** fazem poll na fila; só reivindicam jobs de regras ainda ativas (ou jobs manuais sem `schedule_rule_id`).
 
 ## O que você precisa fazer
 

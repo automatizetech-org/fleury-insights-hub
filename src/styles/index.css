@@ -101,6 +101,13 @@
   --ap-tooltip-text: #E2E8F0;
 }
 
+/* Calendário nativo (input type="date") legível no tema escuro: popup em tema claro */
+.dark input[type="date"],
+.dark input[type="datetime-local"],
+.dark input[type="time"] {
+  color-scheme: light;
+}
+
 @layer base {
   * {
     @apply border-border;

@@ -3,11 +3,11 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { MiniChart } from "@/components/dashboard/Charts";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { useParams } from "react-router-dom";
-import { FileText, FileDown, CalendarDays, Download, AlertCircle, XCircle, ThumbsUp, Copy, Eye, FileArchive } from "lucide-react";
-import { useState, useMemo } from "react";
+import { FileText, FileDown, CalendarDays, Download, AlertCircle, XCircle, ThumbsUp, Copy, Eye, FileArchive, DollarSign, ListOrdered, Calendar, ChevronLeft, ChevronRight, Medal } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
-import { getFiscalDocumentsByType, getFiscalDocumentsNfeNfc } from "@/services/dashboardService";
+import { getFiscalDocumentsByType, getFiscalDocumentsNfeNfc, getNfsStatsByDateRange } from "@/services/dashboardService";
 import { downloadFiscalDocument, hasServerApi, markFiscalDocumentDownloaded, downloadFiscalDocumentsZip } from "@/services/serverFileService";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell } from "recharts";
@@ -19,6 +19,96 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+
+type ServiceCodeRow = { code: string; description: string; total_value: number };
+
+function ServiceCodesRankingTable({
+  title,
+  subtitle,
+  rows,
+  loading,
+  emptyMessage,
+  maxRows = 30,
+}: {
+  title: string;
+  subtitle: string;
+  rows: ServiceCodeRow[];
+  loading: boolean;
+  emptyMessage: string;
+  maxRows?: number;
+}) {
+  const slice = rows.slice(0, maxRows);
+  const hasMore = rows.length > maxRows;
+  return (
+    <GlassCard className="p-6">
+      <h3 className="text-sm font-semibold font-display mb-1">{title}</h3>
+      <p className="text-xs text-muted-foreground mb-4">{subtitle}</p>
+      {loading ? (
+        <p className="text-xs text-muted-foreground">Carregando…</p>
+      ) : slice.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{emptyMessage}</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto -webkit-overflow-scrolling-touch rounded-lg border border-border">
+            <table className="w-full text-xs min-w-[320px]">
+              <thead>
+                <tr className="border-b border-border bg-muted/50">
+                  <th className="text-left px-3 py-2.5 font-medium text-muted-foreground w-14">Posição</th>
+                  <th className="text-left px-3 py-2.5 font-medium text-muted-foreground w-20">Código</th>
+                  <th className="text-left px-3 py-2.5 font-medium text-muted-foreground">Descrição</th>
+                  <th className="text-right px-3 py-2.5 font-medium text-muted-foreground w-28">Valor (R$)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {slice.map((row, i) => {
+                  const pos = i + 1;
+                  const isGold = pos === 1;
+                  const isSilver = pos === 2;
+                  const isBronze = pos === 3;
+                  return (
+                    <tr key={i} className="border-b border-border last:border-0 hover:bg-muted/30">
+                      <td className="px-3 py-2.5 align-middle w-14">
+                        {isGold && (
+                          <span className="inline-flex items-center gap-1 font-semibold text-amber-500 dark:text-amber-400">
+                            <Medal className="h-3.5 w-3.5 shrink-0" />
+                            1º
+                          </span>
+                        )}
+                        {isSilver && (
+                          <span className="inline-flex items-center gap-1 font-semibold text-slate-500 dark:text-slate-400">
+                            <Medal className="h-3.5 w-3.5 shrink-0" />
+                            2º
+                          </span>
+                        )}
+                        {isBronze && (
+                          <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-600">
+                            <Medal className="h-3.5 w-3.5 shrink-0" />
+                            3º
+                          </span>
+                        )}
+                        {!isGold && !isSilver && !isBronze && (
+                          <span className="text-muted-foreground font-medium">{pos}º</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5 font-mono align-middle w-20">{row.code || "—"}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground align-middle">{row.description || "—"}</td>
+                      <td className="px-3 py-2.5 text-right font-medium align-middle w-28 tabular-nums whitespace-nowrap">
+                        {row.total_value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {hasMore && (
+            <p className="text-[10px] text-muted-foreground mt-2">Exibindo os {maxRows} primeiros por valor.</p>
+          )}
+        </>
+      )}
+    </GlassCard>
+  );
+}
 
 const typeLabels: Record<string, string> = {
   nfs: "NFS - Notas Fiscais de Serviço",
@@ -85,6 +175,43 @@ function buildVolumeMensalData(documents: { periodo?: string | null }[]): { name
     result.push({ name: label, value: byPeriodo.get(key) ?? 0 });
   }
   return result;
+}
+
+/** Volume mensal para NFS: respeita o filtro De/Até, só meses do período, conta notas (chave única) por mês. */
+function buildVolumeMensalDataNfs(
+  filteredDocuments: { periodo?: string | null; chave?: string | null; id: string }[],
+  dateFrom: string,
+  dateTo: string
+): { name: string; value: number }[] {
+  const from = dateFrom.slice(0, 7);
+  const to = dateTo.slice(0, 7);
+  if (from > to) return [];
+  const months: string[] = [];
+  const yFrom = parseInt(from.slice(0, 4), 10);
+  const mFrom = parseInt(from.slice(5, 7), 10);
+  const yTo = parseInt(to.slice(0, 4), 10);
+  const mTo = parseInt(to.slice(5, 7), 10);
+  for (let y = yFrom; y <= yTo; y++) {
+    const mStart = y === yFrom ? mFrom : 1;
+    const mEnd = y === yTo ? mTo : 12;
+    for (let m = mStart; m <= mEnd; m++) {
+      months.push(`${y}-${String(m).padStart(2, "0")}`);
+    }
+  }
+  const byPeriodo = new Map<string, Set<string>>();
+  for (const d of filteredDocuments) {
+    const p = (d.periodo || "").trim();
+    if (!p || !/^\d{4}-\d{2}$/.test(p)) continue;
+    const chave = (d.chave || "").trim() || d.id;
+    if (!byPeriodo.has(p)) byPeriodo.set(p, new Set());
+    byPeriodo.get(p)!.add(chave);
+  }
+  return months.map((key) => {
+    const [y, m] = [parseInt(key.slice(0, 4), 10), parseInt(key.slice(5, 7), 10)];
+    const label = `${MESES[m - 1]}/${String(y).slice(2)}`;
+    const count = byPeriodo.get(key)?.size ?? 0;
+    return { name: label, value: count };
+  });
 }
 
 /** Dados mock para gráfico de certidões (totais por situação). */
@@ -383,11 +510,29 @@ export default function FiscalDetailPage() {
   const documents = isNfeNfc ? documentsNfeNfc : documentsByType;
   const isLoading = isNfeNfc ? loadingNfeNfc : loadingByType;
 
+  const mesAtual = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  }, []);
+  const nfsPeriodDefault = useMemo(() => {
+    const now = new Date();
+    const first = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+    return { first, last };
+  }, []);
+
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
+  const [nfsDateFrom, setNfsDateFrom] = useState("");
+  const [nfsDateTo, setNfsDateTo] = useState("");
   const [filterFileType, setFilterFileType] = useState<"all" | "xml" | "pdf">("all");
   const [filterOrigem, setFilterOrigem] = useState<"all" | "recebidas" | "emitidas">("all");
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [nfsPageSize, setNfsPageSize] = useState(10);
+  const [nfsCurrentPage, setNfsCurrentPage] = useState(1);
+
+  const nfsDateFromResolved = type === "nfs" ? (nfsDateFrom || nfsPeriodDefault.first) : "";
+  const nfsDateToResolved = type === "nfs" ? (nfsDateTo || nfsPeriodDefault.last) : "";
 
   const filteredDocuments = useMemo(() => {
     let list = documents;
@@ -400,13 +545,23 @@ export default function FiscalDetailPage() {
           (d.chave && d.chave.includes(q))
       );
     }
-    if (filterDateFrom || filterDateTo) {
+    const dateFrom = type === "nfs" ? nfsDateFromResolved : filterDateFrom;
+    const dateTo = type === "nfs" ? nfsDateToResolved : filterDateTo;
+    if (dateFrom || dateTo) {
       list = list.filter((d) => {
         const date = getDocumentDisplayDate(d) ?? d.periodo ?? "";
         if (!date) return true;
         const docDate = date.slice(0, 10);
-        if (filterDateFrom && docDate < filterDateFrom) return false;
-        if (filterDateTo && docDate > filterDateTo) return false;
+        if (docDate.length === 7) {
+          const [y, m] = [parseInt(docDate.slice(0, 4), 10), parseInt(docDate.slice(5, 7), 10)];
+          const firstDay = `${y}-${String(m).padStart(2, "0")}-01`;
+          const lastDay = new Date(y, m, 0).toISOString().slice(0, 10);
+          if (dateFrom && lastDay < dateFrom) return false;
+          if (dateTo && firstDay > dateTo) return false;
+          return true;
+        }
+        if (dateFrom && docDate < dateFrom) return false;
+        if (dateTo && docDate > dateTo) return false;
         return true;
       });
     }
@@ -422,23 +577,142 @@ export default function FiscalDetailPage() {
       list = list.filter((d) => getDocumentOrigem(d.file_path ?? null, d.type) === filterOrigem);
     }
     return list;
-  }, [documents, search, filterDateFrom, filterDateTo, filterFileType, filterOrigem, type]);
+  }, [documents, search, filterDateFrom, filterDateTo, nfsDateFromResolved, nfsDateToResolved, filterFileType, filterOrigem, type]);
 
   const canDownload = hasServerApi();
-  const mesAtual = useMemo(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  }, []);
-  const comArquivo = documents.filter((d) => d.file_path && String(d.file_path).trim()).length;
+  const nfsStatsQuery = useQuery({
+    queryKey: ["nfs-stats", companyFilter, nfsDateFromResolved, nfsDateToResolved],
+    queryFn: () => getNfsStatsByDateRange(companyFilter, nfsDateFromResolved, nfsDateToResolved),
+    enabled: type === "nfs" && !!nfsDateFromResolved && !!nfsDateToResolved,
+  });
+  const nfsStats = nfsStatsQuery.data;
+  const loadingNfsStats = nfsStatsQuery.isLoading;
+
+  const nfsPrevPeriod = useMemo(() => {
+    if (!nfsDateFromResolved || nfsDateFromResolved.length < 7) return null;
+    const y = parseInt(nfsDateFromResolved.slice(0, 4), 10);
+    const m = parseInt(nfsDateFromResolved.slice(5, 7), 10);
+    const prev = new Date(y, m - 2, 1);
+    const first = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-01`;
+    const last = new Date(prev.getFullYear(), prev.getMonth() + 1, 0).toISOString().slice(0, 10);
+    return { first, last };
+  }, [nfsDateFromResolved]);
+
+  const nfsStatsPrevQuery = useQuery({
+    queryKey: ["nfs-stats-prev", companyFilter, nfsPrevPeriod?.first, nfsPrevPeriod?.last],
+    queryFn: () => getNfsStatsByDateRange(companyFilter, nfsPrevPeriod!.first, nfsPrevPeriod!.last),
+    enabled: type === "nfs" && !!nfsPrevPeriod?.first && !!nfsPrevPeriod?.last,
+  });
+  const nfsStatsPrev = nfsStatsPrevQuery.data;
+
+  const nfsVariationEmitidas = useMemo(() => {
+    if (!nfsStats || !nfsStatsPrev) return null;
+    const curr = nfsStats.valorEmitidas;
+    const prev = nfsStatsPrev.valorEmitidas;
+    if (prev === 0) {
+      if (curr === 0) return "igual ao mês anterior";
+      return "+100% vs mês anterior";
+    }
+    const pct = ((curr - prev) / prev) * 100;
+    if (pct === 0) return "igual ao mês anterior";
+    const sign = pct > 0 ? "+" : "";
+    return `${sign}${pct.toFixed(1).replace(".", ",")}% vs mês anterior`;
+  }, [nfsStats, nfsStatsPrev]);
+
+  const nfsVariationRecebidas = useMemo(() => {
+    if (!nfsStats || !nfsStatsPrev) return null;
+    const curr = nfsStats.valorRecebidas;
+    const prev = nfsStatsPrev.valorRecebidas;
+    if (prev === 0) {
+      if (curr === 0) return "igual ao mês anterior";
+      return "+100% vs mês anterior";
+    }
+    const pct = ((curr - prev) / prev) * 100;
+    if (pct === 0) return "igual ao mês anterior";
+    const sign = pct > 0 ? "+" : "";
+    return `${sign}${pct.toFixed(1).replace(".", ",")}% vs mês anterior`;
+  }, [nfsStats, nfsStatsPrev]);
+
+  const nfsVariationTypeEmitidas = useMemo(() => {
+    if (!nfsStats || !nfsStatsPrev) return "neutral";
+    const prev = nfsStatsPrev.valorEmitidas;
+    const curr = nfsStats.valorEmitidas;
+    if (prev === 0) return curr > 0 ? "positive" : "neutral";
+    const pct = ((curr - prev) / prev) * 100;
+    return pct > 0 ? "positive" : pct < 0 ? "negative" : "neutral";
+  }, [nfsStats, nfsStatsPrev]);
+
+  const nfsVariationTypeRecebidas = useMemo(() => {
+    if (!nfsStats || !nfsStatsPrev) return "neutral";
+    const prev = nfsStatsPrev.valorRecebidas;
+    const curr = nfsStats.valorRecebidas;
+    if (prev === 0) return curr > 0 ? "positive" : "neutral";
+    const pct = ((curr - prev) / prev) * 100;
+    return pct > 0 ? "positive" : pct < 0 ? "negative" : "neutral";
+  }, [nfsStats, nfsStatsPrev]);
+  const comArquivo = (type === "nfs" ? filteredDocuments : documents).filter((d) => d.file_path && String(d.file_path).trim()).length;
   const disponiveisCount = comArquivo;
-  const esteMes = documents.filter((d) => {
-    const p = (d.periodo || "").trim();
-    return /^\d{4}-\d{2}$/.test(p) && p === mesAtual;
-  }).length;
+  const docCountForDisplay = useMemo(() => {
+    if (type === "nfs") {
+      const chaves = new Set<string>();
+      for (const d of filteredDocuments) {
+        const chave = (d.chave || "").trim() || d.id;
+        chaves.add(chave);
+      }
+      return chaves.size;
+    }
+    return documents.length;
+  }, [type, filteredDocuments, documents]);
+  const esteMes = useMemo(() => {
+    if (type === "nfs") {
+      const chaves = new Set<string>();
+      for (const d of documents) {
+        const p = (d.periodo || "").trim();
+        if (!/^\d{4}-\d{2}$/.test(p) || p !== mesAtual) continue;
+        const chave = (d.chave || "").trim() || d.id;
+        chaves.add(chave);
+      }
+      return chaves.size;
+    }
+    return documents.filter((d) => {
+      const p = (d.periodo || "").trim();
+      return /^\d{4}-\d{2}$/.test(p) && p === mesAtual;
+    }).length;
+  }, [type, documents, mesAtual]);
   const nfeCount = isNfeNfc ? documents.filter((d) => d.type === "NFE").length : 0;
   const nfcCount = isNfeNfc ? documents.filter((d) => d.type === "NFC").length : 0;
 
-  const volumeMensalData = useMemo(() => buildVolumeMensalData(documents), [documents]);
+  const volumeMensalData = useMemo(() => {
+    if (type === "nfs" && nfsDateFromResolved && nfsDateToResolved) {
+      return buildVolumeMensalDataNfs(filteredDocuments, nfsDateFromResolved, nfsDateToResolved);
+    }
+    return buildVolumeMensalData(documents);
+  }, [type, documents, filteredDocuments, nfsDateFromResolved, nfsDateToResolved]);
+
+  const nfsPagination = useMemo(() => {
+    if (type !== "nfs") return { list: filteredDocuments, totalPages: 1, currentPage: 1, from: 0, to: filteredDocuments.length, total: filteredDocuments.length };
+    const total = filteredDocuments.length;
+    const pageSize = Math.max(1, nfsPageSize);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(nfsCurrentPage, totalPages);
+    const from = (page - 1) * pageSize;
+    const to = Math.min(from + pageSize, total);
+    return {
+      list: filteredDocuments.slice(from, to),
+      totalPages,
+      currentPage: page,
+      from: total ? from + 1 : 0,
+      to,
+      total,
+    };
+  }, [type, filteredDocuments, nfsPageSize, nfsCurrentPage]);
+  const documentsToShow = type === "nfs" ? nfsPagination.list : filteredDocuments;
+
+  useEffect(() => {
+    if (type === "nfs" && nfsPagination.totalPages > 0 && nfsCurrentPage > nfsPagination.totalPages) {
+      setNfsCurrentPage(1);
+    }
+  }, [type, nfsCurrentPage, nfsPagination.totalPages]);
 
   const handleDownload = async (id: string, chave: string | null, filePath: string | null) => {
     try {
@@ -478,21 +752,98 @@ export default function FiscalDetailPage() {
         )
       ) : (
         <>
+      {type === "nfs" && (
+        <GlassCard className="p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Calendar className="h-4 w-4" />
+              <span className="text-sm font-medium">Período</span>
+            </div>
+            <label className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">De</span>
+              <input
+                type="date"
+                value={nfsDateFromResolved}
+                onChange={(e) => setNfsDateFrom(e.target.value)}
+                className="rounded-lg border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Até</span>
+              <input
+                type="date"
+                value={nfsDateToResolved}
+                onChange={(e) => setNfsDateTo(e.target.value)}
+                className="rounded-lg border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">Todos os dados da página (documentos, totais e ranking) seguem este período.</p>
+        </GlassCard>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatsCard title="Total" value={documents.length.toString()} icon={FileText} />
-        <StatsCard title="Disponíveis" value={disponiveisCount.toString()} icon={FileDown} change={documents.length ? `${((disponiveisCount / documents.length) * 100).toFixed(1)}%` : "0%"} changeType="positive" />
-        <StatsCard title="Este mês" value={esteMes.toString()} icon={CalendarDays} changeType="neutral" />
-        {isNfeNfc && (
+        {type === "nfs" ? (
           <>
-            <StatsCard title="NFE" value={nfeCount.toString()} icon={FileText} changeType="neutral" />
-            <StatsCard title="NFC" value={nfcCount.toString()} icon={FileText} changeType="neutral" />
+            <StatsCard title="Total no período" value={docCountForDisplay.toString()} icon={FileText} />
+            <StatsCard
+              title="Valor prestadas (R$)"
+              value={nfsStats ? nfsStats.valorEmitidas.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}
+              icon={DollarSign}
+              change={nfsVariationEmitidas ?? undefined}
+              changeType={nfsVariationTypeEmitidas}
+            />
+            <StatsCard
+              title="Valor tomadas (R$)"
+              value={nfsStats ? nfsStats.valorRecebidas.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}
+              icon={DollarSign}
+              change={nfsVariationRecebidas ?? undefined}
+              changeType={nfsVariationTypeRecebidas}
+            />
+            <StatsCard title="Este mês" value={esteMes.toString()} icon={CalendarDays} changeType="neutral" />
+          </>
+        ) : (
+          <>
+            <StatsCard title="Total" value={docCountForDisplay.toString()} icon={FileText} />
+            <StatsCard title="Disponíveis" value={disponiveisCount.toString()} icon={FileDown} change={docCountForDisplay ? `${((disponiveisCount / docCountForDisplay) * 100).toFixed(1)}%` : "0%"} changeType="positive" />
+            <StatsCard title="Este mês" value={esteMes.toString()} icon={CalendarDays} changeType="neutral" />
+            {isNfeNfc && (
+              <>
+                <StatsCard title="NFE" value={nfeCount.toString()} icon={FileText} changeType="neutral" />
+                <StatsCard title="NFC" value={nfcCount.toString()} icon={FileText} changeType="neutral" />
+              </>
+            )}
           </>
         )}
       </div>
 
+      {type === "nfs" && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ServiceCodesRankingTable
+            title="Ranking de códigos de serviço (prestadas)"
+            subtitle="Códigos das notas emitidas pela empresa. Dados enviados pelo robô ao concluir a execução."
+            rows={nfsStats?.serviceCodesRankingPrestadas ?? []}
+            loading={loadingNfsStats}
+            emptyMessage="Nenhum dado de códigos de serviço (prestadas) neste período. Execute o robô NFS para popular."
+          />
+          <ServiceCodesRankingTable
+            title="Ranking de códigos de serviço (tomadas)"
+            subtitle="Códigos das notas recebidas pela empresa. Dados enviados pelo robô ao concluir a execução."
+            rows={nfsStats?.serviceCodesRankingTomadas ?? []}
+            loading={loadingNfsStats}
+            emptyMessage="Nenhum dado de códigos de serviço (tomadas) neste período. Execute o robô NFS para popular."
+          />
+        </div>
+      )}
+
       <GlassCard className="p-6">
         <h3 className="text-sm font-semibold font-display mb-4">Volume Mensal</h3>
-        <MiniChart data={volumeMensalData} type="area" height={200} />
+        <MiniChart
+          data={volumeMensalData}
+          type="area"
+          height={200}
+          valueLabel={type === "nfs" ? "Notas" : undefined}
+        />
       </GlassCard>
 
       <GlassCard className="overflow-hidden">
@@ -505,20 +856,24 @@ export default function FiscalDetailPage() {
               placeholder="Buscar por empresa ou chave..."
               className="rounded-lg border border-border bg-background px-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-full min-w-0 sm:w-40 max-w-[12rem]"
             />
-            <input
-              type="date"
-              value={filterDateFrom}
-              onChange={(e) => setFilterDateFrom(e.target.value)}
-              className="rounded-lg border border-border bg-background px-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-              title="Data a partir de"
-            />
-            <input
-              type="date"
-              value={filterDateTo}
-              onChange={(e) => setFilterDateTo(e.target.value)}
-              className="rounded-lg border border-border bg-background px-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-              title="Data até"
-            />
+            {type !== "nfs" && (
+              <>
+                <input
+                  type="date"
+                  value={filterDateFrom}
+                  onChange={(e) => setFilterDateFrom(e.target.value)}
+                  className="rounded-lg border border-border bg-background px-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  title="Data a partir de"
+                />
+                <input
+                  type="date"
+                  value={filterDateTo}
+                  onChange={(e) => setFilterDateTo(e.target.value)}
+                  className="rounded-lg border border-border bg-background px-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  title="Data até"
+                />
+              </>
+            )}
             <select
               value={filterFileType}
               onChange={(e) => setFilterFileType(e.target.value as "all" | "xml" | "pdf")}
@@ -589,6 +944,7 @@ export default function FiscalDetailPage() {
           ) : filteredDocuments.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhum documento encontrado. Os robôs podem popular os dados ao processar XMLs.</div>
           ) : (
+            <>
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border bg-muted/50">
@@ -605,7 +961,7 @@ export default function FiscalDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredDocuments.map((doc) => {
+                {documentsToShow.map((doc) => {
                   const displayDate = getDocumentDisplayDate(doc);
                   const origem = getDocumentOrigem(doc.file_path ?? null, doc.type);
                   return (
@@ -640,6 +996,50 @@ export default function FiscalDetailPage() {
                 );})}
               </tbody>
             </table>
+            {type === "nfs" && filteredDocuments.length > 0 && nfsPagination.totalPages > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 border-t border-border bg-muted/20">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">Mostrar</span>
+                  <select
+                    value={nfsPageSize}
+                    onChange={(e) => { setNfsPageSize(Number(e.target.value)); setNfsCurrentPage(1); }}
+                    className="rounded border border-border bg-background px-2 py-1 text-xs"
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                  </select>
+                  <span className="text-xs text-muted-foreground">por página</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {nfsPagination.from}-{nfsPagination.to} de {nfsPagination.total}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={nfsPagination.currentPage <= 1}
+                    onClick={() => setNfsCurrentPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-xs font-medium min-w-[4rem] text-center">
+                    Página {nfsPagination.currentPage} de {nfsPagination.totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={nfsPagination.currentPage >= nfsPagination.totalPages}
+                    onClick={() => setNfsCurrentPage((p) => Math.min(nfsPagination.totalPages, p + 1))}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </div>
       </GlassCard>
