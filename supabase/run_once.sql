@@ -20,7 +20,7 @@ create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   username text unique not null,
   role text not null check (role in ('super_admin', 'user')),
-  panel_access jsonb not null default '{"dashboard":true,"fiscal":true,"dp":true,"financeiro":true,"operacoes":true,"documentos":true,"empresas":true,"sync":true}'::jsonb,
+  panel_access jsonb not null default '{"dashboard":true,"fiscal":true,"dp":true,"paralegal":true,"financeiro":true,"operacoes":true,"documentos":true,"empresas":true,"sync":true}'::jsonb,
   created_at timestamptz not null default now()
 );
 

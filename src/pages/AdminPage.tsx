@@ -100,6 +100,7 @@ export default function AdminPage() {
     dashboard: true,
     fiscal: true,
     dp: true,
+    paralegal: true,
     financeiro: true,
     operacoes: true,
     documentos: true,

@@ -1,6 +1,6 @@
-import { useState, useMemo, useRef } from "react"
+import { useState, useMemo, useRef, useEffect } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 import { getCompaniesForUser, updateCompany, getCompanyRobotConfig, upsertCompanyRobotConfig, ROBOT_NFS_TECHNICAL_ID } from "@/services/companiesService"
 import type { Company } from "@/services/profilesService"
 import { GlassCard } from "@/components/dashboard/GlassCard"
@@ -54,6 +54,7 @@ function fileToBase64(file: File): Promise<string> {
 
 export default function EmpresasPage() {
   const queryClient = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [filter, setFilter] = useState<FilterStatus>("active")
   const [search, setSearch] = useState("")
   const [editingCompany, setEditingCompany] = useState<Company | null>(null)
@@ -78,6 +79,10 @@ export default function EmpresasPage() {
     queryFn: () => getCompaniesForUser(filter === "all" ? "all" : filter === "active" ? "active" : "inactive"),
   })
 
+  useEffect(() => {
+    if (searchParams.get("editCompany") && filter !== "all") setFilter("all")
+  }, [searchParams, filter])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return companies
@@ -88,14 +93,16 @@ export default function EmpresasPage() {
     )
   }, [companies, search])
 
-  const openEdit = async (c: Company) => {
+  const openEdit = async (c: Company, options?: { focusCertificate?: boolean; renewMode?: boolean }) => {
     setEditingCompany(c)
     setEditName(c.name)
     setEditDocument(c.document ?? "")
     setEditActive((c as CompanyWithCert).active !== false)
     const withCert = c as CompanyWithCert
-    setEditUseCertificate(!!(withCert.cert_blob_b64 || withCert.auth_mode === "certificate"))
-    setEditCertReplacing(false)
+    const shouldFocusCertificate = options?.focusCertificate ?? false
+    const hasCertificate = !!(withCert.cert_blob_b64 || withCert.auth_mode === "certificate")
+    setEditUseCertificate(shouldFocusCertificate ? true : hasCertificate)
+    setEditCertReplacing(Boolean(options?.renewMode && hasCertificate))
     setEditCertFile(null)
     setEditCertPassword("")
     setEditContadorCpf(withCert.contador_cpf ?? "")
@@ -111,6 +118,24 @@ export default function EmpresasPage() {
       setEditNfsRobotPassword("")
     }
   }
+
+  useEffect(() => {
+    const targetCompanyId = searchParams.get("editCompany")
+    if (!targetCompanyId || isLoading || companies.length === 0 || editingCompany) return
+
+    const company = companies.find((item) => item.id === targetCompanyId)
+    if (!company) return
+
+    const focusCertificate = searchParams.get("focus") === "certificate"
+    const renewMode = searchParams.get("mode") === "renew"
+    void openEdit(company, { focusCertificate, renewMode })
+
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete("editCompany")
+    nextParams.delete("focus")
+    nextParams.delete("mode")
+    setSearchParams(nextParams, { replace: true })
+  }, [searchParams, setSearchParams, companies, isLoading, editingCompany])
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -279,7 +304,7 @@ export default function EmpresasPage() {
       </GlassCard>
 
       <Dialog open={!!editingCompany} onOpenChange={(open) => !open && !editSaving && setEditingCompany(null)}>
-        <DialogContent aria-describedby={undefined}>
+        <DialogContent aria-describedby={undefined} className="max-h-[90vh] overflow-y-auto">
           {editSaving && (
             <div className="absolute inset-0 z-50 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur-sm">
               <div className="flex flex-col items-center gap-3">

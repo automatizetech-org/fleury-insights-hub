@@ -16,6 +16,7 @@ import {
   Settings,
   Activity,
   FileSpreadsheet,
+  Shield,
 } from "lucide-react";
 
 const pages = [
@@ -28,6 +29,10 @@ const pages = [
   { name: "Fiscal - IRRF/CSLL", path: "/fiscal/irrf-csll", icon: FileText, group: "Fiscal" },
   { name: "Fiscal - Certidões", path: "/fiscal/certidoes", icon: FileText, group: "Fiscal" },
   { name: "Departamento Pessoal", path: "/dp", icon: Users, group: "Navegação" },
+  { name: "Paralegal", path: "/paralegal", icon: Shield, group: "Navegação" },
+  { name: "Paralegal - Certificados", path: "/paralegal/certificados", icon: Shield, group: "Paralegal" },
+  { name: "Paralegal - Tarefas", path: "/paralegal/tarefas", icon: Shield, group: "Paralegal" },
+  { name: "Paralegal - Clientes", path: "/paralegal/clientes", icon: Shield, group: "Paralegal" },
   { name: "Financeiro", path: "/financeiro", icon: DollarSign, group: "Navegação" },
   { name: "Operações", path: "/operacoes", icon: Activity, group: "Navegação" },
   { name: "Documentos", path: "/documentos", icon: FileSpreadsheet, group: "Navegação" },

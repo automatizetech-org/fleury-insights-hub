@@ -27,6 +27,7 @@ DEFAULT_TIMEOUT_MS = 30_000
 TASK_REFRESH_ATTEMPTS = 12
 TASK_REFRESH_INTERVAL_SECONDS = 2
 TARGET_YEAR = 2025
+MAX_RETRIES_PER_ENTRY = 10
 
 GENERATE_HEADING_PATTERN = re.compile(r"Gerar Arquivos de Integra", re.IGNORECASE)
 DOMAIN_XML_PATTERN = re.compile(r"Arquivo XML .*Dom", re.IGNORECASE)
@@ -39,6 +40,7 @@ TASK_FINAL_MESSAGE_PATTERNS = (
     re.compile(r"arquivo gerado com sucesso", re.IGNORECASE),
     re.compile(r"falha|erro|n.o foi poss.vel", re.IGNORECASE),
 )
+NO_DOCUMENTS_PATTERN = re.compile(r"n.o foram encontrados documentos", re.IGNORECASE)
 PERIOD_DISPLAY_PATTERN = re.compile(r"^[a-z]{3}/\d{4}$", re.IGNORECASE)
 MONTH_LABELS = {
     1: "Janeiro",
@@ -93,11 +95,17 @@ REPORT_FIELDNAMES = [
     "cnpj",
     "company",
     "period",
+    "status",
     "task_title",
     "message",
     "downloaded",
     "download_path",
+    "attempts",
 ]
+
+STATUS_DOWNLOADED = "BAIXADO"
+STATUS_NO_DOCUMENTS = "SEM_DOCUMENTO"
+STATUS_ERROR = "ERRO"
 
 
 def log(message: str) -> None:
@@ -123,6 +131,17 @@ def wait_for_page_idle(page: Page) -> None:
         page.wait_for_load_state("networkidle", timeout=5_000)
     except TimeoutError:
         pass
+
+
+def ensure_expected_route(page: Page) -> None:
+    allowed_fragments = (
+        "/integracao/gerar-arquivo",
+        "/painel-contador",
+    )
+    if any(fragment in page.url for fragment in allowed_fragments):
+        return
+    log(f"URL inesperada detectada: {page.url}. Retornando para gerar arquivo")
+    open_generate_page(page)
 
 
 def wait_for_company_table(page: Page, minimum_rows: int = 1) -> None:
@@ -396,19 +415,13 @@ def parse_task_card(card: Locator, company: str) -> TaskResult:
     started_at = timestamps[0] if timestamps else None
     finished_at = timestamps[1] if len(timestamps) > 1 else None
 
-    action_elements = card.locator("button, a, [role='button']")
+    download_button = card.locator("button").last
     has_download = False
-    for index in range(action_elements.count()):
-        action = action_elements.nth(index)
-        if not action.is_visible():
-            continue
+    if download_button.count() > 0:
         try:
-            disabled = action.is_disabled()
+            has_download = download_button.is_visible() and not download_button.is_disabled()
         except Error:
-            disabled = False
-        if not disabled:
-            has_download = True
-            break
+            has_download = download_button.is_visible()
 
     finished = has_download or finished_at is not None
     if not finished:
@@ -473,17 +486,17 @@ def locate_task_action(page: Page, task: TaskResult) -> Locator | None:
         parsed = parse_task_card(card, task.company)
         if parsed.started_at != task.started_at:
             continue
-        actions = card.locator("button, a, [role='button']")
-        for action_index in range(actions.count()):
-            action = actions.nth(action_index)
-            if not action.is_visible():
-                continue
-            try:
-                disabled = action.is_disabled()
-            except Error:
-                disabled = False
-            if not disabled:
-                return action
+        action = card.locator("button").last
+        if action.count() == 0:
+            continue
+        if not action.is_visible():
+            continue
+        try:
+            disabled = action.is_disabled()
+        except Error:
+            disabled = False
+        if not disabled:
+            return action
     return None
 
 
@@ -518,19 +531,72 @@ def extract_zip(zip_path: Path, destination: Path) -> None:
         archive.extractall(destination)
 
 
+def infer_status_from_row(row: dict[str, str]) -> str:
+    downloaded = (row.get("downloaded") or "").strip().lower()
+    message = row.get("message") or ""
+    task_title = row.get("task_title") or ""
+
+    if downloaded == "yes":
+        return STATUS_DOWNLOADED
+    if NO_DOCUMENTS_PATTERN.search(message):
+        return STATUS_NO_DOCUMENTS
+    if task_title == "ERRO_AUTOMACAO":
+        return STATUS_ERROR
+    if downloaded == "no":
+        return STATUS_ERROR
+    return STATUS_ERROR
+
+
 def load_existing_rows() -> list[dict[str, str]]:
     if not REPORT_PATH.exists():
         return []
     with REPORT_PATH.open("r", newline="", encoding="utf-8") as csv_file:
-        return list(csv.DictReader(csv_file))
+        rows = list(csv.DictReader(csv_file))
+    migrated = False
+    for row in rows:
+        if not row.get("status"):
+            row["status"] = infer_status_from_row(row)
+            migrated = True
+        if not row.get("attempts"):
+            row["attempts"] = "1"
+            migrated = True
+        row.setdefault("downloaded", "no")
+        row.setdefault("download_path", "")
+        row.setdefault("message", "")
+        row.setdefault("task_title", "")
+        row.setdefault("cnpj", "")
+        row.setdefault("company", "")
+        row.setdefault("period", "")
+    if migrated:
+        log("CSV antigo detectado; migrando resultados para o modelo novo")
+    return rows
 
 
-def processed_entries(rows: Iterable[dict[str, str]]) -> set[tuple[str, str]]:
-    return {
-        (row["company"], row["period"])
-        for row in rows
-        if row.get("company") and row.get("period")
-    }
+def row_key(company: str, period: str) -> tuple[str, str]:
+    return (company, period)
+
+
+def build_results_index(rows: Iterable[dict[str, str]]) -> dict[tuple[str, str], dict[str, str]]:
+    index: dict[tuple[str, str], dict[str, str]] = {}
+    for row in rows:
+        company = row.get("company", "")
+        period = row.get("period", "")
+        if company and period:
+            index[row_key(company, period)] = row
+    return index
+
+
+def is_completed_row(row: dict[str, str]) -> bool:
+    return row.get("status") in {STATUS_DOWNLOADED, STATUS_NO_DOCUMENTS}
+
+
+def upsert_result(results: list[dict[str, str]], result_row: dict[str, str]) -> None:
+    key = row_key(result_row["company"], result_row["period"])
+    for index, existing in enumerate(results):
+        if row_key(existing.get("company", ""), existing.get("period", "")) == key:
+            results[index] = result_row
+            return
+    results.append(result_row)
 
 
 def write_report(rows: Iterable[dict[str, str]]) -> None:
@@ -541,11 +607,46 @@ def write_report(rows: Iterable[dict[str, str]]) -> None:
     log(f"Relatorio atualizado: {REPORT_PATH}")
 
 
+def log_report_summary(rows: Iterable[dict[str, str]]) -> None:
+    counts = {
+        STATUS_DOWNLOADED: 0,
+        STATUS_NO_DOCUMENTS: 0,
+        STATUS_ERROR: 0,
+    }
+    for row in rows:
+        status = row.get("status", "")
+        if status in counts:
+            counts[status] += 1
+
+    log("Resumo final do relatorio:")
+    log(f"  {STATUS_DOWNLOADED}: {counts[STATUS_DOWNLOADED]}")
+    log(f"  {STATUS_NO_DOCUMENTS}: {counts[STATUS_NO_DOCUMENTS]}")
+    log(f"  {STATUS_ERROR}: {counts[STATUS_ERROR]}")
+
+
+def log_existing_progress(rows: list[dict[str, str]]) -> None:
+    if not rows:
+        log("Nenhum registro anterior encontrado no CSV")
+        return
+
+    last_row = rows[-1]
+    error_rows = [row for row in rows if row.get("status") == STATUS_ERROR]
+    log(
+        f"Ultimo registro no CSV: {last_row.get('company', '')} | "
+        f"{last_row.get('period', '')} | status={last_row.get('status', '')}"
+    )
+    log(f"Registros com erro pendente no CSV: {len(error_rows)}")
+
+
 def run() -> None:
     ensure_directories()
     results = load_existing_rows()
-    already_processed = processed_entries(results)
-    log(f"Registros ja processados no relatorio: {len(already_processed)}")
+    if results:
+        write_report(results)
+    results_index = build_results_index(results)
+    completed_count = sum(1 for row in results if is_completed_row(row))
+    log(f"Registros concluidos no relatorio: {completed_count}")
+    log_existing_progress(results)
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=HEADLESS)
@@ -563,76 +664,130 @@ def run() -> None:
                 configured_period = configure_generate_grid(page, month, TARGET_YEAR)
                 companies = collect_rows(page)
                 log(f"Total de empresas carregadas para {configured_period}: {len(companies)}")
+                pending = list(companies)
+                pass_number = 1
 
-                for row_meta in companies:
-                    row_key = (row_meta.company, configured_period)
-                    if row_key in already_processed:
-                        log(f"Pulando empresa ja processada: {row_meta.company} | {configured_period}")
-                        continue
+                while pending:
+                    log(
+                        f"Competencia {configured_period}: iniciando passagem {pass_number} "
+                        f"com {len(pending)} empresa(s) pendente(s)"
+                    )
+                    next_pending: list[CompanyRow] = []
 
-                    result_row = {
-                        "cnpj": row_meta.cnpj,
-                        "company": row_meta.company,
-                        "period": configured_period,
-                        "task_title": "",
-                        "message": "",
-                        "downloaded": "no",
-                        "download_path": "",
-                    }
+                    for row_meta in pending:
+                        current_key = row_key(row_meta.company, configured_period)
+                        existing = results_index.get(current_key)
+                        if existing and is_completed_row(existing):
+                            log(f"Pulando empresa ja concluida: {row_meta.company} | {configured_period}")
+                            continue
 
-                    try:
-                        log(f"Iniciando processamento da empresa: {row_meta.company} | {configured_period}")
-                        open_generate_page(page)
-                        configured_period = configure_generate_grid(page, month, TARGET_YEAR)
-                        clear_selected_rows(page)
-                        current = select_company_row(page, row_meta)
-                        result_row["cnpj"] = current.cnpj
-                        result_row["company"] = current.company
-                        result_row["period"] = configured_period
+                        attempts = int(existing.get("attempts", "0")) if existing else 0
+                        if attempts >= MAX_RETRIES_PER_ENTRY:
+                            log(
+                                f"Limite de tentativas atingido: {row_meta.company} | "
+                                f"{configured_period} | tentativas={attempts}"
+                            )
+                            continue
 
-                        submit_generate_operation(page)
-                        requested_at = datetime.now()
-                        open_tasks_panel(page)
-                        task = wait_for_task(page, current.company, requested_at)
+                        result_row = {
+                            "cnpj": row_meta.cnpj,
+                            "company": row_meta.company,
+                            "period": configured_period,
+                            "status": STATUS_ERROR,
+                            "task_title": "",
+                            "message": "",
+                            "downloaded": "no",
+                            "download_path": "",
+                            "attempts": str(attempts + 1),
+                        }
 
-                        download_path = None
-                        if task.has_download:
+                        try:
+                            log(
+                                f"Iniciando processamento da empresa: {row_meta.company} | "
+                                f"{configured_period} | tentativa={attempts + 1}"
+                            )
+                            ensure_expected_route(page)
+                            open_generate_page(page)
+                            configured_period = configure_generate_grid(page, month, TARGET_YEAR)
+                            clear_selected_rows(page)
+                            current = select_company_row(page, row_meta)
+                            result_row["cnpj"] = current.cnpj
+                            result_row["company"] = current.company
+                            result_row["period"] = configured_period
+
+                            submit_generate_operation(page)
+                            requested_at = datetime.now()
+                            open_tasks_panel(page)
+                            task = wait_for_task(page, current.company, requested_at)
+
+                            download_path = None
+                            if task.has_download:
+                                try:
+                                    download_path = save_download_from_task(page, task, configured_period)
+                                except TimeoutError:
+                                    download_path = None
+
+                            result_row["task_title"] = task.title
+                            result_row["message"] = task.message
+                            result_row["downloaded"] = "yes" if download_path else "no"
+                            result_row["download_path"] = download_path or ""
+
+                            if download_path:
+                                result_row["status"] = STATUS_DOWNLOADED
+                            elif NO_DOCUMENTS_PATTERN.search(task.message):
+                                result_row["status"] = STATUS_NO_DOCUMENTS
+                            else:
+                                result_row["status"] = STATUS_ERROR
+
+                            log(
+                                f"Empresa concluida: {current.company} | periodo={configured_period} | "
+                                f"status={result_row['status']} | download={result_row['downloaded']} | "
+                                f"tarefa={task.title}"
+                            )
+                        except Exception as exc:
+                            result_row["status"] = STATUS_ERROR
+                            result_row["task_title"] = "ERRO_AUTOMACAO"
+                            result_row["message"] = f"{type(exc).__name__}: {exc}"
+                            log(
+                                f"Erro ao processar {result_row['company']} | {result_row['period']}: "
+                                f"{type(exc).__name__}: {exc}"
+                            )
+                            traceback.print_exc()
+                        finally:
                             try:
-                                download_path = save_download_from_task(page, task, configured_period)
-                            except TimeoutError:
-                                download_path = None
+                                ensure_expected_route(page)
+                            except Exception:
+                                pass
+                            try:
+                                clear_search(page)
+                            except Exception:
+                                pass
+                            try:
+                                close_tasks_panel(page)
+                            except Exception:
+                                pass
 
-                        result_row["task_title"] = task.title
-                        result_row["message"] = task.message
-                        result_row["downloaded"] = "yes" if download_path else "no"
-                        result_row["download_path"] = download_path or ""
-                        log(
-                            f"Empresa concluida: {current.company} | periodo={configured_period} | "
-                            f"download={result_row['downloaded']} | tarefa={task.title}"
-                        )
-                    except Exception as exc:
-                        result_row["task_title"] = "ERRO_AUTOMACAO"
-                        result_row["message"] = f"{type(exc).__name__}: {exc}"
-                        log(
-                            f"Erro ao processar {result_row['company']} | {result_row['period']}: "
-                            f"{type(exc).__name__}: {exc}"
-                        )
-                        traceback.print_exc()
-                    finally:
-                        try:
-                            clear_search(page)
-                        except Exception:
-                            pass
-                        try:
-                            close_tasks_panel(page)
-                        except Exception:
-                            pass
+                        upsert_result(results, result_row)
+                        results_index[current_key] = result_row
+                        write_report(results)
 
-                    results.append(result_row)
-                    already_processed.add((result_row["company"], result_row["period"]))
-                    write_report(results)
+                        if result_row["status"] == STATUS_ERROR:
+                            next_pending.append(row_meta)
+
+                    if not next_pending:
+                        break
+
+                    if len(next_pending) == len(pending) and all(
+                        int(results_index[row_key(item.company, configured_period)]["attempts"]) >= MAX_RETRIES_PER_ENTRY
+                        for item in next_pending
+                    ):
+                        break
+
+                    pending = next_pending
+                    pass_number += 1
         finally:
             write_report(results)
+            log_report_summary(results)
             log("Encerrando browser")
             context.close()
             browser.close()

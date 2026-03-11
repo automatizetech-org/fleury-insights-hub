@@ -19,6 +19,7 @@ import {
   PanelLeft,
   Calculator,
   ClipboardList,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/utils";
 import { useState, useEffect } from "react";
@@ -87,6 +88,19 @@ const navItems: NavItem[] = [
       { name: "Visão Geral", path: "/contabil" },
       { name: "Balancete", path: "/contabil/balancete" },
       { name: "DRE", path: "/contabil/dre" },
+    ],
+  },
+  {
+    name: "Paralegal",
+    path: "/paralegal",
+    icon: Shield,
+    description: "Certificados e rotinas",
+    panelKey: "paralegal",
+    children: [
+      { name: "Visao Geral", path: "/paralegal" },
+      { name: "Certificados", path: "/paralegal/certificados" },
+      { name: "Tarefas", path: "/paralegal/tarefas" },
+      { name: "Clientes", path: "/paralegal/clientes" },
     ],
   },
   { name: "Financeiro", path: "/financeiro", icon: DollarSign, description: "Contas e Receita", panelKey: "financeiro" },
