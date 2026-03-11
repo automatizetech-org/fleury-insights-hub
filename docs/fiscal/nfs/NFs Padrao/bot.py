@@ -1464,6 +1464,22 @@ def update_robot_status(
         pass
 
 
+def update_robot_last_period_end(
+    supabase_url: str, supabase_anon_key: str, robot_id: str, period_end: Optional[str]
+) -> None:
+    period_end_s = (str(period_end or "").strip().split("T")[0].split(" ")[0]) if period_end else ""
+    if not period_end_s:
+        return
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        client.table("robots").update({
+            "last_period_end": period_end_s,
+            "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", robot_id).execute()
+    except Exception:
+        pass
+
+
 def _get_active_schedule_rule_ids(
     client: Any,
 ) -> Optional[list]:
@@ -5357,6 +5373,13 @@ class MainWindow(QMainWindow):
         self.worker = None
         if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
+        if summary and job and self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            update_robot_last_period_end(
+                self._robot_supabase_url,
+                self._robot_supabase_key,
+                self._robot_id,
+                job.get("period_end") or job.get("period_start"),
+            )
         if job_id and self._robot_supabase_url and self._robot_supabase_key:
             complete_execution_request(
                 self._robot_supabase_url, self._robot_supabase_key, job_id, True, None

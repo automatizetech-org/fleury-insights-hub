@@ -80,9 +80,7 @@ function computePeriodForRobot(robot: Robot, today: Date): { periodStart: string
   }
   if (robot.date_execution_mode === "interval") {
     if (robot.last_period_end) {
-      const next = addDays(new Date(robot.last_period_end), 1)
-      const s = format(next, "yyyy-MM-dd")
-      return { periodStart: s, periodEnd: s }
+      return { periodStart: y, periodEnd: y }
     }
     if (robot.initial_period_start && robot.initial_period_end) {
       return {
