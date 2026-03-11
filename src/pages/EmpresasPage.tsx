@@ -25,15 +25,11 @@ import { Search, Pencil, Plus, Building2, Loader2 } from "lucide-react"
 import { cn } from "@/utils"
 import { getPfxInfo } from "@/lib/validatePfxPassword"
 import { toast } from "sonner"
+import { CONTADORES_RESPONSAVEIS } from "@/constants/contadoresResponsaveis"
 
 type FilterStatus = "active" | "inactive" | "all"
 
 type CompanyWithCert = Company & { auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null; cert_valid_until?: string | null; contador_nome?: string | null; contador_cpf?: string | null }
-
-const CONTADORES = [
-  { nome: "ELIANDERSON GOMES FLEURY", cpf: "71361170115" },
-  { nome: "EDER GOMES FLEURY", cpf: "86873598100" },
-] as const
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -174,7 +170,7 @@ export default function EmpresasPage() {
         updates.auth_mode = "certificate"
         // mantém certificado existente (não envia cert_blob_b64/cert_password)
       }
-      const contador = CONTADORES.find((x) => x.cpf === editContadorCpf)
+      const contador = CONTADORES_RESPONSAVEIS.find((x) => x.cpf === editContadorCpf)
       updates.contador_nome = contador ? contador.nome : null
       updates.contador_cpf = editContadorCpf || null
       await updateCompany(editingCompany.id, updates)
@@ -358,7 +354,7 @@ export default function EmpresasPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Nenhum</SelectItem>
-                  {CONTADORES.map((c) => (
+                  {CONTADORES_RESPONSAVEIS.map((c) => (
                     <SelectItem key={c.cpf} value={c.cpf}>
                       {c.nome} — CPF {c.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}
                     </SelectItem>

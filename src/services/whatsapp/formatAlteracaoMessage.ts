@@ -7,6 +7,7 @@
 import { formatCNPJ, formatCurrencyBRL } from "@/lib/validators";
 import { QUALIFICACAO_DISPLAY } from "@/services/bcbSalarioMinimoService";
 import type { QualificacaoPlano } from "@/services/bcbSalarioMinimoService";
+import { CONTADORES_RESPONSAVEIS } from "@/constants/contadoresResponsaveis";
 
 export interface WhatsAppFormPayload {
   /** Tipo do formulário: abertura | alteracao_contratual | suspensao | baixa */
@@ -36,6 +37,7 @@ export interface WhatsAppFormPayload {
   /** Um ou mais tipos de parcelamento (lista) */
   tipo_parcelamento?: string;
   tipos_parcelamento?: string[];
+  contador_responsavel_cpf?: string;
   valor_honorario: string;
   vencimento_honorario: string;
   data_primeiro_honorario: string;
@@ -142,6 +144,8 @@ export function formatAlteracaoMessage(form: WhatsAppFormPayload): string {
       lines.push("    – " + t.trim());
     });
   }
+  const contadorResponsavel = CONTADORES_RESPONSAVEIS.find((contador) => contador.cpf === form.contador_responsavel_cpf);
+  lines.push("  - Contador Responsavel: " + (contadorResponsavel ? `${contadorResponsavel.nome} (CPF ${contadorResponsavel.cpf})` : "-"));
   lines.push("");
   lines.push(sep);
   lines.push("");

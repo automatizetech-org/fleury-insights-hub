@@ -25,6 +25,7 @@ import { FileText, Search, Loader2, AlertCircle, QrCode, Send, Link, Unlink, Ref
 import { toast } from "sonner";
 import { fetchCnpjPublica, CnpjFormData } from "@/services/cnpjPublicaService";
 import { OPCOES_PARCELAMENTO } from "@/constants/parcelamentoOpcoes";
+import { CONTADORES_RESPONSAVEIS } from "@/constants/contadoresResponsaveis";
 import {
   formatAlteracaoMessage,
   getConnectionStatus,
@@ -99,6 +100,7 @@ const INITIAL_FORM = {
   regime_contabil: "",
   possui_parcelamento: "nao_informado",
   tipos_parcelamento: [""],
+  contador_responsavel_cpf: "",
   valor_honorario: "",
   vencimento_honorario: "",
   data_primeiro_honorario: "",
@@ -1025,9 +1027,28 @@ export function AlteracaoVisaoGeralTab() {
                 <Button type="button" variant="outline" size="sm" onClick={addParcelamento} className="gap-1">
                   <Plus className="h-4 w-4" /> Adicionar parcelamento
                 </Button>
-                <p className="text-xs text-muted-foreground">Digite para buscar ou escolha uma opção.</p>
+                <p className="text-xs text-muted-foreground">Digite para buscar ou escolha uma opcao.</p>
               </div>
             )}
+            <div className="space-y-2">
+              <Label>Contador Responsavel</Label>
+              <Select
+                value={form.contador_responsavel_cpf || "none"}
+                onValueChange={(v) => update("contador_responsavel_cpf", v === "none" ? "" : v)}
+              >
+                <SelectTrigger className="min-h-10 [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:text-left py-2">
+                  <SelectValue placeholder="Selecione o contador" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Nenhum</SelectItem>
+                  {CONTADORES_RESPONSAVEIS.map((contador) => (
+                    <SelectItem key={contador.cpf} value={contador.cpf}>
+                      {contador.nome} - CPF {contador.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </section>
 

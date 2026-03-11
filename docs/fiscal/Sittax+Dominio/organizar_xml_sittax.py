@@ -13,6 +13,7 @@ import re
 
 BASE_DIR = Path("C:\\Users\\Victor\\Downloads\\TESTE IMPORTA\u00c7AO NFE-NFC")
 SPREADSHEET_PATH = Path(__file__).with_name("RELAÇÃO DE EMPRESAS.xls")
+DOMAIN_COMPANIES_PATH = Path(__file__).with_name("empresas dominio")
 DESTINATION_ROOTS = {
     "NFC": BASE_DIR / "NFC",
     "NFE": BASE_DIR / "NFE",
@@ -76,6 +77,12 @@ class CompanyAlias:
     normalized_alias: str
 
 
+@dataclass
+class MatchCandidate:
+    original: str
+    normalized: str
+
+
 def log(message: str) -> None:
     print(message, flush=True)
 
@@ -89,6 +96,19 @@ def choose_period_separation() -> bool:
     log("Separar copia por competencia?")
     log("1 - Sim, manter pasta MMYYYY dentro da empresa")
     log("2 - Nao, juntar tudo direto na pasta da empresa")
+    while True:
+        choice = input("Escolha 1 ou 2: ").strip()
+        if choice == "1":
+            return True
+        if choice == "2":
+            return False
+        log("Opcao invalida. Digite 1 ou 2.")
+
+
+def choose_txt_filter() -> bool:
+    log("Filtrar empresas pelo arquivo 'empresas dominio'?")
+    log("1 - Sim, copiar apenas empresas que tiverem similaridade com o TXT")
+    log("2 - Nao, continuar com o comportamento atual")
     while True:
         choice = input("Escolha 1 ou 2: ").strip()
         if choice == "1":
@@ -123,6 +143,24 @@ def normalize_company_name(value: str) -> str:
 
 def tokenize(value: str) -> set[str]:
     return {token for token in value.split() if token}
+
+
+def load_domain_companies(txt_path: Path) -> list[MatchCandidate]:
+    if not txt_path.exists():
+        return []
+
+    companies: list[MatchCandidate] = []
+    for line in txt_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        company = line.strip()
+        if not company:
+            continue
+        companies.append(
+            MatchCandidate(
+                original=company,
+                normalized=normalize_company_name(company),
+            )
+        )
+    return companies
 
 
 def load_company_aliases(spreadsheet_path: Path) -> list[CompanyAlias]:
@@ -200,6 +238,57 @@ def company_match_score(company_name: str, alias: CompanyAlias) -> float:
     overlap = len(company_tokens & alias_tokens) / max(len(alias_tokens), 1)
     sequence = difflib.SequenceMatcher(None, normalized_company, normalized_alias).ratio()
     return max(sequence, overlap)
+
+
+def candidate_match_score(company_name: str, candidate: MatchCandidate) -> float:
+    normalized_company = normalize_company_name(company_name)
+    normalized_candidate = candidate.normalized
+    if not normalized_company or not normalized_candidate:
+        return 0.0
+
+    if normalized_company == normalized_candidate:
+        return 1.0
+    if normalized_candidate in normalized_company or normalized_company in normalized_candidate:
+        return 0.96
+
+    company_tokens = tokenize(normalized_company)
+    candidate_tokens = tokenize(normalized_candidate)
+    if not company_tokens or not candidate_tokens:
+        return 0.0
+
+    overlap = len(company_tokens & candidate_tokens) / max(len(candidate_tokens), 1)
+    sequence = difflib.SequenceMatcher(None, normalized_company, normalized_candidate).ratio()
+    return max(sequence, overlap)
+
+
+def filter_companies_by_txt(
+    company_dirs: list[Path],
+    domain_companies: list[MatchCandidate],
+) -> tuple[list[Path], list[str]]:
+    if not domain_companies:
+        return company_dirs, []
+
+    matched_txt_names: set[str] = set()
+    filtered_dirs: list[Path] = []
+
+    for company_dir in company_dirs:
+        best_match: MatchCandidate | None = None
+        best_score = 0.0
+        for candidate in domain_companies:
+            score = candidate_match_score(company_dir.name, candidate)
+            if score > best_score:
+                best_score = score
+                best_match = candidate
+        if best_match and best_score >= MIN_MATCH_SCORE:
+            filtered_dirs.append(company_dir)
+            matched_txt_names.add(best_match.original)
+
+    unmatched_txt = sorted(
+        candidate.original
+        for candidate in domain_companies
+        if candidate.original not in matched_txt_names
+    )
+    return filtered_dirs, unmatched_txt
 
 
 def resolve_company_copy_name(company_name: str, aliases: list[CompanyAlias]) -> str:
@@ -355,6 +444,17 @@ def summarize_unmatched_companies(unmatched_companies: list[str]) -> None:
         log(company)
 
 
+def summarize_unmatched_txt_companies(unmatched_txt_companies: list[str]) -> None:
+    log("")
+    log("Empresas do TXT sem correspondencia nas pastas originais")
+    if not unmatched_txt_companies:
+        log("Nenhuma")
+        return
+
+    for company in unmatched_txt_companies:
+        log(company)
+
+
 def run() -> None:
     ensure_destination_roots()
     separate_by_period = choose_period_separation()
@@ -362,13 +462,24 @@ def run() -> None:
         "Modo de copia: "
         + ("separado por competencia" if separate_by_period else "conteudo consolidado por empresa")
     )
+    use_txt_filter = choose_txt_filter()
     aliases = load_company_aliases(SPREADSHEET_PATH)
     log(f"Registros carregados da planilha: {len(aliases)}")
     stats_by_type = {key: CopyStats() for key in DESTINATION_ROOTS}
     empty_companies: list[str] = []
     unmatched_companies: list[str] = []
+    unmatched_txt_companies: list[str] = []
+    selected_company_dirs = company_directories(BASE_DIR)
 
-    for company_dir in company_directories(BASE_DIR):
+    if use_txt_filter:
+        domain_companies = load_domain_companies(DOMAIN_COMPANIES_PATH)
+        log(f"Registros carregados do TXT: {len(domain_companies)}")
+        selected_company_dirs, unmatched_txt_companies = filter_companies_by_txt(selected_company_dirs, domain_companies)
+        log(f"Empresas originais selecionadas pelo TXT: {len(selected_company_dirs)}")
+    else:
+        log("Filtro por TXT desativado")
+
+    for company_dir in selected_company_dirs:
         destination_company_name = resolve_company_copy_name(company_dir.name, aliases)
         if destination_company_name == sanitize_folder_name(company_dir.name):
             unmatched_companies.append(company_dir.name)
@@ -382,6 +493,7 @@ def run() -> None:
     summarize(stats_by_type)
     summarize_empty_companies(empty_companies)
     summarize_unmatched_companies(sorted(set(unmatched_companies)))
+    summarize_unmatched_txt_companies(unmatched_txt_companies)
 
 
 if __name__ == "__main__":
