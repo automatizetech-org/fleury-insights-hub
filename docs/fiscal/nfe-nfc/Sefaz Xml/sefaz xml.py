@@ -1563,7 +1563,7 @@ def save_logins_portal(logins: List[Dict[str, str]], default_cpf: str | None = N
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def load_login_portal(preferred_cpf: str | None = None) -> Tuple[str, str]:
+def load_login_portal(preferred_cpf: str | None = None, strict_preferred: bool = False) -> Tuple[str, str]:
     """
     Lê o JSON de login do portal e devolve (cpf, senha).
     Se não existir ou der erro, devolve ("", "").
@@ -1577,6 +1577,8 @@ def load_login_portal(preferred_cpf: str | None = None) -> Tuple[str, str]:
         for item in logins:
             if cpf_somente_digitos(item.get("cpf", "")) == prefer:
                 return item.get("cpf", ""), item.get("senha", "")
+        if strict_preferred:
+            return "", ""
 
     default_cpf = ""
     for item in logins:
@@ -4575,7 +4577,7 @@ def login_portal(page, cpf: str | None = None, senha: str | None = None):
     fechar_popup_certificado(page)
 
     if not cpf or not senha:
-        cpf, senha = load_login_portal(preferred_cpf=cpf)
+        cpf, senha = load_login_portal(preferred_cpf=cpf, strict_preferred=bool(cpf))
     if not cpf or not senha:
         # Mensagem mais especifica para diagnostico (arquivo/CPF solicitado).
         pref = cpf_somente_digitos(cpf or "")
@@ -4897,7 +4899,7 @@ def abrir_menu_baixar_xml_nfe(page):
 def login_netaccess(page, cpf: str | None = None, senha: str | None = None):
     if not cpf or not senha:
         cpf_pref = cpf or _get_current_login_cpf()
-        cpf, senha = load_login_portal(preferred_cpf=cpf_pref)
+        cpf, senha = load_login_portal(preferred_cpf=cpf_pref, strict_preferred=bool(cpf_pref))
     if not cpf or not senha:
         raise RuntimeError(
             "Login do portal não configurado. Cadastre em 'Login do Portal'."
@@ -8045,13 +8047,14 @@ class AutomationWorker(QThread):
             default_cpf = cpf_somente_digitos(default_cpf)
 
             _cpf_not_found_warned: set[str] = set()
+            invalid_login_companies: List[Tuple[str, str, str]] = []
             login_groups: Dict[str, List[str]] = {}
 
             for ie_tmp in (self.empresas or []):
                 info_tmp = self.empresas_data.get(ie_tmp, {}) or {}
                 cpf_tmp = cpf_somente_digitos(info_tmp.get("login_cpf", ""))
                 if cpf_tmp:
-                    cpf_check, _ = load_login_portal(preferred_cpf=cpf_tmp)
+                    cpf_check, _ = load_login_portal(preferred_cpf=cpf_tmp, strict_preferred=True)
                     if cpf_somente_digitos(cpf_check) != cpf_tmp:
                         if cpf_tmp not in _cpf_not_found_warned:
                             _cpf_not_found_warned.add(cpf_tmp)
@@ -8059,10 +8062,30 @@ class AutomationWorker(QThread):
                                 f"[WARN] ⚠️ Login '{cpf_formatado(cpf_tmp)}' não encontrado em login_portal.json. "
                                 "Essas empresas serão executadas com o login padrão."
                             )
-                        cpf_tmp = ""
+                        invalid_login_companies.append(
+                            (
+                                ie_tmp,
+                                str(info_tmp.get("display_name") or ie_tmp),
+                                cpf_tmp,
+                            )
+                        )
+                        continue
 
                 cpf_group = cpf_tmp or default_cpf
                 login_groups.setdefault(cpf_group, []).append(ie_tmp)
+
+            if invalid_login_companies:
+                for ie_tmp, display_name_tmp, cpf_tmp in invalid_login_companies:
+                    self._log(
+                        f"[ERRO] âŒ A empresa '{display_name_tmp}' (IE {ie_formatada(ie_tmp)}) "
+                        f"estÃ¡ vinculada ao login {cpf_formatado(cpf_tmp)}, mas esse CPF nÃ£o foi encontrado "
+                        "nas credenciais disponÃ­veis do portal."
+                    )
+                self._log(
+                    "[ERRO] âŒ ExecuÃ§Ã£o cancelada para evitar processar empresas com login do contador errado. "
+                    "Revise os logins globais do Sefaz Xml e tente novamente."
+                )
+                return
 
             def _emp_sort_key(_ie: str):
                 try:
@@ -8093,26 +8116,22 @@ class AutomationWorker(QThread):
 
             current_login_cpf = ""
 
-            def _start_session_for_login(cpf_digits: str):
-                nonlocal pw, browser, page, current_login_cpf
+            def _teardown_current_session(wipe_profile: bool = False, wait_s: float = 3.0) -> None:
+                nonlocal pw, browser, page
 
-                cpf_digits = cpf_somente_digitos(cpf_digits)
-                if not cpf_digits:
-                    self._log("[ERRO] ❌ CPF de login vazio para iniciar sessão.")
-                    return False
-
-                cpf_use, senha_use = load_login_portal(preferred_cpf=cpf_digits)
-                if not cpf_use or not senha_use:
-                    # Não trata como exceção "não tratada": mostra claramente o que falta no JSON.
-                    self._log(
-                        f"[ERRO] ❌ Credenciais do portal não encontradas para {cpf_formatado(cpf_digits)}. "
-                        f"Verifique se a senha está preenchida em {LOGIN_PATH}."
-                    )
-                    return False
-
-                # Fecha sessao anterior (mata CDP/Playwright e o Chrome e recriado pelo iniciar_chrome_com_cdp).
+                # Fecha handles ativos antes de matar processos, para evitar sobra de contexto/aba.
+                try:
+                    if page:
+                        page.close()
+                except Exception:
+                    pass
                 try:
                     if browser:
+                        for ctx in list(getattr(browser, "contexts", []) or []):
+                            try:
+                                ctx.close()
+                            except Exception:
+                                pass
                         browser.close()
                 except Exception:
                     pass
@@ -8121,47 +8140,73 @@ class AutomationWorker(QThread):
                         pw.stop()
                 except Exception:
                     pass
-                # Garante que o processo do Chrome anterior nao ficou vivo (browser.close() pode so desconectar do CDP).
+
                 try:
                     _kill_automation_chrome_proc(log_fn=self._log)
                     _kill_automation_chrome_instances()
                 except Exception:
                     pass
-                # Apenas na TROCA de login: reinicia proxy e limpa sessao do perfil (cookies/storage).
-                # Se for o primeiro login da execucao, evita matar/limpar desnecessariamente.
-                if current_login_cpf:
-                    # Reinicia proxy do zero para o proximo login (sem reutilizar porta/processo).
-                    try:
-                        _stop_proxy_if_running(log_fn=self._log)
-                    except Exception:
-                        pass
-                    try:
-                        _kill_any_mitm_processes(log_fn=self._log)
-                    except Exception:
-                        pass
-                    # Se estava apontando para proxy local, limpa antes de subir de novo.
-                    try:
-                        global SEFAZ_PROXY
-                        if (SEFAZ_PROXY or "").strip().lower().startswith("http://127.0.0.1:"):
-                            SEFAZ_PROXY = ""
-                            os.environ.pop("SEFAZ_PROXY", None)
-                    except Exception:
-                        pass
 
-                    # Mantem o mesmo PROFILE_DIR, mas limpa sessao/cookies para nao herdar login anterior.
+                try:
+                    _stop_proxy_if_running(log_fn=self._log)
+                except Exception:
+                    pass
+                try:
+                    _kill_any_mitm_processes(log_fn=self._log)
+                except Exception:
+                    pass
+
+                try:
+                    global SEFAZ_PROXY
+                    if (SEFAZ_PROXY or "").strip().lower().startswith("http://127.0.0.1:"):
+                        SEFAZ_PROXY = ""
+                        os.environ.pop("SEFAZ_PROXY", None)
+                except Exception:
+                    pass
+
+                # Na troca de login, o perfil precisa ser zerado por completo para não herdar sessão.
+                if wipe_profile:
+                    try:
+                        if os.path.isdir(PROFILE_DIR):
+                            shutil.rmtree(PROFILE_DIR, ignore_errors=True)
+                            self._log("[INFO] 🧹 Perfil do Chrome removido para iniciar o próximo login do zero.")
+                    except Exception as e:
+                        self._log(f"[WARN] ⚠️ Falha ao remover perfil do Chrome: {e}")
+                else:
                     try:
                         _clear_chrome_profile_session(PROFILE_DIR, log_fn=self._log)
                     except Exception:
                         pass
-                # Evita corrida: dá tempo do Windows liberar porta/arquivos antes de abrir o próximo Chrome.
+
                 try:
-                    sleep(3)
+                    sleep(float(wait_s or 0))
                 except Exception:
-                    time.sleep(3)
+                    time.sleep(float(wait_s or 0))
+
                 pw = browser = page = None
                 self.pw = None
                 self.browser = None
                 self.page = None
+
+            def _start_session_for_login(cpf_digits: str):
+                nonlocal pw, browser, page, current_login_cpf
+
+                cpf_digits = cpf_somente_digitos(cpf_digits)
+                if not cpf_digits:
+                    self._log("[ERRO] ❌ CPF de login vazio para iniciar sessão.")
+                    return False
+
+                cpf_use, senha_use = load_login_portal(preferred_cpf=cpf_digits, strict_preferred=True)
+                if not cpf_use or not senha_use:
+                    # Não trata como exceção "não tratada": mostra claramente o que falta no JSON.
+                    self._log(
+                        f"[ERRO] ❌ Credenciais do portal não encontradas para {cpf_formatado(cpf_digits)}. "
+                        f"Verifique se a senha está preenchida em {LOGIN_PATH}."
+                    )
+                    return False
+
+                # Na troca de login, derruba tudo e apaga o perfil para impedir herança da sessão anterior.
+                _teardown_current_session(wipe_profile=bool(current_login_cpf), wait_s=3.0)
 
                 self._log("[INFO] 🔧 Preparando ambiente de automação (Playwright + Chrome via CDP)...")
                 try:
@@ -8225,7 +8270,7 @@ class AutomationWorker(QThread):
                     self._log("[ERRO] Nao foi possivel reiniciar a sessao: CPF atual vazio e sem CPF padrao.")
                     return False
 
-                cpf_use, senha_use = load_login_portal(preferred_cpf=cpf_digits)
+                cpf_use, senha_use = load_login_portal(preferred_cpf=cpf_digits, strict_preferred=True)
                 if not cpf_use or not senha_use:
                     self._log(
                         f"[ERRO] Credenciais nao encontradas para reiniciar sessao no login {cpf_formatado(cpf_digits)}."
@@ -8237,54 +8282,7 @@ class AutomationWorker(QThread):
                 else:
                     self._log("[WARN] Reiniciando navegador por regra de falhas consecutivas.")
 
-                # Fecha Playwright/Browser atuais (se existirem)
-                try:
-                    if browser:
-                        browser.close()
-                except Exception:
-                    pass
-                try:
-                    if pw:
-                        pw.stop()
-                except Exception:
-                    pass
-
-                # Garante que o Chrome desta automacao nao ficou vivo
-                try:
-                    _kill_automation_chrome_proc(log_fn=self._log)
-                except Exception:
-                    pass
-                try:
-                    _kill_automation_chrome_instances(log_fn=self._log)
-                except Exception:
-                    pass
-                # Reinicia o proxy para garantir sessao limpa e evitar abrir sem interceptacao.
-                try:
-                    _stop_proxy_if_running(log_fn=self._log)
-                except Exception:
-                    pass
-                try:
-                    _kill_any_mitm_processes(log_fn=self._log)
-                except Exception:
-                    pass
-                try:
-                    global SEFAZ_PROXY
-                    if (SEFAZ_PROXY or "").strip().lower().startswith("http://127.0.0.1:"):
-                        SEFAZ_PROXY = ""
-                        os.environ.pop("SEFAZ_PROXY", None)
-                except Exception:
-                    pass
-
-                # Espera exatamente 5s (ou o valor configurado) antes de reabrir
-                try:
-                    sleep(float(wait_s or 5.0))
-                except Exception:
-                    time.sleep(float(wait_s or 5.0))
-
-                pw = browser = page = None
-                self.pw = None
-                self.browser = None
-                self.page = None
+                _teardown_current_session(wipe_profile=True, wait_s=float(wait_s or 5.0))
 
                 # Reabre Chrome e reautentica
                 try:
