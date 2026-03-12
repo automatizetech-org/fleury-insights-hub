@@ -10,7 +10,15 @@ import {
   updateScheduleRule,
   pauseScheduleRule,
 } from "@/services/scheduleRulesService"
-import { getPendingOrRunningExecutionRequests, cancelPendingByScheduleRuleId, markRunningAsCancelledByScheduleRuleId } from "@/services/executionRequestsService"
+import {
+  getPendingOrRunningExecutionRequests,
+  cancelPendingByRobotTechnicalIds,
+  cancelPendingByScheduleRuleId,
+  deleteAllByRobotTechnicalIds,
+  deleteAllByScheduleRuleId,
+  markRunningAsCancelledByRobotTechnicalIds,
+  markRunningAsCancelledByScheduleRuleId,
+} from "@/services/executionRequestsService"
 import { upsertRobotDisplayConfig } from "@/services/robotDisplayConfigService"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
@@ -23,6 +31,7 @@ import { ptBR } from "date-fns/locale"
 import type { Robot } from "@/services/robotsService"
 import type { ScheduleRule } from "@/services/scheduleRulesService"
 import { getCommonRobotNotesMode, getRobotNotesMode } from "@/lib/robotNotes"
+import type { RobotExecutionMode } from "@/types/database"
 
 const DEBOUNCE_MS = 800
 
@@ -92,6 +101,43 @@ function computePeriodForRobot(robot: Robot, today: Date): { periodStart: string
   return { periodStart: y, periodEnd: y }
 }
 
+function getStoredIntervalPeriod(robot: Robot): { periodStart: string; periodEnd: string } | null {
+  if (robot.date_execution_mode !== "interval") return null
+  if (!robot.initial_period_start || !robot.initial_period_end) return null
+  return {
+    periodStart: robot.initial_period_start,
+    periodEnd: robot.initial_period_end,
+  }
+}
+
+function isFiscalNotesRobot(robot: Robot): boolean {
+  const segmentPath = (robot.segment_path || "").toUpperCase()
+  return Boolean(
+    robot.is_fiscal_notes_robot ||
+    robot.fiscal_notes_kind ||
+    robot.notes_mode ||
+    segmentPath.includes("FISCAL/NFS") ||
+    segmentPath.includes("FISCAL/NFE") ||
+    segmentPath.includes("FISCAL/NFC")
+  )
+}
+
+function computeScheduledPeriodForRobot(robot: Robot, today: Date): { periodStart: string; periodEnd: string } {
+  if (isFiscalNotesRobot(robot) && robot.date_execution_mode === "interval") {
+    const yesterday = format(subDays(today, 1), "yyyy-MM-dd")
+    return { periodStart: yesterday, periodEnd: yesterday }
+  }
+  return computePeriodForRobot(robot, today)
+}
+
+function computeManualPeriodForRobot(robot: Robot, today: Date): { periodStart: string; periodEnd: string } {
+  if (isFiscalNotesRobot(robot)) {
+    const storedInterval = getStoredIntervalPeriod(robot)
+    if (storedInterval) return storedInterval
+  }
+  return computePeriodForRobot(robot, today)
+}
+
 export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const queryClient = useQueryClient()
   const [companyIds, setCompanyIds] = useState<Set<string>>(new Set())
@@ -100,6 +146,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [runAtDate, setRunAtDate] = useState(format(new Date(), "yyyy-MM-dd"))
   const [runAtTime, setRunAtTime] = useState("08:00")
   const [runDaily, setRunDaily] = useState(false)
+  const [executionMode, setExecutionMode] = useState<RobotExecutionMode>("sequential")
   const [submitting, setSubmitting] = useState(false)
   const [activeRuleId, setActiveRuleId] = useState<string | null>(null)
   const [countdownMs, setCountdownMs] = useState<number>(0)
@@ -114,6 +161,8 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const { data: robots = [] } = useQuery({
     queryKey: ["admin-robots"],
     queryFn: getRobots,
+    refetchOnWindowFocus: true,
+    refetchInterval: 2000,
   })
 
   const { data: scheduleRules = [], isLoading: loadingRules } = useQuery({
@@ -182,6 +231,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       if (activeRule.run_at_date) setRunAtDate(activeRule.run_at_date)
       const t = String(activeRule.run_at_time).slice(0, 5)
       setRunAtTime(t)
+      setExecutionMode((activeRule.execution_mode === "parallel" ? "parallel" : "sequential") as RobotExecutionMode)
       setRunDaily(true)
     }
   }, [activeRule?.id])
@@ -228,6 +278,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       runAtDate,
       runAtTime: runAtTime.slice(0, 5),
       runDaily: true,
+      executionMode,
     }
     updateScheduleRule(activeRule.id, payload)
       .then(() => {
@@ -235,7 +286,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         queryClient.invalidateQueries({ queryKey: ["schedule-rules-active"] })
       })
       .catch(() => {})
-  }, [activeRule?.id, runDaily, runAtDate, runAtTime, companyIds, robotIdsOrdered, allRobots, robots, commonSelectedRobotNotesMode, queryClient])
+  }, [activeRule?.id, runDaily, runAtDate, runAtTime, companyIds, robotIdsOrdered, allRobots, robots, commonSelectedRobotNotesMode, executionMode, queryClient])
 
   useEffect(() => {
     if (!activeRule?.id || !runDaily) return
@@ -251,10 +302,11 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       (!activeRule.robot_technical_ids?.includes("all") && allRobots) ||
       (robotIdsOrdered.length !== (activeRule.robot_technical_ids?.filter((x) => x !== "all").length ?? 0)) ||
       robotIdsOrdered.some((id) => !(activeRule.robot_technical_ids || []).includes(id))
-    if (!dateChanged && !timeChanged && !companiesChanged && !robotsChanged) return
+    const executionModeChanged = (activeRule.execution_mode === "parallel" ? "parallel" : "sequential") !== executionMode
+    if (!dateChanged && !timeChanged && !companiesChanged && !robotsChanged && !executionModeChanged) return
     const t = setTimeout(persistScheduleRule, DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [activeRule?.id, activeRule?.run_at_date, activeRule?.run_at_time, activeRule?.company_ids, activeRule?.robot_technical_ids, runDaily, runAtDate, runAtTime, companyIds, robotIdsOrdered, allRobots, persistScheduleRule])
+  }, [activeRule?.id, activeRule?.run_at_date, activeRule?.run_at_time, activeRule?.company_ids, activeRule?.robot_technical_ids, activeRule?.execution_mode, runDaily, runAtDate, runAtTime, companyIds, robotIdsOrdered, allRobots, executionMode, persistScheduleRule])
 
   const toggleCompany = (id: string) => {
     setCompanyIds((prev) => {
@@ -324,6 +376,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     setSubmitting(true)
     try {
       if (runDaily) {
+        const executionGroupId = crypto.randomUUID()
         const payload = {
           companyIds: Array.from(companyIds),
           robotTechnicalIds: robotIdsOrdered.length > 0 ? robotIdsOrdered : ["all"],
@@ -331,6 +384,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
           runAtDate,
           runAtTime: runAtTime.slice(0, 5),
           runDaily: true,
+          executionMode,
         }
         let ruleId: string
         if (scheduleRules.length > 0) {
@@ -340,6 +394,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
           const created = await createScheduleRule(payload)
           ruleId = created.id
         }
+        await cancelPendingByScheduleRuleId(ruleId)
         const technicalIds =
           payload.robotTechnicalIds.includes("all")
             ? robots.map((r) => r.technical_id)
@@ -359,17 +414,8 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
             .map((id) => robots.find((r) => r.technical_id === id))
             .filter((r): r is Robot => !!r)
           const today = new Date()
-          for (const robot of list) {
-            let periodStart: string
-            let periodEnd: string
-            if (robot.date_execution_mode === "interval" && robot.initial_period_start && robot.initial_period_end) {
-              periodStart = robot.initial_period_start
-              periodEnd = robot.initial_period_end
-            } else {
-              const p = computePeriodForRobot(robot, today)
-              periodStart = p.periodStart
-              periodEnd = p.periodEnd
-            }
+          for (const [index, robot] of list.entries()) {
+            const { periodStart, periodEnd } = computeScheduledPeriodForRobot(robot, today)
             await createExecutionRequest({
               companyIds: Array.from(companyIds),
               robotTechnicalIds: [robot.technical_id],
@@ -377,6 +423,9 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
               periodEnd,
               notesMode: getRobotNotesMode(robot) ?? undefined,
               scheduleRuleId: ruleId,
+              executionMode,
+              executionGroupId,
+              executionOrder: index,
             })
           }
           await updateScheduleRule(ruleId, {
@@ -400,18 +449,22 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         queryClient.invalidateQueries({ queryKey: ["schedule-rules"] })
         queryClient.invalidateQueries({ queryKey: ["schedule-rules-active"] })
       } else {
+        const executionGroupId = crypto.randomUUID()
         const list = robotIdsOrdered
           .map((id) => robots.find((r) => r.technical_id === id))
           .filter((r): r is Robot => !!r)
         const today = new Date()
-        for (const robot of list) {
-          const { periodStart, periodEnd } = computePeriodForRobot(robot, today)
+        for (const [index, robot] of list.entries()) {
+          const { periodStart, periodEnd } = computeManualPeriodForRobot(robot, today)
           await createExecutionRequest({
             companyIds: Array.from(companyIds),
             robotTechnicalIds: [robot.technical_id],
             periodStart,
             periodEnd,
             notesMode: getRobotNotesMode(robot) ?? undefined,
+            executionMode,
+            executionGroupId,
+            executionOrder: index,
           })
         }
         await Promise.all(
@@ -439,13 +492,17 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     if (!activeRule?.id) return
     setSubmitting(true)
     try {
-      await cancelPendingByScheduleRuleId(activeRule.id)
-      await markRunningAsCancelledByScheduleRuleId(activeRule.id)
-      await pauseScheduleRule(activeRule.id)
       const technicalIds =
         activeRule.robot_technical_ids?.includes("all")
           ? robots.map((r) => r.technical_id)
           : (activeRule.robot_technical_ids || []).filter((id): id is string => id !== "all")
+      await cancelPendingByScheduleRuleId(activeRule.id)
+      await markRunningAsCancelledByScheduleRuleId(activeRule.id)
+      await cancelPendingByRobotTechnicalIds(technicalIds)
+      await markRunningAsCancelledByRobotTechnicalIds(technicalIds)
+      await deleteAllByScheduleRuleId(activeRule.id)
+      await deleteAllByRobotTechnicalIds(technicalIds)
+      await pauseScheduleRule(activeRule.id)
       for (const tid of technicalIds) {
         const robot = robots.find((r) => r.technical_id === tid)
         if (robot) await updateRobot(robot.id, { last_period_end: null })
@@ -627,6 +684,29 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
           <input type="checkbox" checked={runDaily} onChange={(e) => setRunDaily(e.target.checked)} className="rounded border-input" />
           <span className="text-xs font-medium">Rodar automaticamente a cada 24h neste horário</span>
         </label>
+        <div className="rounded-md border border-border bg-muted/30 px-3 py-3 space-y-2">
+          <Label className="text-xs font-medium">Modo de execução dos robôs</Label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="execution-mode"
+              checked={executionMode === "sequential"}
+              onChange={() => setExecutionMode("sequential")}
+              className="rounded-full border-input"
+            />
+            <span className="text-xs">Um por vez, respeitando a ordem da lista</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="execution-mode"
+              checked={executionMode === "parallel"}
+              onChange={() => setExecutionMode("parallel")}
+              className="rounded-full border-input"
+            />
+            <span className="text-xs">Todos os robôs selecionados de uma vez</span>
+          </label>
+        </div>
         {runDaily && (
           <div className="rounded-md bg-muted/50 border border-border px-3 py-2 text-[10px] text-muted-foreground">
             <p>Primeira execução na data e hora acima. Depois, o sistema repete a cada 24 horas. O período de cada robô segue o modo configurado em Admin → Robôs (por competência ou por intervalo).</p>

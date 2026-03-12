@@ -920,7 +920,6 @@ def update_robot_heartbeat(supabase_url: str, supabase_anon_key: str, robot_id: 
         client = create_client(supabase_url.strip(), supabase_anon_key.strip())
         client.table("robots").update(
             {
-                "status": "active",
                 "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
             }
         ).eq("id", robot_id).execute()
@@ -967,10 +966,25 @@ def claim_execution_request(
     try:
         client = create_client(supabase_url.strip(), supabase_anon_key.strip())
         active_rule_ids = _get_active_schedule_rule_ids(client)
+        try:
+            rpc_response = client.rpc(
+                "claim_next_execution_request",
+                {
+                    "p_robot_technical_id": ROBOT_TECHNICAL_ID,
+                    "p_robot_id": robot_id,
+                    "p_active_schedule_rule_ids": active_rule_ids,
+                },
+            ).execute()
+            rpc_rows = getattr(rpc_response, "data", None) or []
+            if rpc_rows:
+                return rpc_rows[0]
+        except Exception:
+            pass
         res = (
             client.table("execution_requests")
             .select("*")
             .eq("status", "pending")
+            .order("execution_order")
             .order("created_at")
             .limit(10)
             .execute()
@@ -981,16 +995,47 @@ def claim_execution_request(
             if schedule_rule_id is not None and active_rule_ids:
                 if schedule_rule_id not in active_rule_ids:
                     continue
+            execution_mode = str(row.get("execution_mode") or "sequential").strip().lower()
+            execution_group_id = row.get("execution_group_id")
+            if execution_mode == "sequential" and execution_group_id:
+                blockers = (
+                    client.table("execution_requests")
+                    .select("id, execution_order, created_at")
+                    .eq("execution_group_id", execution_group_id)
+                    .in_("status", ["pending", "running"])
+                    .order("execution_order")
+                    .order("created_at")
+                    .execute()
+                )
+                blocker_rows = getattr(blockers, "data", None) or []
+                if blocker_rows and blocker_rows[0].get("id") != row.get("id"):
+                    continue
             tech_ids = row.get("robot_technical_ids") or []
             if "all" in tech_ids or ROBOT_TECHNICAL_ID in tech_ids:
-                client.table("execution_requests").update(
-                    {
-                        "status": "running",
-                        "robot_id": robot_id,
-                        "claimed_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                ).eq("id", row["id"]).eq("status", "pending").execute()
-                return row
+                (
+                    client.table("execution_requests")
+                    .update(
+                        {
+                            "status": "running",
+                            "robot_id": robot_id,
+                            "claimed_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    .eq("id", row["id"])
+                    .eq("status", "pending")
+                    .execute()
+                )
+                claimed = (
+                    client.table("execution_requests")
+                    .select("*")
+                    .eq("id", row["id"])
+                    .eq("status", "running")
+                    .limit(1)
+                    .execute()
+                )
+                claimed_rows = getattr(claimed, "data", None) or []
+                if claimed_rows:
+                    return claimed_rows[0]
         return None
     except Exception as exc:
         if log_callback:
@@ -3041,7 +3086,8 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
         if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
-            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
+            current_status = "processing" if self.thread and self.thread.isRunning() else "active"
+            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, current_status)
         if not self.heartbeat_timer.isActive():
             self.heartbeat_timer.start(60000)
         if not self.display_config_timer.isActive():

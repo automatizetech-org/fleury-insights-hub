@@ -9,6 +9,7 @@ O agendamento diário dos robôs roda **dentro do Supabase**, sem cron externo (
    - **Próxima execução** = primeira vez: `run_at_date` + `run_at_time`; depois: `last_run_at` + 24h.
    - Se **agora < próxima execução** → não faz nada.
    - Se **agora >= próxima execução** e não há `execution_requests` pending/running dessa regra → cria os `execution_requests` (um por robô) e atualiza `last_run_at` na regra (próxima execução = daqui a 24h).
+   - Para robôs fiscais em modo **intervalo**, o agendamento diário usa **somente ontem**. A execução manual sem `Rodar 24h` respeita o intervalo salvo em **Editar robô**.
 3. **Sem agendamento ativo** (nenhuma regra com `status = 'active'` e `run_daily = true`) → o cron não cria nenhum request.
 4. Os **robôs** fazem poll na fila; só reivindicam jobs de regras ainda ativas (ou jobs manuais sem `schedule_rule_id`).
 

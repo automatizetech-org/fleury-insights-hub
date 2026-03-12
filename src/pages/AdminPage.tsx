@@ -556,22 +556,6 @@ export default function AdminPage() {
         </>
       )}
 
-      {isSuperAdmin && (
-        <GlassCard className="overflow-hidden">
-          <div className="p-4 border-b border-border">
-            <h3 className="text-sm font-semibold font-display">Caminhos padrão</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Estrutura onde o robô grava arquivos (conforme departamento/segmento configurado em cada robô). A pasta base é definida acima.
-            </p>
-          </div>
-          <div className="p-4 space-y-2 font-mono text-xs bg-muted/30">
-            <p><span className="text-muted-foreground">Base:</span> definida no painel (Pasta base na VM) — robôs leem do Supabase</p>
-            <p><span className="text-muted-foreground">Estrutura:</span> EMPRESAS\{`{nome_empresa}`}\{segmentSlug}\{`{ano}`}\{`{mês}`}\{`{dia}`}</p>
-            <p><span className="text-muted-foreground">Relatórios:</span> EMPRESAS\{segmentSlug}\relatorio nfs.pdf</p>
-          </div>
-        </GlassCard>
-      )}
-
       <GlassCard className="overflow-hidden">
         <div className="p-4 border-b border-border">
           <h3 className="text-sm font-semibold font-display">Matriz de Permissões</h3>

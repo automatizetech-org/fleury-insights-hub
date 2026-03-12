@@ -144,6 +144,7 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     queryKey: ["admin-robots"],
     queryFn: getRobots,
     refetchOnWindowFocus: true,
+    refetchInterval: 2000,
   })
 
   const { data: flatNodes = [] } = useQuery({

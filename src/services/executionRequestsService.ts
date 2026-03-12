@@ -1,5 +1,5 @@
 import { supabase } from "./supabaseClient"
-import type { RobotNotesMode, Tables } from "@/types/database"
+import type { RobotExecutionMode, RobotNotesMode, Tables } from "@/types/database"
 
 export type ExecutionRequest = Tables<"execution_requests">
 
@@ -10,14 +10,31 @@ export async function createExecutionRequest(params: {
   periodEnd?: string | null
   notesMode?: RobotNotesMode | null
   scheduleRuleId?: string | null
+  executionMode?: RobotExecutionMode | null
+  executionGroupId?: string | null
+  executionOrder?: number | null
 }): Promise<ExecutionRequest> {
   const { data: { user } } = await supabase.auth.getUser()
+  for (const technicalId of params.robotTechnicalIds) {
+    const deleteQuery = supabase
+      .from("execution_requests")
+      .delete()
+      .eq("status", "pending")
+      .contains("robot_technical_ids", [technicalId])
+
+    const { error: deleteError } = await deleteQuery
+    if (deleteError) throw deleteError
+  }
+
   const row: Record<string, unknown> = {
     company_ids: params.companyIds,
     robot_technical_ids: params.robotTechnicalIds,
     period_start: params.periodStart ?? null,
     period_end: params.periodEnd ?? null,
     notes_mode: params.notesMode ?? null,
+    execution_mode: params.executionMode ?? "sequential",
+    execution_group_id: params.executionGroupId ?? null,
+    execution_order: params.executionOrder ?? null,
     status: "pending",
     created_by: user?.id ?? null,
   }
@@ -88,4 +105,47 @@ export async function markRunningAsCancelledByScheduleRuleId(scheduleRuleId: str
     .eq("schedule_rule_id", scheduleRuleId)
     .eq("status", "running")
   if (error) throw error
+}
+
+export async function cancelPendingByRobotTechnicalIds(robotTechnicalIds: string[]): Promise<void> {
+  for (const technicalId of robotTechnicalIds) {
+    const { error } = await supabase
+      .from("execution_requests")
+      .delete()
+      .eq("status", "pending")
+      .contains("robot_technical_ids", [technicalId])
+    if (error) throw error
+  }
+}
+
+export async function markRunningAsCancelledByRobotTechnicalIds(robotTechnicalIds: string[]): Promise<void> {
+  for (const technicalId of robotTechnicalIds) {
+    const { error } = await supabase
+      .from("execution_requests")
+      .update({
+        status: "failed",
+        error_message: "Cancelado ao parar agendamento",
+      })
+      .eq("status", "running")
+      .contains("robot_technical_ids", [technicalId])
+    if (error) throw error
+  }
+}
+
+export async function deleteAllByScheduleRuleId(scheduleRuleId: string): Promise<void> {
+  const { error } = await supabase
+    .from("execution_requests")
+    .delete()
+    .eq("schedule_rule_id", scheduleRuleId)
+  if (error) throw error
+}
+
+export async function deleteAllByRobotTechnicalIds(robotTechnicalIds: string[]): Promise<void> {
+  for (const technicalId of robotTechnicalIds) {
+    const { error } = await supabase
+      .from("execution_requests")
+      .delete()
+      .contains("robot_technical_ids", [technicalId])
+    if (error) throw error
+  }
 }
