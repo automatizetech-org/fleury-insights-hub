@@ -229,7 +229,12 @@ def _supabase_retry_execute(fn, log_fn=None, retries: int = 4, base_sleep_s: flo
             msg = str(e)
             is_win_10035 = ("WinError 10035" in msg) or ("10035" in msg)
             is_httpx_read = (httpx is not None) and isinstance(e, getattr(httpx, "ReadError", Exception))
-            is_transient = is_win_10035 or is_httpx_read
+            is_httpx_remote_protocol = (httpx is not None) and isinstance(
+                e, getattr(httpx, "RemoteProtocolError", Exception)
+            )
+            # httpcore.RemoteProtocolError pode aparecer encapsulado ou direto
+            is_server_disconnected = "Server disconnected" in msg
+            is_transient = is_win_10035 or is_httpx_read or is_httpx_remote_protocol or is_server_disconnected
 
             if not is_transient or attempt >= retries:
                 raise
@@ -298,12 +303,58 @@ def resolve_dashboard_output_root() -> Optional[str]:
     base = get_resolved_output_base()
     if not base:
         return None
-    cfg = get_robot_api_config() or {}
-    segment_path = str(cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
-    root = pathlib.Path(base)
-    for part in [p.strip() for p in segment_path.split("/") if p.strip()]:
-        root = root / safe_folder_name(part)
+    # Padrão do projeto: base_path aponta para a RAIZ (ex.: C:\Users\ROBO\Documents)
+    # e os robôs gravam dentro de: <base_path>\EMPRESAS\<EMPRESA>\...
+    root = pathlib.Path(base) / "EMPRESAS"
     return str(root)
+
+
+def get_robot_segment_under_company_parts() -> List[str]:
+    """
+    Retorna os segmentos do robô para usar *dentro* da pasta da empresa.
+
+    Ex.: se o dashboard usa segment_path = "FISCAL/NFE-NFC",
+    queremos salvar em: ...\\EMPRESAS\\<EMPRESA>\\FISCAL\\NFE-NFC\\...
+    (respeita a estrutura 3D do dashboard).
+    """
+    try:
+        cfg = get_robot_api_config() or {}
+        segment_path = str(cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
+        parts = [safe_folder_name(p.strip()) for p in segment_path.split("/") if p.strip()]
+        parts = [p for p in parts if p]
+        if not parts:
+            return ["NFE-NFC"]
+
+        return parts if parts else ["NFE-NFC"]
+    except Exception:
+        return ["NFE-NFC"]
+
+
+def _open_pdf_file(path_str: str, log_fn: Optional[Callable[[str], None]] = None) -> bool:
+    """
+    Abre um PDF no Windows de forma resiliente.
+    Primeiro tenta QDesktopServices; se falhar, faz fallback para os.startfile.
+    """
+    try:
+        if not path_str:
+            return False
+        p = str(path_str)
+        try:
+            if os.path.exists(p):
+                QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+                return True
+        except Exception:
+            pass
+        try:
+            if os.name == "nt" and os.path.exists(p):
+                os.startfile(p)  # type: ignore[attr-defined]
+                return True
+        except Exception as e:
+            if callable(log_fn):
+                log_fn(f"[ERRO] Falha ao abrir PDF automaticamente (fallback): {e}")
+    except Exception:
+        pass
+    return False
 
 
 def load_companies_from_dashboard() -> List[Dict[str, Any]]:
@@ -2518,6 +2569,12 @@ def montar_caminho_estruturado(
 
     if cfg["usar_nome_empresa"]:
         segmentos.append(empresa_nome)
+
+    # Segmentos do robô vindos do dashboard, aplicados DENTRO da empresa:
+    # ex.: segment_path "FISCAL/NFE-NFC" -> "<EMPRESA>\\NFE-NFC\\..."
+    for seg in get_robot_segment_under_company_parts():
+        if seg:
+            segmentos.append(seg)
     if cfg["usar_pasta_cliente"]:
         for p in (cfg.get("pastas_cliente") or []):
             p = str(p or "").strip()
@@ -6651,13 +6708,16 @@ def enviar_dados_supabase_smart_upsert(
             log_fn(f"[INFO] 📊 Processados {len(dados_por_data)} dias com dados")
         
         # Verifica dados existentes no período (usando estrutura flexível automation_data)
-        existing_data = supabase_client.table('automation_data')\
-            .select('date')\
-            .eq('company_id', company_id)\
-            .eq('automation_id', automation_id)\
-            .gte('date', data_inicial.isoformat())\
-            .lte('date', data_final.isoformat())\
-            .execute()
+        existing_data = _supabase_retry_execute(
+            lambda: supabase_client.table('automation_data')
+            .select('date')
+            .eq('company_id', company_id)
+            .eq('automation_id', automation_id)
+            .gte('date', data_inicial.isoformat())
+            .lte('date', data_final.isoformat())
+            .execute(),
+            log_fn=log_fn,
+        )
         
         existing_dates = {datetime.fromisoformat(row['date']).date() for row in existing_data.data} if existing_data.data else set()
         new_dates = set(dados_por_data.keys())
@@ -6669,26 +6729,34 @@ def enviar_dados_supabase_smart_upsert(
                 log_fn(f"[INFO] 🔄 Período idêntico detectado. Substituindo dados de {data_inicial} até {data_final}")
             
             # Remove todos os dados do período
-            supabase_client.table('automation_data')\
-                .delete()\
-                .eq('company_id', company_id)\
-                .eq('automation_id', automation_id)\
-                .gte('date', data_inicial.isoformat())\
-                .lte('date', data_final.isoformat())\
-                .execute()
+            _supabase_retry_execute(
+                lambda: supabase_client.table('automation_data')
+                .delete()
+                .eq('company_id', company_id)
+                .eq('automation_id', automation_id)
+                .gte('date', data_inicial.isoformat())
+                .lte('date', data_final.isoformat())
+                .execute(),
+                log_fn=log_fn,
+            )
             
             # Insere novos dados (mapeando para estrutura flexível)
             for dt, dados in dados_por_data.items():
-                supabase_client.table('automation_data').insert({
-                    'company_id': company_id,
-                    'automation_id': automation_id,
-                    'date': dt.isoformat(),
-                    'count_1': dados['xml_count'],      # xml_count → count_1
-                    'count_2': dados['nf_count'],       # nf_count → count_2 (modelo 55)
-                    'count_3': dados['nfc_count'],     # nfc_count → count_3 (modelo 65)
-                    'amount_1': dados['total_amount'], # total_amount → amount_1
-                    'metadata': {}  # Dados extras podem ser adicionados aqui se necessário
-                }).execute()
+                _supabase_retry_execute(
+                    lambda dt=dt, dados=dados: supabase_client.table('automation_data').insert(
+                        {
+                            'company_id': company_id,
+                            'automation_id': automation_id,
+                            'date': dt.isoformat(),
+                            'count_1': dados['xml_count'],      # xml_count → count_1
+                            'count_2': dados['nf_count'],       # nf_count → count_2 (modelo 55)
+                            'count_3': dados['nfc_count'],     # nfc_count → count_3 (modelo 65)
+                            'amount_1': dados['total_amount'], # total_amount → amount_1
+                            'metadata': {},
+                        }
+                    ).execute(),
+                    log_fn=log_fn,
+                )
             
             if log_fn:
                 log_fn(f"[OK] ✅ {len(dados_por_data)} registros substituídos no Supabase")
@@ -6702,25 +6770,33 @@ def enviar_dados_supabase_smart_upsert(
             
             # Remove dados sobrepostos
             for overlap_date in overlap_dates:
-                supabase_client.table('automation_data')\
-                    .delete()\
-                    .eq('company_id', company_id)\
-                    .eq('automation_id', automation_id)\
-                    .eq('date', overlap_date.isoformat())\
-                    .execute()
+                _supabase_retry_execute(
+                    lambda overlap_date=overlap_date: supabase_client.table('automation_data')
+                    .delete()
+                    .eq('company_id', company_id)
+                    .eq('automation_id', automation_id)
+                    .eq('date', overlap_date.isoformat())
+                    .execute(),
+                    log_fn=log_fn,
+                )
             
             # Insere todos os dados (novos + não sobrepostos)
             for dt, dados in dados_por_data.items():
-                supabase_client.table('automation_data').insert({
-                    'company_id': company_id,
-                    'automation_id': automation_id,
-                    'date': dt.isoformat(),
-                    'count_1': dados['xml_count'],
-                    'count_2': dados['nf_count'],
-                    'count_3': dados['nfc_count'],
-                    'amount_1': dados['total_amount'],
-                    'metadata': {}
-                }).execute()
+                _supabase_retry_execute(
+                    lambda dt=dt, dados=dados: supabase_client.table('automation_data').insert(
+                        {
+                            'company_id': company_id,
+                            'automation_id': automation_id,
+                            'date': dt.isoformat(),
+                            'count_1': dados['xml_count'],
+                            'count_2': dados['nf_count'],
+                            'count_3': dados['nfc_count'],
+                            'amount_1': dados['total_amount'],
+                            'metadata': {},
+                        }
+                    ).execute(),
+                    log_fn=log_fn,
+                )
             
             if log_fn:
                 log_fn(f"[OK] ✅ Dados unidos: {len(overlap_dates)} substituídos, {len(dados_por_data)} inseridos")
@@ -6731,16 +6807,21 @@ def enviar_dados_supabase_smart_upsert(
                 log_fn(f"[INFO] ➕ Período novo. Adicionando {len(dados_por_data)} registros...")
             
             for dt, dados in dados_por_data.items():
-                supabase_client.table('automation_data').insert({
-                    'company_id': company_id,
-                    'automation_id': automation_id,
-                    'date': dt.isoformat(),
-                    'count_1': dados['xml_count'],
-                    'count_2': dados['nf_count'],
-                    'count_3': dados['nfc_count'],
-                    'amount_1': dados['total_amount'],
-                    'metadata': {}
-                }).execute()
+                _supabase_retry_execute(
+                    lambda dt=dt, dados=dados: supabase_client.table('automation_data').insert(
+                        {
+                            'company_id': company_id,
+                            'automation_id': automation_id,
+                            'date': dt.isoformat(),
+                            'count_1': dados['xml_count'],
+                            'count_2': dados['nf_count'],
+                            'count_3': dados['nfc_count'],
+                            'amount_1': dados['total_amount'],
+                            'metadata': {},
+                        }
+                    ).execute(),
+                    log_fn=log_fn,
+                )
             
             if log_fn:
                 log_fn(f"[OK] ✅ {len(dados_por_data)} registros adicionados ao Supabase")
@@ -6818,11 +6899,14 @@ def enviar_dados_supabase_dashboard(
             log_fn(f"[INFO] 📊 Financeiro: Faturamento={dados_periodo.get('faturamento', 0.0):.2f}, Despesa={dados_periodo.get('despesa', 0.0):.2f}, Resultado={dados_periodo.get('resultado', 0.0):.2f}")
         
         # Verifica se já existe registro para esta empresa (UMA LINHA POR EMPRESA)
-        existing_data = supabase_client.table('automation_data')\
-            .select('id')\
-            .eq('company_id', company_id)\
-            .eq('automation_id', automation_id)\
-            .execute()
+        existing_data = _supabase_retry_execute(
+            lambda: supabase_client.table('automation_data')
+            .select('id')
+            .eq('company_id', company_id)
+            .eq('automation_id', automation_id)
+            .execute(),
+            log_fn=log_fn,
+        )
         
         # Prepara metadata consolidado com TODOS os dados em JSON
         metadata_consolidado = {
@@ -6846,10 +6930,13 @@ def enviar_dados_supabase_dashboard(
                 log_fn(f"[INFO] 🔄 Atualizando registro consolidado da empresa...")
             
             # Busca metadata existente para preservar dados de evolução se houver
-            existing_record = supabase_client.table('automation_data')\
-                .select('metadata')\
-                .eq('id', record_id)\
-                .execute()
+            existing_record = _supabase_retry_execute(
+                lambda: supabase_client.table('automation_data')
+                .select('metadata')
+                .eq('id', record_id)
+                .execute(),
+                log_fn=log_fn,
+            )
             
             if existing_record.data and existing_record.data[0].get('metadata'):
                 existing_metadata = existing_record.data[0]['metadata']
@@ -6857,13 +6944,18 @@ def enviar_dados_supabase_dashboard(
                 if 'evolucao_diaria' in existing_metadata:
                     metadata_consolidado['evolucao_diaria'] = existing_metadata['evolucao_diaria']
             
-            supabase_client.table('automation_data')\
-                .update({
-                    'date': data_final.isoformat(),  # Data final do período mais recente
-                    'metadata': metadata_consolidado,
-                })\
-                .eq('id', record_id)\
-                .execute()
+            _supabase_retry_execute(
+                lambda: supabase_client.table('automation_data')
+                .update(
+                    {
+                        'date': data_final.isoformat(),  # Data final do período mais recente
+                        'metadata': metadata_consolidado,
+                    }
+                )
+                .eq('id', record_id)
+                .execute(),
+                log_fn=log_fn,
+            )
             
             if log_fn:
                 log_fn(f"[OK] ✅ Registro consolidado atualizado no Supabase")
@@ -6872,12 +6964,17 @@ def enviar_dados_supabase_dashboard(
             if log_fn:
                 log_fn(f"[INFO] ➕ Criando novo registro consolidado para a empresa...")
             
-            supabase_client.table('automation_data').insert({
-                'company_id': company_id,
-                'automation_id': automation_id,
-                'date': data_final.isoformat(),  # Data final do período
-                'metadata': metadata_consolidado
-            }).execute()
+            _supabase_retry_execute(
+                lambda: supabase_client.table('automation_data').insert(
+                    {
+                        'company_id': company_id,
+                        'automation_id': automation_id,
+                        'date': data_final.isoformat(),  # Data final do período
+                        'metadata': metadata_consolidado,
+                    }
+                ).execute(),
+                log_fn=log_fn,
+            )
             
             if log_fn:
                 log_fn(f"[OK] ✅ Novo registro consolidado criado no Supabase")
@@ -14324,6 +14421,10 @@ class MyCompactUI(QMainWindow):
                 pasta_rel = (getattr(self, "_last_relatorios_pdf_dir", "") or self.runtime_paths.get("relatorios_pdf") or pasta_rel).strip()
                 # Agora SEMPRE tenta gerar relatório, mesmo se foi parada manualmente
                 if resultados and pasta_rel:
+                    try:
+                        os.makedirs(pasta_rel, exist_ok=True)
+                    except Exception:
+                        pass
                     pdf_path = gerar_relatorio_pdf(
                         resultados=resultados,
                         empresas_data=self.empresas,
@@ -14349,10 +14450,8 @@ class MyCompactUI(QMainWindow):
             # PARADA MANUAL: mostra mensagem de execução interrompida,
             # mas ainda assim abre o PDF parcial se existir
             if pdf_path:
-                try:
-                    QDesktopServices.openUrl(QUrl.fromLocalFile(pdf_path))
-                except Exception as e:
-                    self.update_log(f"[ERRO] Falha ao abrir PDF automaticamente: {e}")
+                if not _open_pdf_file(pdf_path, log_fn=self.update_log):
+                    self.update_log("[WARN] Não foi possível abrir o PDF automaticamente.")
                 QMessageBox.information(
                     self,
                     "Execução interrompida",
@@ -14371,10 +14470,8 @@ class MyCompactUI(QMainWindow):
         else:
             # Fluxo normal (sem parada manual)
             if pdf_path:
-                try:
-                    QDesktopServices.openUrl(QUrl.fromLocalFile(pdf_path))
-                except Exception as e:
-                    self.update_log(f"[ERRO] Falha ao abrir PDF automaticamente: {e}")
+                if not _open_pdf_file(pdf_path, log_fn=self.update_log):
+                    self.update_log("[WARN] Não foi possível abrir o PDF automaticamente.")
                 QMessageBox.information(
                     self,
                     "Processo finalizado",
