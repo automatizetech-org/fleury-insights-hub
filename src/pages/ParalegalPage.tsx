@@ -77,6 +77,13 @@ const CERTIFICATE_STATUS_META: Record<CertificateStatus, { label: string; tone: 
   },
 }
 
+function statusAccentColor(status: CertificateStatus) {
+  if (status === "ativo") return "bg-emerald-500"
+  if (status === "vence_em_breve") return "bg-amber-500"
+  if (status === "vencido") return "bg-rose-500"
+  return "bg-slate-400"
+}
+
 const MOCK_TASKS: MockTask[] = [
   { id: "1", titulo: "Alteracao contratual", empresa: "Grupo Fleury", prioridade: "alta", prazo: "2026-03-12", responsavel: "Julia", status: "vence_hoje" },
   { id: "2", titulo: "Baixa estadual", empresa: "Tech Solutions Ltda", prioridade: "alta", prazo: "2026-03-10", responsavel: "Victor", status: "atrasada" },
@@ -113,6 +120,13 @@ function formatDaysToExpiry(days: number | null) {
   if (days < 0) return `Venceu ha ${Math.abs(days)} dia(s)`
   if (days === 0) return "Vence hoje"
   return `${days} dia(s) restantes`
+}
+
+function formatCnpj(value: string | null) {
+  if (!value) return "-"
+  const digits = value.replace(/\D/g, "")
+  if (digits.length !== 14) return value
+  return digits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5")
 }
 
 function formatCurrencyBRL(value: number) {
@@ -398,7 +412,12 @@ export default function ParalegalPage() {
             <p className="text-xs text-muted-foreground mt-1">Filtre por status e clique em renovar para abrir a empresa correta na edicao do certificado.</p>
           </div>
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por empresa ou CNPJ..." className="xl:max-w-sm" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por empresa ou CNPJ..."
+              className="xl:max-w-sm"
+            />
             <div className="flex flex-wrap gap-2">
               {([
                 { value: "todos", label: "Todos" },
@@ -412,8 +431,10 @@ export default function ParalegalPage() {
                   type="button"
                   onClick={() => setFilter(option.value)}
                   className={cn(
-                    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                    filter === option.value ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-muted-foreground hover:text-foreground"
+                    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30",
+                    filter === option.value
+                      ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                      : "border-border bg-background/60 text-muted-foreground hover:bg-background hover:text-foreground"
                   )}
                 >
                   {option.label}
@@ -423,47 +444,90 @@ export default function ParalegalPage() {
           </div>
         </div>
 
-        <div className="divide-y divide-border">
+        <div className="p-2.5 sm:p-3">
           {isLoading ? (
-            <div className="px-4 py-8 text-sm text-muted-foreground text-center">Carregando certificados...</div>
+            <div className="px-4 py-10 text-sm text-muted-foreground text-center">Carregando certificados...</div>
           ) : filteredCertificates.length === 0 ? (
-            <div className="px-4 py-8 text-sm text-muted-foreground text-center">Nenhum certificado encontrado para este filtro.</div>
+            <div className="px-4 py-10 text-sm text-muted-foreground text-center">Nenhum certificado encontrado para este filtro.</div>
           ) : (
-            filteredCertificates.map((item) => (
-              <div key={item.id} className="px-4 py-4 flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-semibold truncate">{item.name}</p>
-                    <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", CERTIFICATE_STATUS_META[item.certificate_status].tone)}>
-                      {CERTIFICATE_STATUS_META[item.certificate_status].label}
-                    </span>
-                    <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", item.active ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-slate-500/15 text-slate-700 dark:text-slate-300")}>
-                      {item.active ? "Empresa ativa" : "Empresa inativa"}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <p className="text-xs text-muted-foreground">{item.document ?? "CNPJ nao informado"}</p>
-                    <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5">
-                      <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Validade</p>
-                      <p className="text-[10px] font-medium leading-tight text-foreground">{formatDate(item.cert_valid_until)}</p>
-                    </div>
-                    <div className="rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5">
-                      <p className="text-[10px] font-medium uppercase tracking-wide text-primary">Status do prazo</p>
-                      <p className="text-[10px] font-medium leading-tight text-foreground">{formatDaysToExpiry(item.days_to_expiry)}</p>
-                    </div>
-                  </div>
-                </div>
+            <div className="space-y-2.5">
+              {filteredCertificates.map((item) => (
+                <div
+                  key={item.id}
+                  className={cn(
+                    "group relative overflow-hidden rounded-2xl border border-border bg-background/40 backdrop-blur-sm",
+                    "hover:bg-background/60 hover:shadow-sm transition-colors"
+                  )}
+                >
+                  <div className={cn("absolute left-0 top-0 h-full w-1.5", statusAccentColor(item.certificate_status))} />
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => navigate(`/empresas?editCompany=${item.id}&focus=certificate&mode=renew`)}>
-                    Renovar certificado
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => navigate(`/empresas?editCompany=${item.id}`)}>
-                    Abrir empresa
-                  </Button>
+                  <div className="pl-4 pr-3 py-3">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[13px] font-semibold truncate">{item.name}</p>
+                          <span
+                            className={cn(
+                              "rounded-full px-2.5 py-1 text-[11px] font-medium",
+                              CERTIFICATE_STATUS_META[item.certificate_status].tone
+                            )}
+                          >
+                            {CERTIFICATE_STATUS_META[item.certificate_status].label}
+                          </span>
+                          <span
+                            className={cn(
+                              "rounded-full px-2.5 py-1 text-[11px] font-medium",
+                              item.active
+                                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                                : "bg-slate-500/15 text-slate-700 dark:text-slate-300"
+                            )}
+                          >
+                            {item.active ? "Empresa ativa" : "Empresa inativa"}
+                          </span>
+                        </div>
+
+                        <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                          <div className="rounded-xl border border-border bg-background/40 px-2.5 py-1.5">
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">CNPJ</p>
+                            <p className="mt-1 font-medium text-foreground truncate">
+                              {item.document ? formatCnpj(item.document) : "Nao informado"}
+                            </p>
+                          </div>
+                          <div className="rounded-xl border border-border bg-background/40 px-2.5 py-1.5">
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Validade</p>
+                            <p className="mt-1 font-medium text-foreground">{formatDate(item.cert_valid_until)}</p>
+                          </div>
+                          <div className="rounded-xl border border-border bg-background/40 px-2.5 py-1.5">
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Prazo</p>
+                            <p className="mt-1 font-medium text-foreground">{formatDaysToExpiry(item.days_to_expiry)}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8 px-3 text-xs shadow-sm"
+                          onClick={() => navigate(`/empresas?editCompany=${item.id}&focus=certificate&mode=renew`)}
+                        >
+                          Renovar certificado
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 px-3 text-xs bg-background/40"
+                          onClick={() => navigate(`/empresas?editCompany=${item.id}`)}
+                        >
+                          Abrir empresa
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+            </div>
           )}
         </div>
       </GlassCard>

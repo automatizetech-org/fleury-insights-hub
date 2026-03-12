@@ -1,8 +1,9 @@
-import { useState, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getUsersForAdmin, getProfile, updateProfile } from "@/services/profilesService"
 import { supabase } from "@/services/supabaseClient"
-import { getCompaniesForUser, updateCompany, getCompanyRobotConfig, upsertCompanyRobotConfig, ROBOT_NFS_TECHNICAL_ID } from "@/services/companiesService"
+import { getCompaniesForUser, updateCompany, getCompanyRobotConfigs, upsertCompanyRobotConfig, type RobotCompanyConfigInput } from "@/services/companiesService"
+import { findAccountantByCpf, formatCpf, getAccountants } from "@/services/accountantsService"
 import type { Company, AdminUser } from "@/services/profilesService"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
@@ -15,6 +16,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
   SelectContent,
@@ -33,14 +35,19 @@ import { getRobots } from "@/services/robotsService"
 import { PANEL_KEYS, PANEL_LABELS } from "@/lib/panelAccess"
 import { getPfxInfo } from "@/lib/validatePfxPassword"
 import { toast } from "sonner"
+import { CompanyRobotsEditor } from "@/components/companies/CompanyRobotsEditor"
 
 const SUPABASE_URL = import.meta.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
 
-const CONTADORES = [
-  { nome: "ELIANDERSON GOMES FLEURY", cpf: "71361170115" },
-  { nome: "EDER GOMES FLEURY", cpf: "86873598100" },
-] as const
+function onlyDigits(s: string) {
+  return s.replace(/\D/g, "")
+}
+
+function formatCnpjDigits(d: string) {
+  if (d.length !== 14) return d
+  return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
+}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -74,6 +81,7 @@ export default function AdminPage() {
   const [editingCompany, setEditingCompany] = useState<Company | null>(null)
   const [editName, setEditName] = useState("")
   const [editDocument, setEditDocument] = useState("")
+  const [editStateRegistration, setEditStateRegistration] = useState("")
   const [editActive, setEditActive] = useState(true)
   const [editContadorCpf, setEditContadorCpf] = useState("")
   const [editUseCertificate, setEditUseCertificate] = useState(false)
@@ -83,9 +91,8 @@ export default function AdminPage() {
   const editCertInputRef = useRef<HTMLInputElement>(null)
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState("")
-  const [editNfsRobotEnabled, setEditNfsRobotEnabled] = useState(false)
-  const [editNfsRobotAuthMode, setEditNfsRobotAuthMode] = useState<"password" | "certificate">("password")
-  const [editNfsRobotPassword, setEditNfsRobotPassword] = useState("")
+  const [selectedRobotTechnicalId, setSelectedRobotTechnicalId] = useState("")
+  const [editRobotConfigs, setEditRobotConfigs] = useState<Record<string, RobotCompanyConfigInput>>({})
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null)
   const [editUsername, setEditUsername] = useState("")
   const [editEmail, setEditEmail] = useState("")
@@ -149,6 +156,26 @@ export default function AdminPage() {
     queryKey: ["admin-companies"],
     queryFn: () => getCompaniesForUser("all"),
   })
+
+  const { data: robotsForPaths = [] } = useQuery({
+    queryKey: ["admin-robots"],
+    queryFn: getRobots,
+    enabled: myProfile?.role === "super_admin",
+    refetchOnWindowFocus: true,
+    refetchInterval: 5000,
+    staleTime: 5000,
+  })
+  const { data: accountants = [] } = useQuery({
+    queryKey: ["accountants"],
+    queryFn: () => getAccountants(true),
+    staleTime: 30000,
+  })
+
+  useEffect(() => {
+    if (!selectedRobotTechnicalId && robotsForPaths.length > 0) {
+      setSelectedRobotTechnicalId(robotsForPaths[0].technical_id)
+    }
+  }, [robotsForPaths, selectedRobotTechnicalId])
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -230,26 +257,49 @@ export default function AdminPage() {
   }
 
   const openEditCompany = async (emp: (typeof companies)[0]) => {
-    setEditingCompany(emp)
-    setEditName(emp.name)
-    setEditDocument(emp.document ?? "")
-    setEditActive((emp as { active?: boolean }).active !== false)
-    setEditContadorCpf((emp as { contador_cpf?: string | null }).contador_cpf ?? "")
-    const withCert = emp as { cert_blob_b64?: string | null; auth_mode?: string | null }
+    // Busca o registro completo no banco ao abrir o modal para evitar snapshot antigo
+    // (ex.: após imports via SQL Editor).
+    let row = emp as unknown as Company
+    try {
+      const { data, error } = await supabase
+        .from("companies")
+        .select("*")
+        .eq("id", emp.id)
+        .single()
+      if (!error && data) row = data as Company
+    } catch {
+      // fallback para o item da lista
+    }
+
+    setEditingCompany(row)
+    setEditName(row.name)
+    setEditDocument(row.document ?? "")
+    setEditStateRegistration((row as { state_registration?: string | null }).state_registration ?? "")
+    setEditActive((row as { active?: boolean }).active !== false)
+    setEditContadorCpf((row as { contador_cpf?: string | null }).contador_cpf ?? "")
+    const withCert = row as { cert_blob_b64?: string | null; auth_mode?: string | null }
     setEditUseCertificate(!!(withCert.cert_blob_b64 || withCert.auth_mode === "certificate"))
     setEditCertReplacing(false)
     setEditCertFile(null)
     setEditCertPassword("")
     setEditError("")
+    setSelectedRobotTechnicalId((current) => current || robotsForPaths[0]?.technical_id || "")
     try {
-      const config = await getCompanyRobotConfig(emp.id, ROBOT_NFS_TECHNICAL_ID)
-      setEditNfsRobotEnabled(config?.enabled ?? false)
-      setEditNfsRobotAuthMode((config?.auth_mode as "password" | "certificate") ?? "password")
-      setEditNfsRobotPassword(config?.nfs_password ?? "")
+      const configs = await getCompanyRobotConfigs(row.id)
+      const configsByRobot = Object.fromEntries(
+        configs.map((config) => [
+          config.robot_technical_id,
+          {
+            enabled: config.enabled,
+            auth_mode: config.auth_mode ?? "password",
+            nfs_password: config.nfs_password ?? null,
+            selected_login_cpf: config.selected_login_cpf ?? null,
+          } satisfies RobotCompanyConfigInput,
+        ])
+      )
+      setEditRobotConfigs(configsByRobot)
     } catch {
-      setEditNfsRobotEnabled(false)
-      setEditNfsRobotAuthMode("password")
-      setEditNfsRobotPassword("")
+      setEditRobotConfigs({})
     }
   }
 
@@ -266,8 +316,9 @@ export default function AdminPage() {
       const updates: Parameters<typeof updateCompany>[1] = {
         name: editName.trim(),
         document: editDocument.trim() || null,
+        state_registration: editStateRegistration.trim() || null,
         active: editActive,
-        contador_nome: editContadorCpf ? (CONTADORES.find((c) => c.cpf === editContadorCpf)?.nome ?? null) : null,
+        contador_nome: editContadorCpf ? (findAccountantByCpf(accountants, editContadorCpf)?.name ?? null) : null,
         contador_cpf: editContadorCpf || null,
       }
       if (!editUseCertificate) {
@@ -285,6 +336,17 @@ export default function AdminPage() {
           toast.error("Senha do certificado incorreta.")
           return
         }
+        const docDigits = onlyDigits(editDocument)
+        if (docDigits.length !== 14) {
+          setEditError("Para vincular o certificado corretamente, informe um CNPJ válido (14 dígitos) antes de enviar o .pfx.")
+          toast.error("Informe um CNPJ válido antes de enviar o certificado.")
+          return
+        }
+        if (info.cnpj && info.cnpj !== docDigits) {
+          setEditError(`CNPJ do certificado (${formatCnpjDigits(info.cnpj)}) não corresponde ao CNPJ da empresa (${formatCnpjDigits(docDigits)}). Não foi possível salvar.`)
+          toast.error("CNPJ do certificado não corresponde ao da empresa.")
+          return
+        }
         updates.cert_blob_b64 = b64
         updates.cert_password = pwd
         updates.cert_valid_until = info.validUntil ?? null
@@ -292,12 +354,24 @@ export default function AdminPage() {
         updates.auth_mode = "certificate"
       }
       await updateCompany(editingCompany.id, updates)
-      await upsertCompanyRobotConfig(editingCompany.id, ROBOT_NFS_TECHNICAL_ID, {
-        enabled: editNfsRobotEnabled,
-        auth_mode: editNfsRobotAuthMode,
-        nfs_password: editNfsRobotAuthMode === "password" ? editNfsRobotPassword.trim() || null : null,
-      })
+      await Promise.all(
+        robotsForPaths.map((robot) => {
+          const config = editRobotConfigs[robot.technical_id] ?? {
+            enabled: false,
+            auth_mode: "password" as const,
+            nfs_password: null,
+            selected_login_cpf: null,
+          }
+          return upsertCompanyRobotConfig(editingCompany.id, robot.technical_id, {
+            enabled: config.enabled,
+            auth_mode: config.auth_mode,
+            nfs_password: config.auth_mode === "password" ? config.nfs_password ?? null : null,
+            selected_login_cpf: config.selected_login_cpf ?? null,
+          })
+        })
+      )
       queryClient.invalidateQueries({ queryKey: ["admin-companies"] })
+      queryClient.invalidateQueries({ queryKey: ["admin-robots"] })
       setEditingCompany(null)
       toast.success("Empresa salva com sucesso. Certificado enviado ao Supabase.")
     } catch (err: unknown) {
@@ -360,12 +434,6 @@ export default function AdminPage() {
   }
 
   const isSuperAdmin = myProfile?.role === "super_admin"
-
-  const { data: robotsForPaths = [] } = useQuery({
-    queryKey: ["admin-robots"],
-    queryFn: getRobots,
-    enabled: isSuperAdmin,
-  })
   const segmentPath = robotsForPaths[0]?.segment_path || "FISCAL/NFS"
   const segmentSlug = segmentPath.replace(/\//g, "\\")
 
@@ -546,8 +614,8 @@ export default function AdminPage() {
       <AdminFolderStructure isSuperAdmin={!!isSuperAdmin} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <AdminRobotsList isSuperAdmin={!!isSuperAdmin} />
-        <AdminScheduler isSuperAdmin={!!isSuperAdmin} />
+        <AdminRobotsList isSuperAdmin={!!isSuperAdmin} robots={robotsForPaths} />
+        <AdminScheduler isSuperAdmin={!!isSuperAdmin} robots={robotsForPaths} />
       </div>
       {isSuperAdmin && (
         <>
@@ -610,6 +678,13 @@ export default function AdminPage() {
             <DialogTitle>Editar empresa</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSaveCompany} className="space-y-4 min-w-0 overflow-hidden">
+            <Tabs defaultValue="geral" className="space-y-4">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="geral">Geral</TabsTrigger>
+                <TabsTrigger value="certificado">Certificado digital</TabsTrigger>
+                <TabsTrigger value="robos">Robôs</TabsTrigger>
+              </TabsList>
+              <TabsContent value="geral" className="space-y-4">
             <div className="space-y-2">
               <Label>Nome</Label>
               <Input value={editName} onChange={(e) => setEditName(e.target.value)} required disabled={editSaving} />
@@ -617,6 +692,10 @@ export default function AdminPage() {
             <div className="space-y-2">
               <Label>Documento (CNPJ)</Label>
               <Input value={editDocument} onChange={(e) => setEditDocument(e.target.value)} disabled={editSaving} placeholder="00.000.000/0001-00" />
+            </div>
+            <div className="space-y-2">
+              <Label>IE</Label>
+              <Input value={editStateRegistration} onChange={(e) => setEditStateRegistration(e.target.value)} disabled={editSaving} placeholder="Inscrição estadual" />
             </div>
             <div className="flex items-center gap-2">
               <input type="checkbox" id="edit-active" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} disabled={editSaving} className="rounded border-input" />
@@ -634,15 +713,17 @@ export default function AdminPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Nenhum</SelectItem>
-                  {CONTADORES.map((c) => (
+                  {accountants.map((c) => (
                     <SelectItem key={c.cpf} value={c.cpf}>
-                      {c.nome} — CPF {c.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}
+                      {c.name} — CPF {formatCpf(c.cpf)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-3 pt-2 border-t border-border">
+              </TabsContent>
+              <TabsContent value="certificado" className="space-y-3">
+            <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -719,65 +800,31 @@ export default function AdminPage() {
                 </div>
               )}
             </div>
-            <div className="space-y-3 pt-2 border-t border-border">
-              <p className="text-sm font-medium">Robô NFS (portal nacional)</p>
-              <p className="text-xs text-muted-foreground">Ative para esta empresa rodar no robô de download de NFS-e. Se desligado, o robô não processa esta empresa.</p>
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-muted-foreground">Desligado</span>
-                <Switch
-                  checked={editNfsRobotEnabled}
-                  onCheckedChange={setEditNfsRobotEnabled}
+              </TabsContent>
+              <TabsContent value="robos" className="space-y-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Robôs vinculados</p>
+                  <p className="text-xs text-muted-foreground">
+                    Escolha um robô e configure esta empresa nele. Para o Sefaz Xml, os logins são globais no editar robô e aqui fica apenas o vínculo do login correto à empresa.
+                  </p>
+                </div>
+                <CompanyRobotsEditor
+                  robots={robotsForPaths}
+                  accountants={accountants}
+                  selectedRobotTechnicalId={selectedRobotTechnicalId}
+                  onSelectedRobotTechnicalIdChange={setSelectedRobotTechnicalId}
+                  configsByRobot={editRobotConfigs}
+                  onConfigChange={(robotTechnicalId, next) =>
+                    setEditRobotConfigs((current) => ({
+                      ...current,
+                      [robotTechnicalId]: next,
+                    }))
+                  }
+                  contadorCpf={editContadorCpf}
                   disabled={editSaving}
                 />
-                <span className="text-sm text-muted-foreground">Ligado</span>
-              </div>
-              {editNfsRobotEnabled && (
-                <div className="pl-4 border-l-2 border-border space-y-3">
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="admin-edit-nfs-auth"
-                        checked={editNfsRobotAuthMode === "password"}
-                        onChange={() => setEditNfsRobotAuthMode("password")}
-                        disabled={editSaving}
-                        className="rounded-full border-input"
-                      />
-                      <span className="text-sm">Login (CNPJ + senha)</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="admin-edit-nfs-auth"
-                        checked={editNfsRobotAuthMode === "certificate"}
-                        onChange={() => setEditNfsRobotAuthMode("certificate")}
-                        disabled={editSaving}
-                        className="rounded-full border-input"
-                      />
-                      <span className="text-sm">Certificado</span>
-                    </label>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {editNfsRobotAuthMode === "certificate"
-                      ? "Usa o certificado cadastrado acima (uso geral)."
-                      : "Senha para acesso no portal nacional com CNPJ."}
-                  </p>
-                  {editNfsRobotAuthMode === "password" && (
-                    <div className="space-y-1">
-                      <Label>Senha do portal NFS</Label>
-                      <Input
-                        type="password"
-                        value={editNfsRobotPassword}
-                        onChange={(e) => setEditNfsRobotPassword(e.target.value)}
-                        placeholder="Senha de acesso ao portal"
-                        disabled={editSaving}
-                        autoComplete="off"
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+              </TabsContent>
+            </Tabs>
             {editError && <p className="text-sm text-destructive">{editError}</p>}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setEditingCompany(null)} disabled={editSaving}>Cancelar</Button>

@@ -138,7 +138,13 @@ function computeManualPeriodForRobot(robot: Robot, today: Date): { periodStart: 
   return computePeriodForRobot(robot, today)
 }
 
-export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
+export function AdminScheduler({
+  isSuperAdmin,
+  robots: robotsProp,
+}: {
+  isSuperAdmin: boolean
+  robots?: Robot[]
+}) {
   const queryClient = useQueryClient()
   const [companyIds, setCompanyIds] = useState<Set<string>>(new Set())
   const [robotIdsOrdered, setRobotIdsOrdered] = useState<string[]>([])
@@ -158,12 +164,15 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     queryFn: () => getCompaniesForUser("all"),
   })
 
-  const { data: robots = [] } = useQuery({
+  const { data: queriedRobots = [] } = useQuery({
     queryKey: ["admin-robots"],
     queryFn: getRobots,
     refetchOnWindowFocus: true,
-    refetchInterval: 2000,
+    refetchInterval: 5000,
+    enabled: !robotsProp,
+    staleTime: 5000,
   })
+  const robots = robotsProp ?? queriedRobots
 
   const { data: scheduleRules = [], isLoading: loadingRules } = useQuery({
     queryKey: ["schedule-rules"],
@@ -251,6 +260,7 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   )
 
   const persistDisplayConfig = useCallback(() => {
+    if (companyIds.size === 0) return
     const robotsToUpdate = selectedRobots.length > 0 ? selectedRobots : robots
     if (robotsToUpdate.length === 0) return
     Promise.all(
@@ -437,15 +447,17 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         } else {
           toast.success("Agendamento ativado. Execução na data/hora definida e depois a cada 24h.")
         }
-        await Promise.all(
-          selectedRobots.map((robot) =>
-            upsertRobotDisplayConfig({
-              robotTechnicalId: robot.technical_id,
-              companyIds: Array.from(companyIds),
-              notesMode: getRobotNotesMode(robot) ?? undefined,
-            })
+        if (companyIds.size > 0) {
+          await Promise.all(
+            selectedRobots.map((robot) =>
+              upsertRobotDisplayConfig({
+                robotTechnicalId: robot.technical_id,
+                companyIds: Array.from(companyIds),
+                notesMode: getRobotNotesMode(robot) ?? undefined,
+              })
+            )
           )
-        )
+        }
         queryClient.invalidateQueries({ queryKey: ["schedule-rules"] })
         queryClient.invalidateQueries({ queryKey: ["schedule-rules-active"] })
       } else {
@@ -467,15 +479,17 @@ export function AdminScheduler({ isSuperAdmin }: { isSuperAdmin: boolean }) {
             executionOrder: index,
           })
         }
-        await Promise.all(
-          selectedRobots.map((robot) =>
-            upsertRobotDisplayConfig({
-              robotTechnicalId: robot.technical_id,
-              companyIds: Array.from(companyIds),
-              notesMode: getRobotNotesMode(robot) ?? undefined,
-            })
+        if (companyIds.size > 0) {
+          await Promise.all(
+            selectedRobots.map((robot) =>
+              upsertRobotDisplayConfig({
+                robotTechnicalId: robot.technical_id,
+                companyIds: Array.from(companyIds),
+                notesMode: getRobotNotesMode(robot) ?? undefined,
+              })
+            )
           )
-        )
+        }
         queryClient.invalidateQueries({ queryKey: ["execution-requests"] })
         queryClient.invalidateQueries({ queryKey: ["execution-requests-running"] })
         queryClient.invalidateQueries({ queryKey: ["execution-requests-pending-running"] })

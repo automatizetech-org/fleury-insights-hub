@@ -24,23 +24,69 @@ export async function upsertRobotDisplayConfig(params: {
   periodEnd?: string | null
   notesMode?: RobotNotesMode | null
 }): Promise<RobotDisplayConfig> {
-  const { data, error } = await supabase
-    .from("robot_display_config")
-    .upsert(
-      {
-        robot_technical_id: params.robotTechnicalId,
-        company_ids: params.companyIds,
-        period_start: params.periodStart ?? null,
-        period_end: params.periodEnd ?? null,
-        notes_mode: params.notesMode ?? null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "robot_technical_id" }
-    )
-    .select()
-    .single()
-  if (error) throw error
-  return data as RobotDisplayConfig
+  const payload = {
+    robot_technical_id: params.robotTechnicalId,
+    company_ids: params.companyIds,
+    period_start: params.periodStart ?? null,
+    period_end: params.periodEnd ?? null,
+    notes_mode: params.notesMode ?? null,
+    updated_at: new Date().toISOString(),
+  }
+  const payloadWithoutNotesMode = {
+    robot_technical_id: payload.robot_technical_id,
+    company_ids: payload.company_ids,
+    period_start: payload.period_start,
+    period_end: payload.period_end,
+    updated_at: payload.updated_at,
+  }
+
+  const existing = await getRobotDisplayConfig(params.robotTechnicalId)
+
+  if (existing) {
+    try {
+      const { data, error } = await supabase
+        .from("robot_display_config")
+        .update({
+          company_ids: payload.company_ids,
+          period_start: payload.period_start,
+          period_end: payload.period_end,
+          notes_mode: payload.notes_mode,
+          updated_at: payload.updated_at,
+        })
+        .eq("robot_technical_id", params.robotTechnicalId)
+        .select()
+        .single()
+      if (error) throw error
+      return data as RobotDisplayConfig
+    } catch {
+      const { data, error: fallbackError } = await supabase
+        .from("robot_display_config")
+        .update(payloadWithoutNotesMode)
+        .eq("robot_technical_id", params.robotTechnicalId)
+        .select()
+        .single()
+      if (fallbackError) throw fallbackError
+      return data as RobotDisplayConfig
+    }
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("robot_display_config")
+      .insert(payload)
+      .select()
+      .single()
+    if (error) throw error
+    return data as RobotDisplayConfig
+  } catch {
+    const { data, error: fallbackError } = await supabase
+      .from("robot_display_config")
+      .insert(payloadWithoutNotesMode)
+      .select()
+      .single()
+    if (fallbackError) throw fallbackError
+    return data as RobotDisplayConfig
+  }
 }
 
 export async function upsertRobotDisplayConfigForRobots(

@@ -89,7 +89,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QCheckBox, QPushButton, QLabel, QFrame, QPlainTextEdit,
     QRadioButton, QButtonGroup, QLineEdit, QInputDialog, QMessageBox, QSpacerItem,
     QDialog, QDialogButtonBox, QFileDialog, QComboBox, QGraphicsDropShadowEffect, QSizePolicy, QDateEdit, QToolTip,
-    QMenu,
+    QMenu, QSystemTrayIcon,
     QListWidget,
     QListWidgetItem,
     QAbstractItemView,
@@ -103,7 +103,7 @@ from PySide6.QtCore import (
 )
 
 from PySide6.QtGui import (
-    QIcon, QPdfWriter, QPainter, QFont, QPageSize, QDesktopServices,
+    QAction, QIcon, QPdfWriter, QPainter, QFont, QPageSize, QDesktopServices,
     QColor, QPen, QIntValidator, QPixmap, QImage, QPainterPath, QBrush, QLinearGradient
 )
 
@@ -113,14 +113,29 @@ from PySide6.QtGui import (
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # =============================================================================
-# CONFIGURAÇÃO SUPABASE - Carrega .env da raiz do projeto
+# CONFIGURAÇÃO SUPABASE / ENV COMPARTILHADO
 # =============================================================================
-# O .env agora fica no diretório "data/.env" ao lado deste arquivo
-# (mantemos o fallback antigo caso o arquivo não exista nessa pasta).
 _base_dir = os.path.dirname(os.path.abspath(__file__))
 _env_data_path = os.path.join(_base_dir, "data", ".env")
-_env_root_path = os.path.abspath(os.path.join(_base_dir, '..', '..', '.env'))
-_env_path = _env_data_path if os.path.exists(_env_data_path) else _env_root_path
+_env_local_path = os.path.join(_base_dir, ".env")
+_env_root_path = os.path.abspath(os.path.join(_base_dir, "..", "..", ".env"))
+_robots_base_env_dir = pathlib.Path(r"C:\Users\ROBO\Documents\ROBOS")
+_robots_env_path = _robots_base_env_dir / ".env"
+_robots_env_example_path = _robots_base_env_dir / ".env.example"
+
+
+def _get_supabase_service_role_key() -> str:
+    for env_name in (
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SERVICE_ROLE_KEY",
+        "SUPABASE_KEY",
+        "SUPABASE_SECRET_KEY",
+        "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY",
+    ):
+        value = (os.getenv(env_name) or "").strip()
+        if value:
+            return value
+    return ""
 
 try:
     from dotenv import load_dotenv
@@ -132,30 +147,37 @@ try:
     except Exception:
         httpx = None
     
-    # Carrega .env da raiz do projeto
-    if os.path.exists(_env_path):
-        load_dotenv(_env_path, override=True)
+    # Ordem: .env compartilhado da VM -> .env local do bot -> fallback padrão.
+    if _robots_env_path.exists():
+        load_dotenv(_robots_env_path, override=True)
+    elif _robots_env_example_path.exists():
+        load_dotenv(_robots_env_example_path, override=True)
+
+    if os.path.exists(_env_data_path):
+        load_dotenv(_env_data_path, override=True)
+    elif os.path.exists(_env_local_path):
+        load_dotenv(_env_local_path, override=True)
+    elif os.path.exists(_env_root_path):
+        load_dotenv(_env_root_path, override=True)
     else:
-        # Fallback: tenta carregar do diretório atual
         load_dotenv(override=True)
     
     # Tenta ler as variáveis do .env (pode ser NEXT_PUBLIC_* ou sem prefixo)
     SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
     # Para o Python, PRECISAMOS da SERVICE_ROLE_KEY para fazer INSERT/UPDATE/DELETE
     # A ANON_KEY não funciona para operações de escrita devido ao RLS
-    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    SUPABASE_KEY = _get_supabase_service_role_key()
     
     # Verifica se a Service Role Key está configurada
     if not SUPABASE_KEY:
-        print(f"[SUPABASE] ⚠️ ATENÇÃO: SUPABASE_SERVICE_ROLE_KEY não encontrada no .env")
+        print(f"[SUPABASE] ⚠️ ATENÇÃO: Service Role Key não encontrada no .env")
         print(f"  - Para operações de escrita (INSERT/UPDATE/DELETE), você precisa da Service Role Key")
-        print(f"  - A Anon Key não funciona para essas operações devido ao RLS")
         print(f"  - Obtenha a Service Role Key em: Supabase Dashboard > Settings > API > service_role key")
-        print(f"  - Adicione ao .env: SUPABASE_SERVICE_ROLE_KEY=sua_chave_aqui")
+        print(f"  - Aceito em qualquer um destes nomes: SUPABASE_SERVICE_ROLE_KEY / SERVICE_ROLE_KEY / SUPABASE_KEY")
         supabase_client = None
         SUPABASE_AVAILABLE = False
     elif SUPABASE_KEY == "COLE_AQUI_SUA_SERVICE_ROLE_KEY":
-        print(f"[SUPABASE] ⚠️ ATENÇÃO: SUPABASE_SERVICE_ROLE_KEY ainda está com valor placeholder")
+        print(f"[SUPABASE] ⚠️ ATENÇÃO: Service Role Key ainda está com valor placeholder")
         print(f"  - Substitua 'COLE_AQUI_SUA_SERVICE_ROLE_KEY' pela sua Service Role Key real")
         print(f"  - Obtenha em: Supabase Dashboard > Settings > API > service_role key")
         supabase_client = None
@@ -171,9 +193,9 @@ try:
         SUPABASE_AVAILABLE = False
         print(f"[SUPABASE] ❌ Não configurado:")
         print(f"  - SUPABASE_URL: {'✅' if SUPABASE_URL else '❌'}")
-        print(f"  - SUPABASE_SERVICE_ROLE_KEY: {'✅' if SUPABASE_KEY else '❌'}")
-        print(f"  - Caminho .env tentado: {_env_path}")
-        print(f"  - .env existe: {os.path.exists(_env_path)}")
+        print(f"  - SERVICE_ROLE_KEY: {'✅' if SUPABASE_KEY else '❌'}")
+        print(f"  - Caminho .env local tentado: {_env_data_path if os.path.exists(_env_data_path) else (_env_local_path if os.path.exists(_env_local_path) else _env_root_path)}")
+        print(f"  - .env compartilhado existe: {_robots_env_path.exists()}")
 except ImportError as e:
     SUPABASE_AVAILABLE = False
     supabase_client = None
@@ -219,6 +241,255 @@ def _supabase_retry_execute(fn, log_fn=None, retries: int = 4, base_sleep_s: flo
 
     # fallback (não deve chegar aqui)
     raise last_exc
+
+
+ROBOT_TECHNICAL_ID = os.getenv("ROBOT_TECHNICAL_ID", "sefaz_xml").strip() or "sefaz_xml"
+ROBOT_DISPLAY_NAME_DEFAULT = os.getenv("ROBOT_DISPLAY_NAME", "Sefaz Xml").strip() or "Sefaz Xml"
+ROBOT_SEGMENT_PATH_DEFAULT = os.getenv("ROBOT_SEGMENT_PATH", "FISCAL/NFE-NFC").strip() or "FISCAL/NFE-NFC"
+_robot_api_config: Optional[Dict[str, Any]] = None
+
+
+def get_robot_supabase_credentials() -> Tuple[Optional[str], Optional[str]]:
+    url = (os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or "").strip()
+    key = _get_supabase_service_role_key()
+    if url and key:
+        return (url, key)
+    return (None, None)
+
+
+def fetch_robot_config_from_api() -> Optional[Dict[str, Any]]:
+    url_base = (os.getenv("FOLDER_STRUCTURE_API_URL") or os.getenv("SERVER_API_URL") or "").strip().rstrip("/")
+    if not url_base:
+        return None
+    try:
+        headers = {}
+        if "ngrok" in url_base.lower():
+            headers["ngrok-skip-browser-warning"] = "true"
+        response = requests.get(
+            f"{url_base}/api/robot-config",
+            params={"technical_id": ROBOT_TECHNICAL_ID},
+            headers=headers,
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def get_robot_api_config(force_refresh: bool = False) -> Optional[Dict[str, Any]]:
+    global _robot_api_config
+    if force_refresh or _robot_api_config is None:
+        _robot_api_config = fetch_robot_config_from_api()
+    return _robot_api_config
+
+
+def get_resolved_output_base() -> Optional[pathlib.Path]:
+    cfg = get_robot_api_config()
+    base_path = (cfg or {}).get("base_path") or os.getenv("BASE_PATH") or ""
+    base_path = str(base_path).strip()
+    if not base_path:
+        return None
+    return pathlib.Path(base_path)
+
+
+def resolve_dashboard_output_root() -> Optional[str]:
+    base = get_resolved_output_base()
+    if not base:
+        return None
+    cfg = get_robot_api_config() or {}
+    segment_path = str(cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
+    root = pathlib.Path(base)
+    for part in [p.strip() for p in segment_path.split("/") if p.strip()]:
+        root = root / safe_folder_name(part)
+    return str(root)
+
+
+def load_companies_from_dashboard() -> List[Dict[str, Any]]:
+    if not SUPABASE_AVAILABLE or not supabase_client:
+        return []
+    try:
+        robot_row = fetch_robot_row()
+        robot_global_logins = _normalize_sefaz_go_logins((robot_row or {}).get("global_logins"))
+        configs = _supabase_retry_execute(
+            lambda: supabase_client.table("company_robot_config")
+            .select("company_id, enabled, selected_login_cpf")
+            .eq("robot_technical_id", ROBOT_TECHNICAL_ID)
+            .eq("enabled", True)
+            .execute()
+        )
+        config_rows = getattr(configs, "data", None) or []
+        config_by_company = {
+            row.get("company_id"): row
+            for row in config_rows
+            if row.get("company_id")
+        }
+        enabled_company_ids = list(config_by_company.keys())
+
+        query = (
+            supabase_client.table("companies")
+            .select("id, name, document, active, state_registration, contador_cpf, sefaz_go_logins")
+            .eq("active", True)
+            .order("name")
+        )
+        if enabled_company_ids:
+            query = query.in_("id", enabled_company_ids)
+        try:
+            response = _supabase_retry_execute(lambda: query.execute())
+        except Exception:
+            fallback_query = (
+                supabase_client.table("companies")
+                .select("id, name, document, active")
+                .eq("active", True)
+                .order("name")
+            )
+            if enabled_company_ids:
+                fallback_query = fallback_query.in_("id", enabled_company_ids)
+            response = _supabase_retry_execute(lambda: fallback_query.execute())
+        rows = getattr(response, "data", None) or []
+        normalized: List[Dict[str, Any]] = []
+        for row in rows:
+            normalized.append(
+                {
+                    "id": row.get("id"),
+                    "name": (row.get("name") or "").strip(),
+                    "document": "".join(ch for ch in str(row.get("document") or "") if ch.isdigit()),
+                    "state_registration": ie_somente_digitos(row.get("state_registration") or ""),
+                    "contador_cpf": cpf_somente_digitos(row.get("contador_cpf") or ""),
+                    "selected_login_cpf": cpf_somente_digitos((config_by_company.get(row.get("id")) or {}).get("selected_login_cpf") or ""),
+                    "global_logins": robot_global_logins,
+                    "legacy_company_logins": _normalize_sefaz_go_logins(row.get("sefaz_go_logins")),
+                }
+            )
+        return normalized
+    except Exception:
+        return []
+
+
+def fetch_robot_row() -> Optional[Dict[str, Any]]:
+    if not SUPABASE_AVAILABLE or not supabase_client:
+        return None
+    try:
+        try:
+            response = _supabase_retry_execute(
+                lambda: supabase_client.table("robots")
+                .select("id, technical_id, display_name, status, segment_path, initial_period_start, initial_period_end, notes_mode, global_logins")
+                .eq("technical_id", ROBOT_TECHNICAL_ID)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            response = _supabase_retry_execute(
+                lambda: supabase_client.table("robots")
+                .select("id, technical_id, display_name, status, segment_path, initial_period_start, initial_period_end, notes_mode")
+                .eq("technical_id", ROBOT_TECHNICAL_ID)
+                .limit(1)
+                .execute()
+            )
+        rows = getattr(response, "data", None) or []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def register_robot() -> Optional[str]:
+    if not SUPABASE_AVAILABLE or not supabase_client:
+        return None
+    try:
+        existing = fetch_robot_row()
+        if existing and existing.get("id"):
+            _supabase_retry_execute(
+                lambda: supabase_client.table("robots")
+                .update(
+                    {
+                        "status": "active",
+                        "last_heartbeat_at": datetime.utcnow().isoformat(),
+                        "segment_path": (existing.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT),
+                    }
+                )
+                .eq("id", existing["id"])
+                .execute()
+            )
+            return existing["id"]
+
+        payload = {
+            "technical_id": ROBOT_TECHNICAL_ID,
+            "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
+            "status": "active",
+            "last_heartbeat_at": datetime.utcnow().isoformat(),
+            "segment_path": (get_robot_api_config() or {}).get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT,
+            "is_fiscal_notes_robot": True,
+            "fiscal_notes_kind": "nfe_nfc",
+            "notes_mode": "modelo_55",
+            "date_execution_mode": "interval",
+        }
+        payload_candidates = [
+            payload,
+            {k: v for k, v in payload.items() if k != "notes_mode"},
+            {
+                "technical_id": ROBOT_TECHNICAL_ID,
+                "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
+                "status": "active",
+                "last_heartbeat_at": datetime.utcnow().isoformat(),
+                "segment_path": (get_robot_api_config() or {}).get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT,
+                "date_execution_mode": "interval",
+            },
+        ]
+
+        last_error = None
+        inserted = False
+        for candidate in payload_candidates:
+            try:
+                _supabase_retry_execute(
+                    lambda candidate=candidate: supabase_client.table("robots").insert(candidate).execute()
+                )
+                inserted = True
+                break
+            except Exception as exc:
+                last_error = exc
+
+        if not inserted and last_error is not None:
+            raise last_error
+
+        created = fetch_robot_row()
+        return created.get("id") if created else None
+    except Exception as exc:
+        print(f"[ROBÔ] Falha ao registrar no painel: {exc}")
+        return None
+
+
+def update_robot_heartbeat(robot_id: Optional[str]) -> None:
+    if not robot_id or not SUPABASE_AVAILABLE or not supabase_client:
+        return
+    try:
+        _supabase_retry_execute(
+            lambda: supabase_client.table("robots")
+            .update({"last_heartbeat_at": datetime.utcnow().isoformat()})
+            .eq("id", robot_id)
+            .execute()
+        )
+    except Exception:
+        pass
+
+
+def update_robot_status(robot_id: Optional[str], status: str) -> None:
+    if not robot_id or not SUPABASE_AVAILABLE or not supabase_client:
+        return
+    try:
+        _supabase_retry_execute(
+            lambda: supabase_client.table("robots")
+            .update(
+                {
+                    "status": status,
+                    "last_heartbeat_at": datetime.utcnow().isoformat(),
+                }
+            )
+            .eq("id", robot_id)
+            .execute()
+        )
+    except Exception:
+        pass
 
 # =============================================================================
 # COMPONENTES Qt - AnimatedCheckBox
@@ -785,8 +1056,24 @@ def get_config_dir():
 CONFIG_DIR = get_config_dir()
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
+def _resolve_ico_path() -> str:
+    candidates = [
+        pathlib.Path(DATA_DIR) / "ICO" / "app.ico",
+        pathlib.Path(DATA_DIR) / "Ico" / "app.ico",
+        pathlib.Path(DATA_DIR) / "ico" / "app.ico",
+        pathlib.Path(_base_dir) / "data" / "ICO" / "app.ico",
+        pathlib.Path(_base_dir) / "data" / "Ico" / "app.ico",
+        pathlib.Path(_base_dir) / "data" / "ico" / "app.ico",
+        pathlib.Path(_base_dir) / "app.ico",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return str(candidates[0])
+
+
 # ICO (dentro da pasta data/ICO)
-ICO_PATH = os.path.join(DATA_DIR, "ICO", "app.ico")
+ICO_PATH = _resolve_ico_path()
 
 # =============================================================================
 # Estilos de botões (mesmo padrão do bot NFS)
@@ -983,8 +1270,56 @@ def _load_login_portal_data() -> dict:
     return {}
 
 
+def _normalize_sefaz_go_logins(raw: Any) -> List[Dict[str, str]]:
+    if not isinstance(raw, list):
+        return []
+    normalized: List[Dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        cpf = cpf_somente_digitos(item.get("cpf", ""))
+        senha = str(item.get("password") or item.get("senha") or "").strip()
+        if len(cpf) == 11 and senha:
+            normalized.append(
+                {
+                    "cpf": cpf,
+                    "senha": senha,
+                    "is_default": bool(item.get("is_default")),
+                }
+            )
+    if normalized and not any(item.get("is_default") for item in normalized):
+        normalized[0]["is_default"] = True
+    return normalized
+
+
+def _load_dashboard_portal_logins() -> List[Dict[str, str]]:
+    robot_row = fetch_robot_row()
+    if robot_row:
+        logins = _normalize_sefaz_go_logins(robot_row.get("global_logins"))
+        if logins:
+            return logins
+
+    rows = load_companies_from_dashboard()
+    if not rows:
+        return []
+    aggregated: Dict[str, Dict[str, str]] = {}
+    for row in rows:
+        for login in _normalize_sefaz_go_logins(row.get("legacy_company_logins")):
+            cpf = cpf_somente_digitos(login.get("cpf", ""))
+            senha = str(login.get("senha", "")).strip()
+            if cpf and senha and cpf not in aggregated:
+                aggregated[cpf] = {"cpf": cpf, "senha": senha, "is_default": bool(login.get("is_default"))}
+    ordered = list(aggregated.values())
+    ordered.sort(key=lambda item: (0 if item.get("is_default") else 1, item.get("cpf", "")))
+    return ordered
+
+
 def load_logins_portal() -> List[Dict[str, str]]:
     """Retorna a lista de logins salvos no portal (cada item: cpf, senha)."""
+    dashboard_logins = _load_dashboard_portal_logins()
+    if dashboard_logins:
+        return dashboard_logins
+
     data = _load_login_portal_data()
     logins = data.get("logins")
     if isinstance(logins, list):
@@ -1033,7 +1368,6 @@ def load_login_portal(preferred_cpf: str | None = None) -> Tuple[str, str]:
     Lê o JSON de login do portal e devolve (cpf, senha).
     Se não existir ou der erro, devolve ("", "").
     """
-    data = _load_login_portal_data()
     logins = load_logins_portal()
     if not logins:
         return "", ""
@@ -1044,7 +1378,14 @@ def load_login_portal(preferred_cpf: str | None = None) -> Tuple[str, str]:
             if cpf_somente_digitos(item.get("cpf", "")) == prefer:
                 return item.get("cpf", ""), item.get("senha", "")
 
-    default_cpf = cpf_somente_digitos(data.get("default_cpf", ""))
+    default_cpf = ""
+    for item in logins:
+        if item.get("is_default"):
+            default_cpf = cpf_somente_digitos(item.get("cpf", ""))
+            break
+    if not default_cpf:
+        data = _load_login_portal_data()
+        default_cpf = cpf_somente_digitos(data.get("default_cpf", ""))
     if default_cpf:
         for item in logins:
             if cpf_somente_digitos(item.get("cpf", "")) == default_cpf:
@@ -1719,6 +2060,10 @@ def cpf_formatado(cpf: str) -> str:
     if len(num) == 11:
         return f"{num[0:3]}.{num[3:6]}.{num[6:9]}-{num[9:11]}"
     return cpf
+
+
+def normalize_company_name(name: str) -> str:
+    return re.sub(r"\s+", " ", str(name or "").strip()).upper()
 
 
 def safe_folder_name(name: str) -> str:
@@ -3696,7 +4041,8 @@ def _kill_automation_chrome_instances(log_fn=None) -> int:
         if not pids:
             # Fallback: tenta matar por ExecutablePath exato (ainda limitado ao nosso Chrome portátil).
             try:
-                q = f"ExecutablePath='{alvo.replace('\\\\', '\\\\\\\\')}'"
+                escaped_alvo = alvo.replace("\\", "\\\\")
+                q = f"ExecutablePath='{escaped_alvo}'"
                 out2 = subprocess.run(
                     ["wmic", "process", "where", q, "get", "ProcessId", "/format:csv"],
                     **run_kwargs
@@ -5856,29 +6202,17 @@ def ensure_company_exists_supabase(cnpj: str, company_name: str) -> Optional[str
         if not cnpj_clean or len(cnpj_clean) != 14:
             return None
         
-        # Busca empresa pelo CNPJ
+        # Busca empresa pelo documento (schema atual do dashboard)
         result = _supabase_retry_execute(
             lambda: supabase_client.table('companies')
-                .select('id, state')
-                .eq('cnpj', cnpj_clean)
+                .select('id')
+                .eq('document', cnpj_clean)
                 .execute()
         )
         
         if result.data and len(result.data) > 0:
             company_id = result.data[0]['id']
-            current_state = result.data[0].get('state')
-            
-            # Se não tem estado, tenta obter via API
-            if not current_state:
-                state = get_company_state_from_cnpj_supabase(cnpj_clean)
-                if state:
-                    _supabase_retry_execute(
-                        lambda: supabase_client.table('companies')
-                            .update({'state': state, 'updated_at': datetime.now().isoformat()})
-                            .eq('id', company_id)
-                            .execute()
-                    )
-            
+
             # Atualiza nome se mudou
             _supabase_retry_execute(
                 lambda: supabase_client.table('companies')
@@ -5889,13 +6223,11 @@ def ensure_company_exists_supabase(cnpj: str, company_name: str) -> Optional[str
             
             return company_id
         else:
-            # Cria nova empresa - usa upsert para evitar erro de duplicata
-            state = get_company_state_from_cnpj_supabase(cnpj_clean)
-            
+            # Cria nova empresa compatível com o schema atual do dashboard
             new_company = {
                 'name': company_name,
-                'cnpj': cnpj_clean,
-                'state': state
+                'document': cnpj_clean,
+                'active': True,
             }
             
             try:
@@ -5913,29 +6245,19 @@ def ensure_company_exists_supabase(cnpj: str, company_name: str) -> Optional[str
                     # Busca novamente
                     result_retry = _supabase_retry_execute(
                         lambda: supabase_client.table('companies')
-                            .select('id, state')
-                            .eq('cnpj', cnpj_clean)
+                            .select('id')
+                            .eq('document', cnpj_clean)
                             .execute()
                     )
                     
                     if result_retry.data and len(result_retry.data) > 0:
                         company_id = result_retry.data[0]['id']
-                        # Atualiza nome e estado se necessário
-                        current_state_retry = result_retry.data[0].get('state')
-                        if not current_state_retry and state:
-                            _supabase_retry_execute(
-                                lambda: supabase_client.table('companies')
-                                    .update({'state': state, 'name': company_name, 'updated_at': datetime.now().isoformat()})
-                                    .eq('id', company_id)
-                                    .execute()
-                            )
-                        else:
-                            _supabase_retry_execute(
-                                lambda: supabase_client.table('companies')
-                                    .update({'name': company_name, 'updated_at': datetime.now().isoformat()})
-                                    .eq('id', company_id)
-                                    .execute()
-                            )
+                        _supabase_retry_execute(
+                            lambda: supabase_client.table('companies')
+                                .update({'name': company_name, 'updated_at': datetime.now().isoformat()})
+                                .eq('id', company_id)
+                                .execute()
+                        )
                         return company_id
                 else:
                     # Outro tipo de erro, re-lança
@@ -5983,7 +6305,7 @@ def sincronizar_empresas_supabase(empresas: Dict[str, Dict[str, str]], log_fn: O
 
 def extrair_info_nfe_simples_supabase(xml_bytes: bytes) -> Dict:
     """
-    Extrai informações básicas do XML para Supabase (compatível com dashboard.py)
+    Extrai informações básicas do XML para Supabase (compatível com sefaz xml.py)
     Retorna: {model: '55'/'65', vNF: float, dtEmi: date, cnpjEmit: str}
     """
     try:
@@ -10340,6 +10662,11 @@ class MyCompactUI(QMainWindow):
         super().__init__()
         self.setWindowTitle("Automação Sefaz NFe (GO)")
         self.worker_thread: Optional[AutomationWorker] = None
+        self._tray_icon: Optional[QSystemTrayIcon] = None
+        self._quitting_from_tray = False
+        self.robot_id: Optional[str] = None
+        self.dashboard_company_cache: List[Dict[str, Any]] = []
+        self.runtime_paths: Dict[str, str] = {}
 
         # flags de controle de execução
         self.automation_running = False
@@ -10349,36 +10676,19 @@ class MyCompactUI(QMainWindow):
         self.config = carregar_config()
         self.paths = self.config.get("paths", {})
         # {ie: {"display_name": ..., "cnpj": ""}}
-        self.empresas = self.config.get("empresas", {})
-        self.produtos = list(self.empresas.keys())
+        local_empresas = self.config.get("empresas", {})
+        self._local_empresas_metadata = dict(local_empresas)
+        if SUPABASE_AVAILABLE:
+            self.empresas = {}
+            self.produtos = []
+        else:
+            self.empresas = local_empresas
+            self.produtos = list(self.empresas.keys())
         
-        # Sincroniza empresas com Supabase ao abrir o app (apenas se checkbox estiver marcado)
-        try:
-            config = carregar_config()
-            enviar_supabase = config.get("enviar_supabase", True)  # Default: True
-        except Exception:
-            enviar_supabase = True
-        
-        if SUPABASE_AVAILABLE and enviar_supabase:
-            try:
-                from threading import Thread
-                def _sync_empresas():
-                    try:
-                        count = sincronizar_empresas_supabase(
-                            self.empresas,
-                            log_fn=lambda msg: print(f"[SUPABASE] {msg}")
-                        )
-                        if count > 0:
-                            print(f"[SUPABASE] ✅ {count} empresa(s) sincronizada(s) com Supabase")
-                    except Exception as e:
-                        print(f"[ERRO] Falha ao sincronizar empresas: {e}")
-                
-                thread = Thread(target=_sync_empresas, daemon=True)
-                thread.start()
-            except Exception:
-                pass
-        elif not enviar_supabase:
-            print(f"[SUPABASE] ⚠️ Sincronização de empresas desabilitada (checkbox desmarcado)")
+        # No Sefaz Xml, a lista principal de empresas vem do dashboard.
+        # O JSON local fica apenas como apoio para metadados legados.
+        if SUPABASE_AVAILABLE:
+            print("[SUPABASE] ℹ️ Sefaz Xml em modo dashboard: empresas locais não serão sincronizadas para o banco.")
 
         # rate-limit simples p/ consulta de CNPJ (evita travas e 429)
         self._cnpj_lookup_calls: List[float] = []
@@ -10399,6 +10709,10 @@ class MyCompactUI(QMainWindow):
         self._scheduled_start_dt = None
         self.schedule_timer = QTimer(self)
         self.schedule_timer.timeout.connect(self._update_schedule_countdown)
+        self.robot_presence_timer = QTimer(self)
+        self.robot_presence_timer.timeout.connect(self._refresh_robot_presence)
+        self.dashboard_sync_timer = QTimer(self)
+        self.dashboard_sync_timer.timeout.connect(self._sync_dashboard_runtime_state)
 
         # Garante janela redimensionável (alguns ambientes no Windows podem herdar hint de tamanho fixo)
         try:
@@ -10418,6 +10732,7 @@ class MyCompactUI(QMainWindow):
 
         if os.path.exists(ICO_PATH):
             self.setWindowIcon(QIcon(ICO_PATH))
+        self._setup_tray_icon()
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -11672,10 +11987,113 @@ class MyCompactUI(QMainWindow):
         self._dash_sync_empresas_combo()
         self._on_global_operacao_changed()
         self._request_dashboard_refresh(force=True)
+        self.robot_id = register_robot()
+        self._sync_dashboard_runtime_state(log_changes=False)
+        update_robot_status(self.robot_id, "active")
+        self.robot_presence_timer.start(15_000)
+        self.dashboard_sync_timer.start(10_000)
 
     # -----------------------------
     # Navegação (menu lateral)
     # -----------------------------
+    def _match_local_company_metadata(self, company_name: str, document: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+        company_name_norm = normalize_company_name(company_name)
+        document_digits = cnpj_somente_digitos(document or "")
+        fallback_match: Tuple[Optional[str], Optional[Dict[str, Any]]] = (None, None)
+        for ie, info in (self._local_empresas_metadata or {}).items():
+            info_cnpj = cnpj_somente_digitos(info.get("cnpj", ""))
+            if document_digits and info_cnpj and info_cnpj == document_digits:
+                return ie, dict(info)
+            if not fallback_match[0] and normalize_company_name(info.get("display_name", "")) == company_name_norm:
+                fallback_match = (ie, dict(info))
+        return fallback_match
+
+    def _build_dashboard_empresas_map(self, rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        merged: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            company_name = (row.get("name") or "").strip()
+            company_id = row.get("id")
+            document = cnpj_somente_digitos(row.get("document", ""))
+            state_registration = ie_somente_digitos(row.get("state_registration") or "")
+            contador_cpf = cpf_somente_digitos(row.get("contador_cpf") or "")
+            selected_login_cpf = cpf_somente_digitos(row.get("selected_login_cpf") or "")
+            logins = _normalize_sefaz_go_logins(row.get("global_logins"))
+            if not logins:
+                logins = _normalize_sefaz_go_logins(row.get("legacy_company_logins"))
+            default_login = next((item for item in logins if item.get("is_default")), logins[0] if logins else None)
+
+            ie, local = self._match_local_company_metadata(company_name, document)
+            effective_ie = state_registration or ie
+            if not effective_ie:
+                continue
+            entry = {
+                "display_name": company_name or (local or {}).get("display_name") or effective_ie,
+                "cnpj": document or (local or {}).get("cnpj", ""),
+                "company_id": company_id,
+                "portal_logins": logins,
+            }
+            login_cpf = (
+                selected_login_cpf
+                or contador_cpf
+                or cpf_somente_digitos((default_login or {}).get("cpf", ""))
+                or cpf_somente_digitos((local or {}).get("login_cpf", ""))
+            )
+            if login_cpf:
+                entry["login_cpf"] = login_cpf
+            merged[effective_ie] = entry
+        return merged
+
+    def _apply_robot_period_from_dashboard(self) -> None:
+        row = fetch_robot_row()
+        if not row:
+            return
+        period_start = (row.get("initial_period_start") or "").strip()
+        period_end = (row.get("initial_period_end") or "").strip()
+        try:
+            if period_start:
+                self.line_data_inicial.setText(datetime.strptime(period_start, "%Y-%m-%d").strftime("%d/%m/%Y"))
+            if period_end:
+                self.line_data_final.setText(datetime.strptime(period_end, "%Y-%m-%d").strftime("%d/%m/%Y"))
+        except Exception:
+            pass
+
+    def _resolve_runtime_paths(self) -> Dict[str, str]:
+        runtime = dict(self.paths or {})
+        dashboard_root = resolve_dashboard_output_root()
+        if dashboard_root:
+            runtime["base_empresas"] = dashboard_root
+            # O relatório final deve seguir a mesma pasta base definida no dashboard.
+            runtime["relatorios_pdf"] = dashboard_root
+        return runtime
+
+    def _sync_dashboard_runtime_state(self, log_changes: bool = True) -> None:
+        self.runtime_paths = self._resolve_runtime_paths()
+        if self.runtime_paths.get("base_empresas"):
+            self.paths["base_empresas"] = self.runtime_paths["base_empresas"]
+        if self.runtime_paths.get("relatorios_pdf"):
+            self.paths["relatorios_pdf"] = self.runtime_paths["relatorios_pdf"]
+        self._apply_robot_period_from_dashboard()
+        rows = load_companies_from_dashboard()
+        if not rows:
+            return
+        merged = self._build_dashboard_empresas_map(rows)
+        if not merged:
+            return
+        previous_keys = set(self.empresas.keys())
+        self.dashboard_company_cache = rows
+        self.empresas = merged
+        self.produtos = list(self.empresas.keys())
+        self._recarregar_lista_empresas()
+        if log_changes and set(self.empresas.keys()) != previous_keys:
+            self.update_log(f"[PAINEL] Lista de empresas sincronizada em tempo real ({len(self.empresas)} empresa(s) com IE vinculada).")
+
+    def _refresh_robot_presence(self) -> None:
+        update_robot_heartbeat(self.robot_id)
+        if self.worker_thread and self.worker_thread.isRunning():
+            update_robot_status(self.robot_id, "processing")
+        else:
+            update_robot_status(self.robot_id, "active")
+
     def _nav_set_page(self, idx: int):
         """Alterna entre Dashboard (0) e Execução (1)."""
         try:
@@ -13382,6 +13800,54 @@ class MyCompactUI(QMainWindow):
         else:
             self.update_log("ℹ️ [LOG] Limpeza de log cancelada.")
 
+    def _setup_tray_icon(self):
+        self._tray_icon = QSystemTrayIcon(self)
+        app_icon = QIcon(ICO_PATH) if os.path.exists(ICO_PATH) else QIcon()
+        if app_icon.isNull():
+            app_icon = self.windowIcon()
+        if app_icon.isNull():
+            app_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        self._tray_icon.setIcon(app_icon)
+        menu = QMenu()
+        show_act = QAction("Abrir janela", self)
+        show_act.triggered.connect(self._show_from_tray)
+        menu.addAction(show_act)
+        quit_act = QAction("Fechar robô", self)
+        quit_act.triggered.connect(self._quit_from_tray)
+        menu.addAction(quit_act)
+        self._tray_icon.setContextMenu(menu)
+        self._tray_icon.activated.connect(self._on_tray_activated)
+        self._tray_icon.setToolTip("Sefaz Xml - NFe / NFC-e GO")
+
+    def _show_from_tray(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self._refresh_robot_presence()
+        if not self.robot_presence_timer.isActive():
+            self.robot_presence_timer.start(30000)
+        if not self.dashboard_sync_timer.isActive():
+            self.dashboard_sync_timer.start(60000)
+
+    def _on_tray_activated(self, reason: int):
+        if reason == QSystemTrayIcon.DoubleClick:
+            self._show_from_tray()
+
+    def _quit_from_tray(self):
+        self._quitting_from_tray = True
+        if self.worker_thread and self.worker_thread.isRunning():
+            self.worker_thread.stop()
+            if not self.worker_thread.wait(5000):
+                self.worker_thread.terminate()
+                self.worker_thread.wait(1000)
+        self.robot_presence_timer.stop()
+        self.dashboard_sync_timer.stop()
+        update_robot_status(self.robot_id, "inactive")
+        _stop_proxy_if_running(log_fn=self.update_log)
+        if self._tray_icon is not None:
+            self._tray_icon.hide()
+        QApplication.quit()
+
     def closeEvent(self, event):
         # Salva a marcação atual das empresas/diário no config.json ao fechar
         try:
@@ -13389,13 +13855,22 @@ class MyCompactUI(QMainWindow):
         except Exception:
             # aqui não vamos travar o fechamento por causa de erro de gravação
             pass
+        if self._quitting_from_tray:
+            if self.worker_thread and self.worker_thread.isRunning():
+                self.worker_thread.stop()
+                self.worker_thread.wait()
+                self.worker_thread = None
+            self.robot_presence_timer.stop()
+            self.dashboard_sync_timer.stop()
+            update_robot_status(self.robot_id, "inactive")
+            _stop_proxy_if_running(log_fn=self.update_log)
+            event.accept()
+            return
 
-        if self.worker_thread and self.worker_thread.isRunning():
-            self.worker_thread.stop()
-            self.worker_thread.wait()
-            self.worker_thread = None
-        _stop_proxy_if_running(log_fn=self.update_log)
-        event.accept()
+        event.ignore()
+        self.hide()
+        if self._tray_icon is not None and not self._tray_icon.icon().isNull():
+            self._tray_icon.show()
 
     # ---------- Início / Agendamento ----------
 
@@ -13407,7 +13882,8 @@ class MyCompactUI(QMainWindow):
         # limpamos o estado de parada manual para um novo ciclo
         self._stop_requested_by_user = False
 
-        base_emp = self.paths.get("base_empresas", "").strip()
+        self._sync_dashboard_runtime_state(log_changes=False)
+        base_emp = (self.runtime_paths.get("base_empresas") or self.paths.get("base_empresas") or "").strip()
         if not base_emp:
             QMessageBox.warning(
                 self,
@@ -13527,7 +14003,9 @@ class MyCompactUI(QMainWindow):
                 self.btn_parar.setEnabled(False)
                 return
 
-        base_empresas_dir = self.paths.get("base_empresas", "").strip()
+        self._sync_dashboard_runtime_state(log_changes=False)
+        base_empresas_dir = (self.runtime_paths.get("base_empresas") or self.paths.get("base_empresas") or "").strip()
+        relatorios_pdf_dir = (self.runtime_paths.get("relatorios_pdf") or self.paths.get("relatorios_pdf") or "").strip()
 
         # Salva seleção atual (empresas marcadas + diário) no config.json
         try:
@@ -13551,10 +14029,12 @@ class MyCompactUI(QMainWindow):
             separar_modelo_xml=self.cbSepararModelos.isChecked(),
             folder_structure=self.paths.get("estrutura_pastas", self.folder_structure),
         )
+        update_robot_status(self.robot_id, "processing")
 
         # guarda flags para uso no PDF
         self._last_companies_daily_flags = companies_daily_flags
         self._last_daily_interval = daily_interval
+        self._last_relatorios_pdf_dir = relatorios_pdf_dir
 
         # 🔴 O QUE FALTAVA: conectar sinais e iniciar a thread
         self.worker_thread.log_signal.connect(self.update_log)
@@ -13581,6 +14061,7 @@ class MyCompactUI(QMainWindow):
             resultados = self.worker_thread.resultados
             try:
                 pasta_rel = self.paths.get("relatorios_pdf", "").strip()
+                pasta_rel = (getattr(self, "_last_relatorios_pdf_dir", "") or self.runtime_paths.get("relatorios_pdf") or pasta_rel).strip()
                 # Agora SEMPRE tenta gerar relatório, mesmo se foi parada manualmente
                 if resultados and pasta_rel:
                     pdf_path = gerar_relatorio_pdf(
@@ -13655,6 +14136,7 @@ class MyCompactUI(QMainWindow):
 
         # reseta flag para próxima execução
         self._stop_requested_by_user = False
+        update_robot_status(self.robot_id, "active")
 
     def on_stop(self):
         if self._scheduled_pending and (not self.worker_thread or not self.worker_thread.isRunning()):
@@ -13667,6 +14149,7 @@ class MyCompactUI(QMainWindow):
             self.btn_parar.setEnabled(False)
             self.update_log("[WARN] ⏹️ Agendamento cancelado pelo usuário.")
             _stop_proxy_if_running(log_fn=self.update_log)
+            update_robot_status(self.robot_id, "active")
             return
 
         # Se o worker estiver rodando, dispara parada
@@ -13688,6 +14171,7 @@ class MyCompactUI(QMainWindow):
         self.automation_running = False
         self.btn_iniciar.setEnabled(True)
         self.btn_parar.setEnabled(False)
+        update_robot_status(self.robot_id, "active")
         _stop_proxy_if_running(log_fn=self.update_log)
 
     # ---------- Gestão de Empresas (Adicionar / Editar / Excluir) ----------
@@ -14445,6 +14929,12 @@ class MyCompactUI(QMainWindow):
             substituir_lista: quando True substitui toda a lista atual; quando False apenas
                 acrescenta novos CNPJs que ainda não existem.
         """
+        QMessageBox.information(
+            self,
+            "Cadastro centralizado",
+            "As empresas agora são gerenciadas no site. Use o painel para cadastrar empresa, IE e logins da SEFAZ GO.",
+        )
+        return
         try:
             from openpyxl import load_workbook
         except ImportError:
@@ -14613,6 +15103,12 @@ class MyCompactUI(QMainWindow):
         )
 
     def adicionar_ie(self):
+        QMessageBox.information(
+            self,
+            "Cadastro centralizado",
+            "As empresas agora são cadastradas no site. Use o painel para incluir empresa, IE e logins da SEFAZ GO.",
+        )
+        return
         nome, cnpj_digits, ie_digits, login_cpf, ok = self._dialog_empresa_form(
             "Adicionar Empresa",
             nome_init="",
@@ -14668,6 +15164,12 @@ class MyCompactUI(QMainWindow):
         self.update_log(f"✅ [EMPRESAS] Nova empresa adicionada: {display_name} - {ie_formatada(ie)}")
 
     def editar_ie(self):
+        QMessageBox.information(
+            self,
+            "Cadastro centralizado",
+            "A edição das empresas agora é feita no site.",
+        )
+        return
         if not self.produtos:
             self.update_log("ℹ️ [EMPRESAS] Nenhuma empresa para editar.")
             return
@@ -14760,6 +15262,12 @@ class MyCompactUI(QMainWindow):
         )
 
     def excluir_ie(self):
+        QMessageBox.information(
+            self,
+            "Cadastro centralizado",
+            "A exclusão das empresas agora é feita no site.",
+        )
+        return
         if not self.produtos:
             self.update_log("ℹ️ [EMPRESAS] Nenhuma empresa para excluir.")
             return
@@ -15201,6 +15709,12 @@ class MyCompactUI(QMainWindow):
 
     def abrir_login_portal(self):
         """Gerenciador de logins do portal (Adicionar / Editar / Excluir)."""
+        QMessageBox.information(
+            self,
+            "Cadastro centralizado",
+            "Os logins da SEFAZ GO agora são gerenciados no site, dentro do cadastro da empresa.",
+        )
+        return
         dlg = QDialog(self)
         dlg.setWindowTitle("Login do Portal SEFAZ-GO")
         dlg.setModal(True)

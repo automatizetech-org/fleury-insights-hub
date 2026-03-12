@@ -1,6 +1,8 @@
 import { useState, useRef } from "react"
 import { useNavigate } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
 import { createCompany, upsertCompanyRobotConfig, ROBOT_NFS_TECHNICAL_ID } from "@/services/companiesService"
+import { findAccountantByCpf, formatCpf, getAccountants } from "@/services/accountantsService"
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
@@ -19,13 +21,13 @@ import { cn } from "@/utils"
 
 const BRASIL_API_CNPJ = "https://brasilapi.com.br/api/cnpj/v1"
 
-const CONTADORES = [
-  { nome: "ELIANDERSON GOMES FLEURY", cpf: "71361170115" },
-  { nome: "EDER GOMES FLEURY", cpf: "86873598100" },
-] as const
-
 function onlyDigits(s: string) {
   return s.replace(/\D/g, "")
+}
+
+function formatCnpjDigits(d: string) {
+  if (d.length !== 14) return d
+  return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -52,6 +54,7 @@ export default function EmpresasNovaPage() {
   const { setSelectedCompanyIds } = useSelectedCompanyIds()
   const [name, setName] = useState("")
   const [document, setDocument] = useState("")
+  const [stateRegistration, setStateRegistration] = useState("")
   const [useCertificate, setUseCertificate] = useState(false)
   const [certFile, setCertFile] = useState<File | null>(null)
   const [certPassword, setCertPassword] = useState("")
@@ -60,6 +63,11 @@ export default function EmpresasNovaPage() {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [loadingCnpj, setLoadingCnpj] = useState(false)
+  const { data: accountants = [] } = useQuery({
+    queryKey: ["accountants"],
+    queryFn: () => getAccountants(true),
+    staleTime: 30000,
+  })
 
   const [nfsRobotEnabled, setNfsRobotEnabled] = useState(false)
   const [nfsRobotAuthMode, setNfsRobotAuthMode] = useState<"password" | "certificate">("password")
@@ -111,16 +119,28 @@ export default function EmpresasNovaPage() {
           toast.error("Senha do certificado incorreta.")
           return
         }
+        const docDigits = onlyDigits(document)
+        if (docDigits.length !== 14) {
+          setError("Para vincular o certificado corretamente, informe um CNPJ válido (14 dígitos) antes de enviar o .pfx.")
+          toast.error("Informe um CNPJ válido antes de enviar o certificado.")
+          return
+        }
+        if (info.cnpj && info.cnpj !== docDigits) {
+          setError(`CNPJ do certificado (${formatCnpjDigits(info.cnpj)}) não corresponde ao CNPJ da empresa (${formatCnpjDigits(docDigits)}). Não foi possível cadastrar.`)
+          toast.error("CNPJ do certificado não corresponde ao da empresa.")
+          return
+        }
         cert_valid_until = info.validUntil ?? null
       }
       const company = await createCompany({
         name: name.trim(),
         document: document.trim() || null,
+        state_registration: stateRegistration.trim() || null,
         auth_mode: useCertificate ? "certificate" : null,
         cert_blob_b64,
         cert_password,
         cert_valid_until,
-        contador_nome: contadorCpf ? (CONTADORES.find((c) => c.cpf === contadorCpf)?.nome ?? null) : null,
+        contador_nome: contadorCpf ? (findAccountantByCpf(accountants, contadorCpf)?.name ?? null) : null,
         contador_cpf: contadorCpf || null,
       })
       await upsertCompanyRobotConfig(company.id, ROBOT_NFS_TECHNICAL_ID, {
@@ -186,7 +206,19 @@ export default function EmpresasNovaPage() {
             </div>
             <p className="text-xs text-muted-foreground">Se o nome estiver vazio, use Buscar para preencher pela Receita.</p>
           </div>
-
+          <div className="space-y-2">
+            <Label htmlFor="state-registration">IE</Label>
+            <Input
+              id="state-registration"
+              value={stateRegistration}
+              onChange={(e) => setStateRegistration(e.target.value)}
+              placeholder="Inscrição estadual"
+              disabled={loading}
+            />
+            <p className="text-xs text-muted-foreground">
+              Logins específicos de robôs são configurados depois, em editar empresa ou editar robô.
+            </p>
+          </div>
           <div className="space-y-3 pt-2 border-t border-border">
             <div className="flex items-center gap-2">
               <input
@@ -319,9 +351,9 @@ export default function EmpresasNovaPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">Nenhum</SelectItem>
-                {CONTADORES.map((c) => (
+                {accountants.map((c) => (
                   <SelectItem key={c.cpf} value={c.cpf}>
-                    {c.nome} — CPF {c.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}
+                    {c.name} — CPF {formatCpf(c.cpf)}
                   </SelectItem>
                 ))}
               </SelectContent>

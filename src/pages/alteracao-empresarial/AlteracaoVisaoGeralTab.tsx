@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,7 @@ import { FileText, Search, Loader2, AlertCircle, QrCode, Send, Link, Unlink, Ref
 import { toast } from "sonner";
 import { fetchCnpjPublica, CnpjFormData } from "@/services/cnpjPublicaService";
 import { OPCOES_PARCELAMENTO } from "@/constants/parcelamentoOpcoes";
-import { CONTADORES_RESPONSAVEIS } from "@/constants/contadoresResponsaveis";
+import { formatCpf, getAccountants } from "@/services/accountantsService";
 import {
   formatAlteracaoMessage,
   getConnectionStatus,
@@ -101,6 +102,7 @@ const INITIAL_FORM = {
   possui_parcelamento: "nao_informado",
   tipos_parcelamento: [""],
   contador_responsavel_cpf: "",
+  contador_responsavel_nome: "",
   valor_honorario: "",
   vencimento_honorario: "",
   data_primeiro_honorario: "",
@@ -131,6 +133,11 @@ export function AlteracaoVisaoGeralTab() {
   const [uploadDragOver, setUploadDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [qualificacaoLoading, setQualificacaoLoading] = useState(false);
+  const { data: accountants = [] } = useQuery({
+    queryKey: ["accountants"],
+    queryFn: () => getAccountants(true),
+    staleTime: 30000,
+  });
 
   const [form, setForm] = useState(INITIAL_FORM);
 
@@ -1034,16 +1041,21 @@ export function AlteracaoVisaoGeralTab() {
               <Label>Contador Responsavel</Label>
               <Select
                 value={form.contador_responsavel_cpf || "none"}
-                onValueChange={(v) => update("contador_responsavel_cpf", v === "none" ? "" : v)}
+                onValueChange={(v) => {
+                  const cpf = v === "none" ? "" : v;
+                  const accountant = accountants.find((row) => row.cpf === cpf);
+                  update("contador_responsavel_cpf", cpf);
+                  update("contador_responsavel_nome", accountant?.name ?? "");
+                }}
               >
                 <SelectTrigger className="min-h-10 [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:text-left py-2">
                   <SelectValue placeholder="Selecione o contador" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Nenhum</SelectItem>
-                  {CONTADORES_RESPONSAVEIS.map((contador) => (
+                  {accountants.map((contador) => (
                     <SelectItem key={contador.cpf} value={contador.cpf}>
-                      {contador.nome} - CPF {contador.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}
+                      {contador.name} - CPF {formatCpf(contador.cpf)}
                     </SelectItem>
                   ))}
                 </SelectContent>

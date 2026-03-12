@@ -32,6 +32,8 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { getDefaultNotesMode, getNotesModeOptions, isNotesModeCompatible } from "@/lib/robotNotes"
 import type { FiscalNotesKind, RobotNotesMode } from "@/types/database"
+import type { CompanySefazLogin } from "@/services/companiesService"
+import { SefazLoginsField, sanitizeSefazLogins } from "@/components/companies/SefazLoginsField"
 
 function statusLabel(s: Robot["status"]): string {
   switch (s) {
@@ -127,7 +129,13 @@ function DepartmentTreeItem({
   )
 }
 
-export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
+export function AdminRobotsList({
+  isSuperAdmin,
+  robots: robotsProp,
+}: {
+  isSuperAdmin: boolean
+  robots?: Robot[]
+}) {
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState<Robot | null>(null)
   const [displayName, setDisplayName] = useState("")
@@ -138,14 +146,18 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [dateExecutionMode, setDateExecutionMode] = useState<"competencia" | "interval">("interval")
   const [initialPeriodStart, setInitialPeriodStart] = useState("")
   const [initialPeriodEnd, setInitialPeriodEnd] = useState("")
+  const [globalLogins, setGlobalLogins] = useState<CompanySefazLogin[]>([])
   const [saving, setSaving] = useState(false)
 
-  const { data: robots = [], isLoading } = useQuery({
+  const { data: queriedRobots = [], isLoading } = useQuery({
     queryKey: ["admin-robots"],
     queryFn: getRobots,
     refetchOnWindowFocus: true,
-    refetchInterval: 2000,
+    refetchInterval: 5000,
+    enabled: !robotsProp,
+    staleTime: 5000,
   })
+  const robots = robotsProp ?? queriedRobots
 
   const { data: flatNodes = [] } = useQuery({
     queryKey: ["folder-structure-flat"],
@@ -167,6 +179,7 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         date_execution_mode: dateExecutionMode,
         initial_period_start: dateExecutionMode === "interval" && initialPeriodStart ? initialPeriodStart : null,
         initial_period_end: dateExecutionMode === "interval" && initialPeriodEnd ? initialPeriodEnd : null,
+        global_logins: sanitizeSefazLogins(globalLogins),
       })
       queryClient.invalidateQueries({ queryKey: ["admin-robots"] })
       setEditing(null)
@@ -189,6 +202,7 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     setDateExecutionMode((r.date_execution_mode === "competencia" ? "competencia" : "interval") as "competencia" | "interval")
     setInitialPeriodStart(r.initial_period_start ?? "")
     setInitialPeriodEnd(r.initial_period_end ?? "")
+    setGlobalLogins(Array.isArray(r.global_logins) ? (r.global_logins as CompanySefazLogin[]) : [])
   }
 
   const notesModeOptions = getNotesModeOptions(fiscalNotesKind)
@@ -260,7 +274,7 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       </GlassCard>
 
       <Dialog open={!!editing} onOpenChange={(open) => !open && !saving && setEditing(null)}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent aria-describedby={undefined} className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar robô</DialogTitle>
           </DialogHeader>
@@ -412,6 +426,16 @@ export function AdminRobotsList({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                 </p>
               )}
             </div>
+            {editing?.technical_id === "sefaz_xml" && (
+              <SefazLoginsField
+                value={globalLogins}
+                onChange={setGlobalLogins}
+                disabled={saving}
+                title="Logins globais do robô"
+                description="Cadastre os logins CPF/senha que este robô pode usar. Depois, no editar empresa, você escolhe qual login cada empresa usa."
+                defaultLabel="Login padrão global do robô"
+              />
+            )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setEditing(null)} disabled={saving}>
                 Cancelar
