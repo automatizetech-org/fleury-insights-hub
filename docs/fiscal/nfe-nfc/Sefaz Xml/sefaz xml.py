@@ -54,7 +54,7 @@ import uuid
 import re
 import traceback
 from time import sleep
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional, Callable, Any
 from collections import defaultdict
@@ -488,6 +488,155 @@ def update_robot_status(robot_id: Optional[str], status: str) -> None:
             .eq("id", robot_id)
             .execute()
         )
+    except Exception:
+        pass
+
+
+# =============================================================================
+# AGENDADOR (fila execution_requests) — compat com AdminScheduler do site
+# =============================================================================
+def _get_active_schedule_rule_ids_for_queue(client: Any) -> Optional[list]:
+    """Lista ids de schedule_rules ativas (status=active, run_daily=true). None em erro."""
+    try:
+        r = (
+            client.table("schedule_rules")
+            .select("id")
+            .eq("status", "active")
+            .eq("run_daily", True)
+            .execute()
+        )
+        rows = getattr(r, "data", None) or []
+        return [row["id"] for row in rows if row.get("id")]
+    except Exception:
+        return None
+
+
+def claim_execution_request_for_queue(
+    *,
+    supabase_url: str,
+    supabase_service_key: str,
+    robot_id: str,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Busca um job pending para este robô e marca como running.
+    Respeita: regras ativas (schedule_rule_id) + execução sequencial (execution_group_id/execution_order).
+    """
+    try:
+        client = create_client(supabase_url.strip(), supabase_service_key.strip())
+        active_rule_ids = _get_active_schedule_rule_ids_for_queue(client)
+
+        # preferir RPC se existir (mesma usada pelos outros robôs)
+        try:
+            rpc_response = client.rpc(
+                "claim_next_execution_request",
+                {
+                    "p_robot_technical_id": ROBOT_TECHNICAL_ID,
+                    "p_robot_id": robot_id,
+                    "p_active_schedule_rule_ids": active_rule_ids,
+                },
+            ).execute()
+            rpc_rows = getattr(rpc_response, "data", None) or []
+            if rpc_rows:
+                return rpc_rows[0]
+        except Exception:
+            pass
+
+        r = (
+            client.table("execution_requests")
+            .select("*")
+            .eq("status", "pending")
+            .order("execution_order")
+            .order("created_at")
+            .limit(50)
+            .execute()
+        )
+        rows = getattr(r, "data", None) or []
+        for row in rows:
+            schedule_rule_id = row.get("schedule_rule_id")
+            if schedule_rule_id is not None and active_rule_ids is not None and len(active_rule_ids) > 0:
+                if schedule_rule_id not in active_rule_ids:
+                    continue
+
+            execution_mode = str(row.get("execution_mode") or "sequential").strip().lower()
+            execution_group_id = row.get("execution_group_id")
+            if execution_mode == "sequential" and execution_group_id:
+                blockers = (
+                    client.table("execution_requests")
+                    .select("id, execution_order, created_at")
+                    .eq("execution_group_id", execution_group_id)
+                    .in_("status", ["pending", "running"])
+                    .order("execution_order")
+                    .order("created_at")
+                    .execute()
+                )
+                blocker_rows = getattr(blockers, "data", None) or []
+                if blocker_rows and blocker_rows[0].get("id") != row.get("id"):
+                    continue
+
+            tech_ids = row.get("robot_technical_ids") or []
+            if "all" in tech_ids or ROBOT_TECHNICAL_ID in tech_ids:
+                # de-dup: remove outros pendentes do mesmo robô
+                try:
+                    client.table("execution_requests").delete().eq("status", "pending").contains(
+                        "robot_technical_ids", [ROBOT_TECHNICAL_ID]
+                    ).neq("id", row["id"]).execute()
+                except Exception:
+                    pass
+
+                (
+                    client.table("execution_requests")
+                    .update(
+                        {
+                            "status": "running",
+                            "robot_id": robot_id,
+                            "claimed_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    .eq("id", row["id"])
+                    .eq("status", "pending")
+                    .execute()
+                )
+                claimed = (
+                    client.table("execution_requests")
+                    .select("*")
+                    .eq("id", row["id"])
+                    .eq("status", "running")
+                    .limit(1)
+                    .execute()
+                )
+                claimed_rows = getattr(claimed, "data", None) or []
+                if claimed_rows:
+                    return claimed_rows[0]
+        return None
+    except Exception as e:
+        msg = f"[FILA] Erro ao buscar job do agendador: {e}"
+        if callable(log_callback):
+            log_callback(msg)
+        try:
+            print(msg, file=sys.stderr)
+        except Exception:
+            pass
+        return None
+
+
+def complete_execution_request_for_queue(
+    *,
+    supabase_url: str,
+    supabase_service_key: str,
+    request_id: str,
+    success: bool,
+    error_message: Optional[str] = None,
+) -> None:
+    try:
+        client = create_client(supabase_url.strip(), supabase_service_key.strip())
+        client.table("execution_requests").update(
+            {
+                "status": "completed" if success else "failed",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "error_message": error_message,
+            }
+        ).eq("id", request_id).execute()
     except Exception:
         pass
 
@@ -6216,7 +6365,8 @@ def ensure_company_exists_supabase(cnpj: str, company_name: str) -> Optional[str
             # Atualiza nome se mudou
             _supabase_retry_execute(
                 lambda: supabase_client.table('companies')
-                    .update({'name': company_name, 'updated_at': datetime.now().isoformat()})
+                    # `companies` neste projeto não tem `updated_at` (evita PGRST204)
+                    .update({'name': company_name})
                     .eq('id', company_id)
                     .execute()
             )
@@ -6254,7 +6404,7 @@ def ensure_company_exists_supabase(cnpj: str, company_name: str) -> Optional[str
                         company_id = result_retry.data[0]['id']
                         _supabase_retry_execute(
                             lambda: supabase_client.table('companies')
-                                .update({'name': company_name, 'updated_at': datetime.now().isoformat()})
+                                .update({'name': company_name})
                                 .eq('id', company_id)
                                 .execute()
                         )
@@ -6471,7 +6621,8 @@ def enviar_dados_supabase_smart_upsert(
             log_fn(f"[WARN] ⚠️ Supabase não configurado. Dados não serão enviados.")
         return False
     
-    automation_id = 'xml-sefaz'
+    # Série diária (uma linha por data)
+    automation_id = 'xml-sefaz-daily'
     
     try:
         if log_fn:
@@ -6637,7 +6788,8 @@ def enviar_dados_supabase_dashboard(
             log_fn("[WARN] ⚠️ Supabase não configurado. Dados não serão enviados.")
         return False
     
-    automation_id = 'xml-sefaz'
+    # Linha consolidada (uma linha por empresa)
+    automation_id = 'xml-sefaz-dashboard'
     
     try:
         if log_fn:
@@ -6709,7 +6861,6 @@ def enviar_dados_supabase_dashboard(
                 .update({
                     'date': data_final.isoformat(),  # Data final do período mais recente
                     'metadata': metadata_consolidado,
-                    'updated_at': datetime.now().isoformat()
                 })\
                 .eq('id', record_id)\
                 .execute()
@@ -6783,7 +6934,8 @@ def enviar_dados_evolucao_supabase(
             log_fn("[WARN] ⚠️ Supabase não configurado. Dados de evolução não serão enviados.")
         return False
     
-    automation_id = 'xml-sefaz'
+    # Evolução diária consolidada (uma linha por empresa)
+    automation_id = 'xml-sefaz-evolucao'
     
     try:
         if log_fn:
@@ -6890,7 +7042,6 @@ def enviar_dados_evolucao_supabase(
                 .update({
                     'date': data_final.isoformat(),  # Data final do período mais recente
                     'metadata': metadata_consolidado,
-                    'updated_at': datetime.now().isoformat()
                 })\
                 .eq('id', record_id)\
                 .execute()
@@ -10695,6 +10846,11 @@ class MyCompactUI(QMainWindow):
         self.folder_structure = normalizar_estrutura_pastas(self.paths.get("estrutura_pastas"))
         self.paths["estrutura_pastas"] = self.folder_structure
 
+        # UI state: lista de empresas (precisa existir antes de qualquer sync inicial)
+        self.empresa_items = []
+        self.empresa_items_layout = None
+        self._empresa_list_has_stretch = False
+
         # NOVO: seleção de empresas (marcadas + diário) vinda do config.json
         selecoes = self.config.get("selecoes_empresas", {}) or {}
         marcadas_ini = selecoes.get("marcadas", [])
@@ -10713,6 +10869,12 @@ class MyCompactUI(QMainWindow):
         self.robot_presence_timer.timeout.connect(self._refresh_robot_presence)
         self.dashboard_sync_timer = QTimer(self)
         self.dashboard_sync_timer.timeout.connect(self._sync_dashboard_runtime_state)
+        # Poll da fila do agendador (execution_requests) criada pelo site
+        self.queue_poll_timer = QTimer(self)
+        self.queue_poll_timer.timeout.connect(self._poll_execution_queue)
+        self._active_queue_job: Optional[Dict[str, Any]] = None
+        self._queue_supabase_url: Optional[str] = None
+        self._queue_supabase_key: Optional[str] = None
 
         # Garante janela redimensionável (alguns ambientes no Windows podem herdar hint de tamanho fixo)
         try:
@@ -11585,6 +11747,8 @@ class MyCompactUI(QMainWindow):
 
     def _recarregar_lista_empresas(self):
         """Recria a lista visual de empresas em ordem alfabética e reaplica marcações."""
+        if not getattr(self, "empresa_items_layout", None):
+            return
         # remove widgets antigos
         for item in self.empresa_items:
             self.empresa_items_layout.removeWidget(item)
@@ -11992,6 +12156,17 @@ class MyCompactUI(QMainWindow):
         update_robot_status(self.robot_id, "active")
         self.robot_presence_timer.start(15_000)
         self.dashboard_sync_timer.start(10_000)
+        # habilita poll da fila apenas se houver credenciais service role
+        try:
+            url, key = get_robot_supabase_credentials()
+            self._queue_supabase_url, self._queue_supabase_key = url, key
+            if self.robot_id and url and key:
+                self.queue_poll_timer.start(6_000)
+                self.update_log("[FILA] Poll do agendador habilitado (execution_requests).")
+            else:
+                self.update_log("[FILA] Poll do agendador desabilitado (SUPABASE_URL/Service Role Key ausentes).")
+        except Exception:
+            pass
 
     # -----------------------------
     # Navegação (menu lateral)
@@ -12093,6 +12268,90 @@ class MyCompactUI(QMainWindow):
             update_robot_status(self.robot_id, "processing")
         else:
             update_robot_status(self.robot_id, "active")
+
+    def _poll_execution_queue(self) -> None:
+        """
+        Consome a fila `execution_requests` criada pelo agendador do site.
+        Quando encontrar um job para este robô, seleciona as empresas correspondentes e inicia a automação.
+        """
+        if not SUPABASE_AVAILABLE:
+            return
+        if not self.robot_id or not self._queue_supabase_url or not self._queue_supabase_key:
+            return
+        if self.automation_running or (self.worker_thread and self.worker_thread.isRunning()):
+            return
+        if self._active_queue_job:
+            return
+
+        job = claim_execution_request_for_queue(
+            supabase_url=self._queue_supabase_url,
+            supabase_service_key=self._queue_supabase_key,
+            robot_id=self.robot_id,
+            log_callback=self.update_log,
+        )
+        if not job:
+            return
+        self._active_queue_job = job
+        try:
+            self._start_automation_from_queue_job(job)
+        except Exception as e:
+            self.update_log(f"[FILA] ERRO ao iniciar job da fila: {e}")
+            try:
+                complete_execution_request_for_queue(
+                    supabase_url=self._queue_supabase_url,
+                    supabase_service_key=self._queue_supabase_key,
+                    request_id=str(job.get("id")),
+                    success=False,
+                    error_message=f"Falha ao iniciar job: {e}",
+                )
+            except Exception:
+                pass
+            self._active_queue_job = None
+
+    def _start_automation_from_queue_job(self, job: Dict[str, Any]) -> None:
+        company_ids = job.get("company_ids") or []
+        period_start = str(job.get("period_start") or "").strip()[:10]
+        period_end = str(job.get("period_end") or "").strip()[:10]
+
+        # garante estado sincronizado (empresas + paths)
+        self._sync_dashboard_runtime_state(log_changes=False)
+
+        # aplica datas do período (job usa yyyy-mm-dd; UI usa dd/mm/yyyy)
+        def _iso_to_br(s: str) -> str:
+            try:
+                if not s or len(s) < 10:
+                    return ""
+                y, m, d = s[:10].split("-")
+                return f"{d}/{m}/{y}"
+            except Exception:
+                return ""
+
+        if period_start:
+            self.line_data_inicial.setText(_iso_to_br(period_start))
+        if period_end:
+            self.line_data_final.setText(_iso_to_br(period_end))
+
+        # seleciona empresas por company_id
+        wanted = set(str(x) for x in company_ids if x)
+        matched_ies: List[str] = []
+        for ie, data in (self.empresas or {}).items():
+            cid = str((data or {}).get("company_id") or "")
+            if cid and cid in wanted:
+                matched_ies.append(ie)
+
+        # aplica seleção na UI (checkbox)
+        for item in self.empresa_items:
+            item.checkbox.setChecked(item.ie in set(matched_ies))
+
+        if not matched_ies:
+            raise Exception("Nenhuma empresa do job corresponde às empresas sincronizadas no robô (verifique company_id/IE).")
+
+        self.update_log(f"[FILA] Job recebido. Empresas: {len(matched_ies)}. Iniciando automação...")
+        # inicia automação diretamente (sem usar o agendamento local)
+        self.automation_running = True
+        self.btn_iniciar.setEnabled(False)
+        self.btn_parar.setEnabled(True)
+        self.iniciar_automacao()
 
     def _nav_set_page(self, idx: int):
         """Alterna entre Dashboard (0) e Execução (1)."""
@@ -14056,6 +14315,7 @@ class MyCompactUI(QMainWindow):
     def on_process_finished(self):
         pdf_path = None
         stopped_by_user = getattr(self, "_stop_requested_by_user", False)
+        queue_job = getattr(self, "_active_queue_job", None)
 
         if self.worker_thread:
             resultados = self.worker_thread.resultados
@@ -14137,6 +14397,20 @@ class MyCompactUI(QMainWindow):
         # reseta flag para próxima execução
         self._stop_requested_by_user = False
         update_robot_status(self.robot_id, "active")
+
+        # Finaliza job da fila (agendador do site), se houver
+        if queue_job and self._queue_supabase_url and self._queue_supabase_key:
+            try:
+                complete_execution_request_for_queue(
+                    supabase_url=self._queue_supabase_url,
+                    supabase_service_key=self._queue_supabase_key,
+                    request_id=str(queue_job.get("id")),
+                    success=not stopped_by_user,
+                    error_message=("Interrompido pelo usuário" if stopped_by_user else None),
+                )
+            except Exception:
+                pass
+        self._active_queue_job = None
 
     def on_stop(self):
         if self._scheduled_pending and (not self.worker_thread or not self.worker_thread.isRunning()):
