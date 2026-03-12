@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { cn } from "@/utils"
-import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies"
 import {
   QUALIFICACAO_DISPLAY,
   fetchSalarioMinimoBCB,
@@ -292,12 +291,9 @@ export default function ParalegalPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const topic = getTopicFromPath(location.pathname)
-  const { selectedCompanyIds } = useSelectedCompanyIds()
-  const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null
-
   const { data: certificateItems = [], isLoading } = useQuery({
-    queryKey: ["paralegal-certificates", companyFilter],
-    queryFn: () => getParalegalCertificates(companyFilter),
+    queryKey: ["paralegal-certificates"],
+    queryFn: () => getParalegalCertificates(null),
   })
   const { data: salarioMinimoData, isLoading: salarioMinimoLoading } = useQuery({
     queryKey: ["paralegal-salario-minimo"],

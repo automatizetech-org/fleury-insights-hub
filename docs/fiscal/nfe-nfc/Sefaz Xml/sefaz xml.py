@@ -56,7 +56,7 @@ import traceback
 from time import sleep
 from datetime import datetime, timedelta, date, timezone
 from dataclasses import dataclass
-from typing import List, Dict, Tuple, Optional, Callable, Any
+from typing import List, Dict, Tuple, Optional, Callable, Any, Set
 from collections import defaultdict
 from urllib.parse import urlparse
 import urllib.request
@@ -6647,6 +6647,142 @@ def processar_xmls_e_agregar_supabase(zip_paths: List[str], empresa_cnpj: str, e
     return dict(dados_por_data)
 
 
+def _build_fiscal_document_storage_key(info: Dict, xml_bytes: bytes) -> str:
+    try:
+        chave = re.sub(r'[^0-9]', '', str(info.get('chave') or '').strip())
+        if len(chave) == 44:
+            return chave
+    except Exception:
+        pass
+    return hashlib.sha1(xml_bytes or b'').hexdigest()
+
+
+def _save_nfe_nfc_xml_for_dashboard(company_id: str, periodo: str, storage_key: str, xml_bytes: bytes) -> Optional[str]:
+    base = get_resolved_output_base()
+    if not base:
+        return None
+
+    rel_path = pathlib.Path("fiscal") / "nfe-nfc" / str(company_id) / str(periodo) / f"{storage_key}.xml"
+    abs_path = pathlib.Path(base) / rel_path
+    safe_makedirs(str(abs_path.parent))
+    with open(fs_path(str(abs_path)), "wb") as fp:
+        fp.write(xml_bytes)
+    return rel_path.as_posix()
+
+
+def sincronizar_fiscal_documents_nfe_nfc(
+    company_id: str,
+    zip_paths: List[str],
+    data_inicial: date,
+    data_final: date,
+    log_fn: Optional[Callable] = None
+) -> Dict[str, int]:
+    """
+    Salva os XMLs em disco e registra cada nota em fiscal_documents.
+    """
+    result = {
+        "saved_files": 0,
+        "inserted": 0,
+        "updated": 0,
+        "errors": 0,
+    }
+
+    if not SUPABASE_AVAILABLE or not supabase_client or not company_id:
+        return result
+
+    if not get_resolved_output_base():
+        if log_fn:
+            log_fn("[WARN] ⚠️ BASE_PATH não configurado; fiscal_documents de NFE/NFC não serão sincronizados.")
+        return result
+
+    seen_docs: Set[Tuple[str, str]] = set()
+
+    for zip_path in zip_paths:
+        if not path_exists(zip_path):
+            continue
+
+        try:
+            with zipfile.ZipFile(fs_path(zip_path), "r") as zf:
+                for name in zf.namelist():
+                    if not name.lower().endswith(".xml"):
+                        continue
+
+                    try:
+                        xml_bytes = zf.read(name)
+                        info = extrair_info_nfe(xml_bytes)
+                        model = str(info.get("model") or "").strip()
+                        dt_emi = info.get("dtEmi")
+
+                        if model not in ("55", "65") or dt_emi is None:
+                            continue
+                        if dt_emi < data_inicial or dt_emi > data_final:
+                            continue
+
+                        doc_type = "NFE" if model == "55" else "NFC"
+                        periodo = dt_emi.strftime("%Y-%m")
+                        storage_key = _build_fiscal_document_storage_key(info, xml_bytes)
+                        dedupe_key = (doc_type, storage_key)
+
+                        if dedupe_key in seen_docs:
+                            continue
+                        seen_docs.add(dedupe_key)
+
+                        relative_file_path = _save_nfe_nfc_xml_for_dashboard(company_id, periodo, storage_key, xml_bytes)
+                        if not relative_file_path:
+                            result["errors"] += 1
+                            continue
+
+                        result["saved_files"] += 1
+                        existing = _supabase_retry_execute(
+                            lambda doc_type=doc_type, storage_key=storage_key: supabase_client.table("fiscal_documents")
+                            .select("id")
+                            .eq("company_id", company_id)
+                            .eq("type", doc_type)
+                            .eq("chave", storage_key)
+                            .limit(1)
+                            .execute(),
+                            log_fn=log_fn,
+                        )
+
+                        payload = {
+                            "company_id": company_id,
+                            "type": doc_type,
+                            "chave": storage_key,
+                            "periodo": periodo,
+                            "status": "novo",
+                            "document_date": dt_emi.isoformat(),
+                            "file_path": relative_file_path,
+                        }
+
+                        if existing.data and len(existing.data) > 0:
+                            _supabase_retry_execute(
+                                lambda payload=payload, row_id=existing.data[0]["id"]: supabase_client.table("fiscal_documents")
+                                .update(payload)
+                                .eq("id", row_id)
+                                .execute(),
+                                log_fn=log_fn,
+                            )
+                            result["updated"] += 1
+                        else:
+                            _supabase_retry_execute(
+                                lambda payload=payload: supabase_client.table("fiscal_documents")
+                                .insert(payload)
+                                .execute(),
+                                log_fn=log_fn,
+                            )
+                            result["inserted"] += 1
+                    except Exception as doc_error:
+                        result["errors"] += 1
+                        if log_fn:
+                            log_fn(f"[WARN] ⚠️ Falha ao sincronizar XML '{name}' no dashboard: {doc_error}")
+        except Exception as zip_error:
+            result["errors"] += 1
+            if log_fn:
+                log_fn(f"[WARN] ⚠️ Falha ao abrir ZIP para sincronizar fiscal_documents: {zip_error}")
+
+    return result
+
+
 def enviar_dados_supabase_smart_upsert(
     empresa_cnpj: str,
     empresa_nome: str,
@@ -6695,6 +6831,20 @@ def enviar_dados_supabase_smart_upsert(
         
         if log_fn:
             log_fn(f"[OK] ✅ Empresa {empresa_nome} encontrada/criada no Supabase (ID: {company_id})")
+
+        docs_sync_result = sincronizar_fiscal_documents_nfe_nfc(
+            company_id=company_id,
+            zip_paths=zip_paths,
+            data_inicial=data_inicial,
+            data_final=data_final,
+            log_fn=log_fn,
+        )
+        if log_fn and (docs_sync_result["inserted"] or docs_sync_result["updated"] or docs_sync_result["saved_files"]):
+            log_fn(
+                "[OK] ✅ fiscal_documents NFE/NFC sincronizado "
+                f"(arquivos={docs_sync_result['saved_files']}, "
+                f"novos={docs_sync_result['inserted']}, atualizados={docs_sync_result['updated']})"
+            )
         
         # Processa XMLs e agrega por data
         dados_por_data = processar_xmls_e_agregar_supabase(zip_paths, empresa_cnpj, empresa_nome)

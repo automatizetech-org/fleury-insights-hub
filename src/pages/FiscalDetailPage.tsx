@@ -152,6 +152,29 @@ function getDocumentOrigem(filePath: string | null, _docType: string): "recebida
   return null;
 }
 
+function getDocumentUniqueKey(doc: { chave?: string | null; id: string }) {
+  const chave = (doc.chave || "").trim();
+  return chave || doc.id;
+}
+
+function dedupeDocumentsByKey<T extends { chave?: string | null; id: string }>(documents: T[]): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const doc of documents) {
+    const key = getDocumentUniqueKey(doc);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(doc);
+  }
+  return result;
+}
+
+function getDocumentModel(docType: string): "55" | "65" | null {
+  if (docType === "NFE") return "55";
+  if (docType === "NFC") return "65";
+  return null;
+}
+
 /** Gera dados do gráfico Volume Mensal a partir dos documentos (campo periodo = YYYY-MM). Últimos 12 meses. */
 function buildVolumeMensalData(documents: { periodo?: string | null }[]): { name: string; value: number }[] {
   const byPeriodo = new Map<string, number>();
@@ -169,6 +192,14 @@ function buildVolumeMensalData(documents: { periodo?: string | null }[]): { name
     result.push({ name: label, value: byPeriodo.get(key) ?? 0 });
   }
   return result;
+}
+
+function buildVolumeMensalDataUnique(documents: { periodo?: string | null; chave?: string | null; id: string }[]): { name: string; value: number }[] {
+  return buildVolumeMensalData(
+    dedupeDocumentsByKey(documents).map((doc) => ({
+      periodo: doc.periodo,
+    }))
+  );
 }
 
 /** Volume mensal para NFS: respeita o filtro De/Até, só meses do período, conta notas (chave única) por mês. */
@@ -420,17 +451,26 @@ export default function FiscalDetailPage() {
   const [filterDateTo, setFilterDateTo] = useState("");
   const [nfsDateFrom, setNfsDateFrom] = useState("");
   const [nfsDateTo, setNfsDateTo] = useState("");
+  const [nfeNfcDateFrom, setNfeNfcDateFrom] = useState("");
+  const [nfeNfcDateTo, setNfeNfcDateTo] = useState("");
   const [filterFileType, setFilterFileType] = useState<"all" | "xml" | "pdf">("all");
   const [filterOrigem, setFilterOrigem] = useState<"all" | "recebidas" | "emitidas">("all");
+  const [filterModelo, setFilterModelo] = useState<"all" | "55" | "65">("all");
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [nfsPageSize, setNfsPageSize] = useState(10);
   const [nfsCurrentPage, setNfsCurrentPage] = useState(1);
 
   const nfsDateFromResolved = type === "nfs" ? (nfsDateFrom || nfsPeriodDefault.first) : "";
   const nfsDateToResolved = type === "nfs" ? (nfsDateTo || nfsPeriodDefault.last) : "";
+  const nfeNfcDateFromResolved = isNfeNfc ? (nfeNfcDateFrom || nfsPeriodDefault.first) : "";
+  const nfeNfcDateToResolved = isNfeNfc ? (nfeNfcDateTo || nfsPeriodDefault.last) : "";
+  const baseDocuments = useMemo(
+    () => (isNfeNfc ? dedupeDocumentsByKey(documents) : documents),
+    [documents, isNfeNfc]
+  );
 
   const filteredDocuments = useMemo(() => {
-    let list = documents;
+    let list = baseDocuments;
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(
@@ -440,8 +480,8 @@ export default function FiscalDetailPage() {
           (d.chave && d.chave.includes(q))
       );
     }
-    const dateFrom = type === "nfs" ? nfsDateFromResolved : filterDateFrom;
-    const dateTo = type === "nfs" ? nfsDateToResolved : filterDateTo;
+    const dateFrom = type === "nfs" ? nfsDateFromResolved : isNfeNfc ? nfeNfcDateFromResolved : filterDateFrom;
+    const dateTo = type === "nfs" ? nfsDateToResolved : isNfeNfc ? nfeNfcDateToResolved : filterDateTo;
     if (dateFrom || dateTo) {
       list = list.filter((d) => {
         const date = getDocumentDisplayDate(d) ?? d.periodo ?? "";
@@ -460,7 +500,7 @@ export default function FiscalDetailPage() {
         return true;
       });
     }
-    if (filterFileType !== "all") {
+    if (!isNfeNfc && filterFileType !== "all") {
       list = list.filter((d) => {
         const fp = (d.file_path || "").toLowerCase();
         if (filterFileType === "xml") return fp.endsWith(".xml");
@@ -468,11 +508,28 @@ export default function FiscalDetailPage() {
         return true;
       });
     }
-    if (filterOrigem !== "all") {
+    if (!isNfeNfc && filterOrigem !== "all") {
       list = list.filter((d) => getDocumentOrigem(d.file_path ?? null, d.type) === filterOrigem);
     }
+    if (isNfeNfc && filterModelo !== "all") {
+      list = list.filter((d) => getDocumentModel(d.type) === filterModelo);
+    }
     return list;
-  }, [documents, search, filterDateFrom, filterDateTo, nfsDateFromResolved, nfsDateToResolved, filterFileType, filterOrigem, type]);
+  }, [
+    baseDocuments,
+    search,
+    filterDateFrom,
+    filterDateTo,
+    nfsDateFromResolved,
+    nfsDateToResolved,
+    nfeNfcDateFromResolved,
+    nfeNfcDateToResolved,
+    filterFileType,
+    filterOrigem,
+    filterModelo,
+    type,
+    isNfeNfc,
+  ]);
 
   const canDownload = hasServerApi();
   const nfsStatsQuery = useQuery({
@@ -545,44 +602,45 @@ export default function FiscalDetailPage() {
     const pct = ((curr - prev) / prev) * 100;
     return pct > 0 ? "positive" : pct < 0 ? "negative" : "neutral";
   }, [nfsStats, nfsStatsPrev]);
-  const comArquivo = (type === "nfs" ? filteredDocuments : documents).filter((d) => d.file_path && String(d.file_path).trim()).length;
+  const comArquivo = (type === "nfs" ? filteredDocuments : baseDocuments).filter((d) => d.file_path && String(d.file_path).trim()).length;
   const disponiveisCount = comArquivo;
   const docCountForDisplay = useMemo(() => {
-    if (type === "nfs") {
+    if (type === "nfs" || isNfeNfc) {
       const chaves = new Set<string>();
-      for (const d of filteredDocuments) {
-        const chave = (d.chave || "").trim() || d.id;
-        chaves.add(chave);
+      for (const d of (type === "nfs" ? filteredDocuments : baseDocuments)) {
+        chaves.add(getDocumentUniqueKey(d));
       }
       return chaves.size;
     }
-    return documents.length;
-  }, [type, filteredDocuments, documents]);
+    return baseDocuments.length;
+  }, [type, filteredDocuments, baseDocuments, isNfeNfc]);
   const esteMes = useMemo(() => {
-    if (type === "nfs") {
+    if (type === "nfs" || isNfeNfc) {
       const chaves = new Set<string>();
-      for (const d of documents) {
+      for (const d of baseDocuments) {
         const p = (d.periodo || "").trim();
         if (!/^\d{4}-\d{2}$/.test(p) || p !== mesAtual) continue;
-        const chave = (d.chave || "").trim() || d.id;
-        chaves.add(chave);
+        chaves.add(getDocumentUniqueKey(d));
       }
       return chaves.size;
     }
-    return documents.filter((d) => {
+    return baseDocuments.filter((d) => {
       const p = (d.periodo || "").trim();
       return /^\d{4}-\d{2}$/.test(p) && p === mesAtual;
     }).length;
-  }, [type, documents, mesAtual]);
-  const nfeCount = isNfeNfc ? documents.filter((d) => d.type === "NFE").length : 0;
-  const nfcCount = isNfeNfc ? documents.filter((d) => d.type === "NFC").length : 0;
+  }, [type, baseDocuments, mesAtual, isNfeNfc]);
+  const nfeCount = isNfeNfc ? baseDocuments.filter((d) => d.type === "NFE").length : 0;
+  const nfcCount = isNfeNfc ? baseDocuments.filter((d) => d.type === "NFC").length : 0;
 
   const volumeMensalData = useMemo(() => {
     if (type === "nfs" && nfsDateFromResolved && nfsDateToResolved) {
       return buildVolumeMensalDataNfs(filteredDocuments, nfsDateFromResolved, nfsDateToResolved);
     }
-    return buildVolumeMensalData(documents);
-  }, [type, documents, filteredDocuments, nfsDateFromResolved, nfsDateToResolved]);
+    if (isNfeNfc) {
+      return buildVolumeMensalDataUnique(baseDocuments);
+    }
+    return buildVolumeMensalData(baseDocuments);
+  }, [type, baseDocuments, filteredDocuments, nfsDateFromResolved, nfsDateToResolved, isNfeNfc]);
 
   const nfsPagination = useMemo(() => {
     if (type !== "nfs") return { list: filteredDocuments, totalPages: 1, currentPage: 1, from: 0, to: filteredDocuments.length, total: filteredDocuments.length };
@@ -647,7 +705,7 @@ export default function FiscalDetailPage() {
         )
       ) : (
         <>
-      {type === "nfs" && (
+      {(type === "nfs" || isNfeNfc) && (
         <GlassCard className="p-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -658,8 +716,8 @@ export default function FiscalDetailPage() {
               <span className="text-xs text-muted-foreground">De</span>
               <input
                 type="date"
-                value={nfsDateFromResolved}
-                onChange={(e) => setNfsDateFrom(e.target.value)}
+                value={type === "nfs" ? nfsDateFromResolved : nfeNfcDateFromResolved}
+                onChange={(e) => (type === "nfs" ? setNfsDateFrom(e.target.value) : setNfeNfcDateFrom(e.target.value))}
                 className="rounded-lg border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
               />
             </label>
@@ -667,8 +725,8 @@ export default function FiscalDetailPage() {
               <span className="text-xs text-muted-foreground">Até</span>
               <input
                 type="date"
-                value={nfsDateToResolved}
-                onChange={(e) => setNfsDateTo(e.target.value)}
+                value={type === "nfs" ? nfsDateToResolved : nfeNfcDateToResolved}
+                onChange={(e) => (type === "nfs" ? setNfsDateTo(e.target.value) : setNfeNfcDateTo(e.target.value))}
                 className="rounded-lg border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
               />
             </label>
@@ -751,7 +809,7 @@ export default function FiscalDetailPage() {
               placeholder="Buscar por empresa ou chave..."
               className="rounded-lg border border-border bg-background px-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-full min-w-0 sm:w-40 max-w-[12rem]"
             />
-            {type !== "nfs" && (
+            {!isNfeNfc && type !== "nfs" && (
               <>
                 <input
                   type="date"
@@ -769,6 +827,7 @@ export default function FiscalDetailPage() {
                 />
               </>
             )}
+            {!isNfeNfc && (
             <select
               value={filterFileType}
               onChange={(e) => setFilterFileType(e.target.value as "all" | "xml" | "pdf")}
@@ -779,6 +838,7 @@ export default function FiscalDetailPage() {
               <option value="xml">Só XML</option>
               <option value="pdf">Só PDF</option>
             </select>
+            )}
             {type === "nfs" && (
               <select
                 value={filterOrigem}
@@ -791,16 +851,16 @@ export default function FiscalDetailPage() {
                 <option value="emitidas">NFS Prestada (Emitidas)</option>
               </select>
             )}
-            {(type === "nfe-nfc" || isNfeNfc) && (
+            {isNfeNfc && (
               <select
-                value={filterOrigem}
-                onChange={(e) => setFilterOrigem(e.target.value as "all" | "recebidas" | "emitidas")}
+                value={filterModelo}
+                onChange={(e) => setFilterModelo(e.target.value as "all" | "55" | "65")}
                 className="rounded-lg border border-border bg-background px-3 py-2 sm:py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                title="Origem"
+                title="Modelo"
               >
-                <option value="all">Recebidas e Emitidas</option>
-                <option value="recebidas">Recebidas</option>
-                <option value="emitidas">Emitidas</option>
+                <option value="all">Modelos 55 e 65</option>
+                <option value="55">Somente 55 (NFE)</option>
+                <option value="65">Somente 65 (NFC)</option>
               </select>
             )}
             {canDownload && (
@@ -846,7 +906,7 @@ export default function FiscalDetailPage() {
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Empresa</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">CNPJ</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Período</th>
-                  {(type === "nfs" || isNfeNfc) && (
+                  {type === "nfs" && (
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Origem</th>
                   )}
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Chave</th>
@@ -859,12 +919,13 @@ export default function FiscalDetailPage() {
                 {documentsToShow.map((doc) => {
                   const displayDate = getDocumentDisplayDate(doc);
                   const origem = getDocumentOrigem(doc.file_path ?? null, doc.type);
+                  const modelo = getDocumentModel(doc.type);
                   return (
                   <tr key={doc.id} className="border-b border-border hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3 font-medium">{doc.empresa}</td>
                     <td className="px-4 py-3 text-muted-foreground">{doc.cnpj ?? "—"}</td>
                     <td className="px-4 py-3">{doc.periodo}</td>
-                    {(type === "nfs" || isNfeNfc) && (
+                    {type === "nfs" && (
                       <td className="px-4 py-3 text-muted-foreground">
                         {origem === "recebidas" ? "Tomada (Recebidas)" : origem === "emitidas" ? "Prestada (Emitidas)" : "—"}
                       </td>
@@ -943,7 +1004,3 @@ export default function FiscalDetailPage() {
     </div>
   );
 }
-
-
-
-
