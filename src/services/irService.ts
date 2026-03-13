@@ -3,7 +3,7 @@ import type { Tables } from "@/types/database";
 
 export type IrClient = Tables<"ir_clients">;
 export type IrSettings = Tables<"ir_settings">;
-export type IrPaymentStatus = "Pago" | "Pendente";
+export type IrPaymentStatus = "PIX" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "PERMUTA" | "A PAGAR";
 export type IrDeclarationStatus = "Concluido" | "Pendente";
 
 export type SaveIrClientInput = {
@@ -17,13 +17,35 @@ export type SaveIrClientInput = {
   observacoes?: string | null;
 };
 
+function normalizeIrPaymentStatus(status: string | null | undefined): IrPaymentStatus {
+  if (status === "Pendente" || status === "A Pagar") return "A PAGAR";
+  if (status === "Pago") return "PIX";
+  if (status === "PIX" || status === "DINHEIRO" || status === "TRANSFERÊNCIA POUPANÇA" || status === "PERMUTA" || status === "A PAGAR") {
+    return status;
+  }
+  if (status === "Dinheiro") return "DINHEIRO";
+  if (status === "Transferência Poupança") return "TRANSFERÊNCIA POUPANÇA";
+  if (status === "Permuta") return "PERMUTA";
+  if (status === "A PAGAR") {
+    return status;
+  }
+  return "A PAGAR";
+}
+
+function normalizeIrClient(client: IrClient): IrClient {
+  return {
+    ...client,
+    status_pagamento: normalizeIrPaymentStatus(client.status_pagamento),
+  };
+}
+
 export async function getIrClients(): Promise<IrClient[]> {
   const { data, error } = await supabase
     .from("ir_clients")
     .select("*")
     .order("nome", { ascending: true });
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []).map((client) => normalizeIrClient(client as IrClient));
 }
 
 export async function createIrClient(input: SaveIrClientInput): Promise<IrClient> {
@@ -35,14 +57,14 @@ export async function createIrClient(input: SaveIrClientInput): Promise<IrClient
       responsavel_ir: input.responsavel_ir?.trim() || null,
       vencimento: input.vencimento || null,
       valor_servico: input.valor_servico,
-      status_pagamento: input.status_pagamento ?? "Pendente",
+      status_pagamento: input.status_pagamento ?? (input.vencimento ? "PIX" : "A PAGAR"),
       status_declaracao: input.status_declaracao ?? "Pendente",
       observacoes: input.observacoes?.trim() || null,
     })
     .select("*")
     .single();
   if (error) throw error;
-  return data;
+  return normalizeIrClient(data as IrClient);
 }
 
 export async function updateIrClient(
@@ -64,7 +86,7 @@ export async function updateIrClient(
     .select("*")
     .single();
   if (error) throw error;
-  return data;
+  return normalizeIrClient(data as IrClient);
 }
 
 export async function deleteIrClient(id: string): Promise<void> {

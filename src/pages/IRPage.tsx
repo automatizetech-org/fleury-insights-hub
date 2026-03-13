@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
@@ -7,13 +7,13 @@ import { ArrowDownUp, FileCheck, FileClock, Landmark, Plus, Trash2, Wallet } fro
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { DataPagination } from "@/components/common/DataPagination";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useCompanies } from "@/hooks/useCompanies";
 import { fetchCnpjPublica } from "@/services/cnpjPublicaService";
 import { cn } from "@/utils";
 import {
@@ -39,6 +39,7 @@ type SortKey =
 type SortDirection = "desc" | "asc" | null;
 type SortState = { key: SortKey; direction: SortDirection };
 type UnifiedFilters = {
+  search: string;
   paymentStatus: "Todos" | IrPaymentStatus;
   declarationStatus: "Todos" | IrDeclarationStatus;
   dateFrom: string;
@@ -48,46 +49,151 @@ type UnifiedFilters = {
 };
 type PaymentFilters = { status: "Todos" | IrPaymentStatus; dateFrom: string; dateTo: string; minValue: string; maxValue: string };
 type ExecutionFilters = { status: "Todos" | IrDeclarationStatus; dateFrom: string; dateTo: string; minValue: string; maxValue: string };
+type IrFormState = {
+  nome: string;
+  cpf_cnpj: string;
+  responsavel_ir: string;
+  vencimento: string;
+  valor_servico: string;
+  observacoes: string;
+  status_pagamento: IrPaymentStatus;
+};
+type IrEditFormState = IrFormState & { id: string };
+type ObservationAutocompleteContext = {
+  suggestions: string[];
+  replaceStart: number;
+  replaceEnd: number;
+};
 
-const emptyForm = { nome: "", cpf_cnpj: "", responsavel_ir: "", vencimento: "", valor_servico: "", observacoes: "" };
-const emptyUnifiedFilters: UnifiedFilters = { paymentStatus: "Todos", declarationStatus: "Todos", dateFrom: "", dateTo: "", minValue: "", maxValue: "" };
+const IR_PAYMENT_OPTIONS: IrPaymentStatus[] = ["PIX", "DINHEIRO", "TRANSFERÊNCIA POUPANÇA", "PERMUTA", "A PAGAR"];
+const OBSERVATION_KEYWORDS = ["HONORARIO", "PRO BONO", "PERMUTA", "IRRF+MEI", "LIVRO CAIXA"];
+const emptyForm: IrFormState = { nome: "", cpf_cnpj: "", responsavel_ir: "", vencimento: "", valor_servico: "", observacoes: "", status_pagamento: "A PAGAR" };
+const emptyUnifiedFilters: UnifiedFilters = { search: "", paymentStatus: "Todos", declarationStatus: "Todos", dateFrom: "", dateTo: "", minValue: "", maxValue: "" };
 const emptyPaymentFilters: PaymentFilters = { status: "Todos", dateFrom: "", dateTo: "", minValue: "", maxValue: "" };
 const emptyExecutionFilters: ExecutionFilters = { status: "Todos", dateFrom: "", dateTo: "", minValue: "", maxValue: "" };
-const paymentStatusOptions: Array<"Todos" | IrPaymentStatus> = ["Todos", "Pago", "Pendente"];
+const paymentStatusOptions: Array<"Todos" | IrPaymentStatus> = ["Todos", ...IR_PAYMENT_OPTIONS];
 const executionStatusOptions: Array<"Todos" | IrDeclarationStatus> = ["Todos", "Concluido", "Pendente"];
-const emptyEditForm = { id: "", nome: "", cpf_cnpj: "", responsavel_ir: "", vencimento: "", valor_servico: "", observacoes: "" };
+const emptyEditForm: IrEditFormState = { id: "", nome: "", cpf_cnpj: "", responsavel_ir: "", vencimento: "", valor_servico: "", observacoes: "", status_pagamento: "A PAGAR" };
 const NEW_RESPONSIBLE_VALUE = "__novo_responsavel__";
 
 function formatCurrency(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
+
 function normalizeCurrencyInput(value: string) {
   return value.replace(",", ".").replace(/[^\d.]/g, "");
 }
+
 function formatCurrencyInput(value: string) {
   const digits = value.replace(/\D/g, "");
   if (!digits) return "";
   const numericValue = Number(digits) / 100;
   return numericValue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
+
 function onlyDigits(value: string) {
   return value.replace(/\D/g, "");
 }
+
 function formatIsoDate(value: string | null | undefined) {
   return value ? String(value).slice(0, 10) : "";
 }
+
 function formatDateLabel(value: string | null | undefined) {
-  if (!value) return "—";
+  if (!value) return "-";
   const [year, month, day] = String(value).slice(0, 10).split("-");
   if (!year || !month || !day) return String(value);
   return `${day}/${month}/${year}`;
 }
+
+function getTodayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isReceivedPaymentType(status: IrPaymentStatus) {
+  return status !== "A PAGAR";
+}
+
+function getPaymentTriggerClass(status: IrPaymentStatus) {
+  return isReceivedPaymentType(status) ? "ir-status-trigger--success" : "ir-status-trigger--warning";
+}
+
+function withPaymentTypeAndDate<T extends { status_pagamento: IrPaymentStatus; vencimento: string }>(current: T, status: IrPaymentStatus): T {
+  return {
+    ...current,
+    status_pagamento: status,
+    vencimento: status !== "A PAGAR" && !current.vencimento ? getTodayIsoDate() : current.vencimento,
+  };
+}
+
+function normalizeAutocompleteValue(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function getObservationAutocompleteContext(value: string, caretPosition: number, companyNames: string[]): ObservationAutocompleteContext | null {
+  const textBeforeCaret = value.slice(0, caretPosition);
+  const lineStart = textBeforeCaret.lastIndexOf("\n") + 1;
+  const linePrefix = textBeforeCaret.slice(lineStart);
+  const companyMatch = linePrefix.match(/\/empresa(?:\s+(.*))?$/i);
+  const companyWordMatch = linePrefix.match(/^empresa(?:\s+(.*))?$/i);
+
+  if (companyMatch) {
+    const query = (companyMatch[1] ?? "").trim();
+    const normalizedQuery = normalizeAutocompleteValue(query);
+    const suggestions = companyNames
+      .filter((company) => !normalizedQuery || normalizeAutocompleteValue(company).startsWith(normalizedQuery))
+      .slice(0, 6);
+
+    return suggestions.length
+      ? {
+          suggestions: suggestions.map((company) => `EMPRESA: ${company.toUpperCase()}`),
+          replaceStart: lineStart,
+          replaceEnd: caretPosition,
+        }
+      : null;
+  }
+
+  if (companyWordMatch) {
+    const query = (companyWordMatch[1] ?? "").trim();
+    const normalizedQuery = normalizeAutocompleteValue(query);
+    const suggestions = companyNames
+      .filter((company) => !normalizedQuery || normalizeAutocompleteValue(company).startsWith(normalizedQuery))
+      .slice(0, 6);
+
+    return suggestions.length
+      ? {
+          suggestions: suggestions.map((company) => `EMPRESA: ${company.toUpperCase()}`),
+          replaceStart: lineStart,
+          replaceEnd: caretPosition,
+        }
+      : null;
+  }
+
+  const keywordMatch = textBeforeCaret.match(/(?:^|\s)([^\s\n]+)$/);
+  const currentToken = keywordMatch?.[1] ?? "";
+  if (!currentToken) return null;
+
+  const normalizedToken = normalizeAutocompleteValue(currentToken);
+  const suggestions = OBSERVATION_KEYWORDS
+    .filter((keyword) => normalizeAutocompleteValue(keyword).startsWith(normalizedToken))
+    .slice(0, 6);
+
+  if (!suggestions.length) return null;
+
+  return {
+    suggestions,
+    replaceStart: caretPosition - currentToken.length,
+    replaceEnd: caretPosition,
+  };
+}
+
 function cycleSort(current: SortState, key: Exclude<SortKey, null>): SortState {
   if (current.key !== key) return { key, direction: "desc" };
   if (current.direction === "desc") return { key, direction: "asc" };
   if (current.direction === "asc") return { key: null, direction: null };
   return { key, direction: "desc" };
 }
+
 function compareClients(a: IrClient, b: IrClient, sort: SortState) {
   if (!sort.key || !sort.direction) return 0;
   const getValue = (client: IrClient) => {
@@ -108,6 +214,7 @@ function compareClients(a: IrClient, b: IrClient, sort: SortState) {
       : String(aValue).localeCompare(String(bValue), "pt-BR");
   return sort.direction === "desc" ? result * -1 : result;
 }
+
 function SortHeader({ label, column, sort, onToggle }: { label: string; column: Exclude<SortKey, null>; sort: SortState; onToggle: (key: Exclude<SortKey, null>) => void }) {
   const active = sort.key === column ? (sort.direction === "desc" ? " ↓" : sort.direction === "asc" ? " ↑" : "") : "";
   return (
@@ -117,6 +224,105 @@ function SortHeader({ label, column, sort, onToggle }: { label: string; column: 
     </button>
   );
 }
+
+function ObservationTextarea({
+  id,
+  value,
+  onChange,
+  rows,
+  placeholder,
+  companyNames,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  rows: number;
+  placeholder?: string;
+  companyNames: string[];
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [caretPosition, setCaretPosition] = useState(value.length);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
+
+  const autocomplete = useMemo(
+    () => getObservationAutocompleteContext(value, caretPosition, companyNames),
+    [value, caretPosition, companyNames],
+  );
+
+  useEffect(() => {
+    setSelectedSuggestionIndex(0);
+  }, [autocomplete?.replaceStart, autocomplete?.replaceEnd, autocomplete?.suggestions.join("|")]);
+
+  const applySuggestion = (suggestion: string) => {
+    if (!autocomplete) return;
+    const nextValue = `${value.slice(0, autocomplete.replaceStart)}${suggestion}${value.slice(autocomplete.replaceEnd)}`;
+    const nextCaret = autocomplete.replaceStart + suggestion.length;
+    onChange(nextValue);
+    setCaretPosition(nextCaret);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
+
+  return (
+    <div className="relative">
+      <Textarea
+        id={id}
+        ref={textareaRef}
+        value={value}
+        rows={rows}
+        placeholder={placeholder}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+        }}
+        onClick={(event) => setCaretPosition(event.currentTarget.selectionStart ?? value.length)}
+        onKeyUp={(event) => setCaretPosition(event.currentTarget.selectionStart ?? value.length)}
+        onSelect={(event) => setCaretPosition(event.currentTarget.selectionStart ?? value.length)}
+        onKeyDown={(event) => {
+          if (!autocomplete?.suggestions.length) return;
+          if (event.key === "Tab" || event.key === "Enter") {
+            event.preventDefault();
+            applySuggestion(autocomplete.suggestions[selectedSuggestionIndex] ?? autocomplete.suggestions[0]);
+            return;
+          }
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setSelectedSuggestionIndex((current) => (current + 1) % autocomplete.suggestions.length);
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setSelectedSuggestionIndex((current) => (current - 1 + autocomplete.suggestions.length) % autocomplete.suggestions.length);
+          }
+        }}
+      />
+      {autocomplete?.suggestions.length ? (
+        <div className="absolute left-0 right-0 top-full z-20 mt-2 rounded-md border border-border bg-background shadow-lg">
+          {autocomplete.suggestions.map((suggestion, index) => (
+            <button
+              key={suggestion}
+              type="button"
+              className={cn(
+                "flex w-full items-center justify-between px-3 py-2 text-left text-sm",
+                index === selectedSuggestionIndex ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60",
+              )}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                applySuggestion(suggestion);
+              }}
+            >
+              <span className="truncate">{suggestion}</span>
+              {index === selectedSuggestionIndex ? <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Tab</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function IRPage() {
   const queryClient = useQueryClient();
   const [globalResponsible, setGlobalResponsible] = useState("Todos");
@@ -128,7 +334,7 @@ export default function IRPage() {
   const [paymentCurrentPage, setPaymentCurrentPage] = useState(1);
   const [executionPageSize, setExecutionPageSize] = useState(10);
   const [executionCurrentPage, setExecutionCurrentPage] = useState(1);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<IrFormState>(emptyForm);
   const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
   const [paymentFilters, setPaymentFilters] = useState(emptyPaymentFilters);
   const [executionFilters, setExecutionFilters] = useState(emptyExecutionFilters);
@@ -138,7 +344,7 @@ export default function IRPage() {
   const [enhancedUiEnabled, setEnhancedUiEnabled] = useState(true);
   const [showCreateOverlay, setShowCreateOverlay] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [editForm, setEditForm] = useState(emptyEditForm);
+  const [editForm, setEditForm] = useState<IrEditFormState>(emptyEditForm);
   const [isNewResponsibleMode, setIsNewResponsibleMode] = useState(false);
   const [isEditNewResponsibleMode, setIsEditNewResponsibleMode] = useState(false);
   const [isObservationDialogOpen, setIsObservationDialogOpen] = useState(false);
@@ -146,6 +352,13 @@ export default function IRPage() {
   const [observationClientName, setObservationClientName] = useState("");
 
   const { data: clients = [], isLoading } = useQuery({ queryKey: ["ir-clients"], queryFn: getIrClients });
+  const { data: companies = [] } = useCompanies();
+
+  const companyNames = useMemo(
+    () => Array.from(new Set(companies.map((company) => company.name?.trim() || "").filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [companies],
+  );
+
   useEffect(() => setNotesDraft(Object.fromEntries(clients.map((client) => [client.id, client.observacoes ?? ""]))), [clients]);
 
   const refreshIrData = async () => {
@@ -170,6 +383,7 @@ export default function IRPage() {
         responsavel_ir: form.responsavel_ir,
         vencimento: form.vencimento || null,
         valor_servico: valorServico,
+        status_pagamento: form.vencimento ? form.status_pagamento : "A PAGAR",
         observacoes: form.observacoes,
       });
     },
@@ -217,8 +431,8 @@ export default function IRPage() {
   const responsibleOptions = useMemo(() => Array.from(new Set(clients.map((c) => c.responsavel_ir?.trim() || "").filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [clients]);
   const clientsByResponsible = useMemo(() => globalResponsible === "Todos" ? clients : clients.filter((c) => (c.responsavel_ir?.trim() || "") === globalResponsible), [clients, globalResponsible]);
   const paymentSummary = useMemo(() => ({
-    paid: clientsByResponsible.filter((c) => c.status_pagamento === "Pago").length,
-    pending: clientsByResponsible.filter((c) => c.status_pagamento === "Pendente").length,
+    paid: clientsByResponsible.filter((c) => isReceivedPaymentType(c.status_pagamento)).length,
+    pending: clientsByResponsible.filter((c) => c.status_pagamento === "A PAGAR").length,
     totalValue: clientsByResponsible.reduce((sum, c) => sum + Number(c.valor_servico || 0), 0),
   }), [clientsByResponsible]);
   const executionSummary = useMemo(() => ({
@@ -227,12 +441,21 @@ export default function IRPage() {
     total: clientsByResponsible.length,
   }), [clientsByResponsible]);
   const paymentValueSummary = useMemo(() => ({
-    paid: clientsByResponsible.filter((c) => c.status_pagamento === "Pago").reduce((sum, c) => sum + Number(c.valor_servico || 0), 0),
-    pending: clientsByResponsible.filter((c) => c.status_pagamento !== "Pago").reduce((sum, c) => sum + Number(c.valor_servico || 0), 0),
+    paid: clientsByResponsible.filter((c) => isReceivedPaymentType(c.status_pagamento)).reduce((sum, c) => sum + Number(c.valor_servico || 0), 0),
+    pending: clientsByResponsible.filter((c) => c.status_pagamento === "A PAGAR").reduce((sum, c) => sum + Number(c.valor_servico || 0), 0),
   }), [clientsByResponsible]);
+
   const unifiedClients = useMemo(() => [...clientsByResponsible].filter((client) => {
     const createdAt = formatIsoDate(client.created_at);
     const value = Number(client.valor_servico || 0);
+    const search = tableFilters.search.trim().toLowerCase();
+    const matchesSearch = !search || [
+      client.nome,
+      client.cpf_cnpj,
+      client.responsavel_ir,
+      client.observacoes,
+    ].some((field) => String(field || "").toLowerCase().includes(search));
+    if (!matchesSearch) return false;
     if (tableFilters.paymentStatus !== "Todos" && client.status_pagamento !== tableFilters.paymentStatus) return false;
     if (tableFilters.declarationStatus !== "Todos" && client.status_declaracao !== tableFilters.declarationStatus) return false;
     if (tableFilters.dateFrom && createdAt < tableFilters.dateFrom) return false;
@@ -272,6 +495,7 @@ export default function IRPage() {
     const toIndex = Math.min(fromIndex + paymentPageSize, total);
     return { list: filteredPayments.slice(fromIndex, toIndex), total, totalPages, currentPage: page, from: total ? fromIndex + 1 : 0, to: toIndex };
   }, [filteredPayments, paymentCurrentPage, paymentPageSize]);
+
   const unifiedPagination = useMemo(() => {
     const total = unifiedClients.length;
     const totalPages = Math.max(1, Math.ceil(total / tablePageSize));
@@ -295,8 +519,8 @@ export default function IRPage() {
     { name: "Pendentes", value: executionSummary.pendente, color: "hsl(38, 92%, 50%)" },
   ];
   const paymentValueData = [
-    { name: "Pago", value: paymentValueSummary.paid, color: "hsl(160, 84%, 39%)" },
-    { name: "Pendente", value: paymentValueSummary.pending, color: "hsl(38, 92%, 50%)" },
+    { name: "Recebido", value: paymentValueSummary.paid, color: "hsl(160, 84%, 39%)" },
+    { name: "A PAGAR", value: paymentValueSummary.pending, color: "hsl(38, 92%, 50%)" },
   ];
   const completionPercent = executionSummary.total ? Math.round((executionSummary.concluido / executionSummary.total) * 100) : 0;
   const totalPaymentValue = paymentValueSummary.paid + paymentValueSummary.pending;
@@ -335,6 +559,17 @@ export default function IRPage() {
     deleteClientMutation.mutate(client.id);
   };
 
+  const handlePaymentTypeUpdate = (client: IrClient, status: IrPaymentStatus) => {
+    updateClientMutation.mutate({
+      id: client.id,
+      updates: {
+        status_pagamento: status,
+        vencimento: status !== "A PAGAR" && !client.vencimento ? getTodayIsoDate() : client.vencimento,
+      },
+      successMessage: "Tipo de pagamento atualizado.",
+    });
+  };
+
   const handleEditClient = (client: IrClient) => {
     const shouldUseNewResponsibleMode = !!client.responsavel_ir && !responsibleOptions.includes(client.responsavel_ir);
     setEditForm({
@@ -345,6 +580,7 @@ export default function IRPage() {
       vencimento: client.vencimento || "",
       valor_servico: formatCurrency(Number(client.valor_servico || 0)),
       observacoes: client.observacoes || "",
+      status_pagamento: client.status_pagamento,
     });
     setIsEditNewResponsibleMode(shouldUseNewResponsibleMode);
     setIsEditDialogOpen(true);
@@ -370,6 +606,7 @@ export default function IRPage() {
         vencimento: editForm.vencimento || null,
         valor_servico: valorServico,
         observacoes: editForm.observacoes,
+        status_pagamento: editForm.vencimento ? editForm.status_pagamento : "A PAGAR",
       },
       successMessage: "Cliente de IR atualizado.",
     }, {
@@ -411,16 +648,15 @@ export default function IRPage() {
           <div className="ir-create-overlay__particle ir-create-overlay__particle--right" />
           <div className="ir-create-overlay__particle ir-create-overlay__particle--bottom" />
           <div className="ir-create-overlay__content">
-            <strong className="ir-create-overlay__title">AÍ É LOUCURA!!</strong>
+            <strong className="ir-create-overlay__title">AI E LOUCURA!!</strong>
           </div>
         </div>,
         document.body,
       )}
-
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <h1 className="text-2xl font-bold font-display tracking-tight">IR</h1>
-          <p className="text-sm text-muted-foreground mt-1">Gestão de clientes de imposto de renda, pagamentos e execução das declarações.</p>
+          <p className="text-sm text-muted-foreground mt-1">Gestão de clientes de imposto de renda, recebimentos e execução das declarações.</p>
         </div>
         <div className="w-full max-w-sm space-y-2">
           <Label htmlFor="ir-global-responsavel">Responsável pelo IR</Label>
@@ -436,8 +672,8 @@ export default function IRPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatsCard title="Clientes IR" value={clientsByResponsible.length.toString()} icon={Landmark} className="ir-stat-card ir-stat-card--neutral" description="Base ativa para acompanhamento do módulo." />
-        <StatsCard title="Pagos" value={paymentSummary.paid.toString()} icon={Wallet} changeType="positive" className="ir-stat-card ir-stat-card--success" description="Clientes com pagamento confirmado." />
-        <StatsCard title="Pendentes" value={paymentSummary.pending.toString()} icon={FileClock} changeType="negative" className="ir-stat-card ir-stat-card--warning" description="Clientes aguardando regularização financeira." />
+        <StatsCard title="Recebidos" value={paymentSummary.paid.toString()} icon={Wallet} changeType="positive" className="ir-stat-card ir-stat-card--success" description="Clientes com recebimento marcado em um tipo de pagamento." />
+        <StatsCard title="A PAGAR" value={paymentSummary.pending.toString()} icon={FileClock} changeType="negative" className="ir-stat-card ir-stat-card--warning" description="Clientes sem data de recebimento ou ainda pendentes." />
         <StatsCard title="Concluídos" value={`${completionPercent}%`} icon={FileCheck} change={`${executionSummary.concluido}/${executionSummary.total}`} changeType="positive" className="ir-stat-card ir-stat-card--info" description="Percentual total de declarações concluídas." />
       </div>
 
@@ -485,8 +721,29 @@ export default function IRPage() {
               )}
             </div>
             <div className="space-y-2"><Label htmlFor="ir-valor">Valor do serviço</Label><Input id="ir-valor" value={form.valor_servico} onChange={(event) => setForm((current) => ({ ...current, valor_servico: formatCurrencyInput(event.target.value) }))} placeholder="R$ 150,00" inputMode="numeric" /></div>
-            <div className="space-y-2"><Label htmlFor="ir-vencimento">Vencimento</Label><Input id="ir-vencimento" type="date" className="ir-date-input" value={form.vencimento} onChange={(event) => setForm((current) => ({ ...current, vencimento: event.target.value }))} /></div>
-            <div className="md:col-span-2 space-y-2"><Label htmlFor="ir-observacoes">Observações</Label><Textarea id="ir-observacoes" value={form.observacoes} onChange={(event) => setForm((current) => ({ ...current, observacoes: event.target.value }))} placeholder="Informações complementares do cliente." rows={4} /></div>
+            <div className="space-y-2">
+              <Label htmlFor="ir-tipo-pagamento">Tipo de Pagamento</Label>
+              <Select value={form.status_pagamento} onValueChange={(value) => setForm((current) => withPaymentTypeAndDate(current, value as IrPaymentStatus))}>
+                <SelectTrigger id="ir-tipo-pagamento" className={cn("ir-status-trigger", getPaymentTriggerClass(form.status_pagamento))}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {IR_PAYMENT_OPTIONS.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2"><Label htmlFor="ir-vencimento">Data de Recebimento</Label><Input id="ir-vencimento" type="date" className="ir-date-input" value={form.vencimento} onChange={(event) => setForm((current) => ({ ...current, vencimento: event.target.value }))} /></div>
+            <div className="md:col-span-2 space-y-2">
+              <Label htmlFor="ir-observacoes">Observação</Label>
+              <ObservationTextarea
+                id="ir-observacoes"
+                value={form.observacoes}
+                onChange={(value) => setForm((current) => ({ ...current, observacoes: value }))}
+                placeholder="Digite empresa ou palavras-chave para autocomplete."
+                rows={4}
+                companyNames={companyNames}
+              />
+            </div>
             <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <label className="inline-flex items-center gap-3 rounded-full border border-border/70 bg-background/70 px-4 py-2 text-sm text-muted-foreground shadow-sm backdrop-blur-sm">
                 <input
@@ -504,7 +761,7 @@ export default function IRPage() {
 
         <GlassCard className="p-6">
           <h3 className="text-sm font-semibold font-display">Progresso do IR</h3>
-          <p className="text-xs text-muted-foreground mt-1">Percentual de declarações concluídas e pendentes.</p>
+          <p className="text-xs text-muted-foreground mt-1">Percentual de declarações concluídas e panorama de recebimento.</p>
           <div className="h-[220px] mt-4">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -521,7 +778,7 @@ export default function IRPage() {
             <div className="mt-5 border-t border-border pt-5">
               <div>
                 <h4 className="text-sm font-semibold font-display">Fluxo Financeiro</h4>
-                <p className="text-[11px] text-muted-foreground mt-1">Valor pago versus valor pendente em dinheiro.</p>
+                <p className="text-[11px] text-muted-foreground mt-1">Valor recebido versus valor ainda a receber.</p>
               </div>
               <div className="h-[220px] mt-4">
                 <ResponsiveContainer width="100%" height="100%">
@@ -551,12 +808,13 @@ export default function IRPage() {
             <h3 className="text-sm font-semibold font-display">Clientes IR</h3>
             <p className="text-xs text-muted-foreground mt-1">Tabela única com situação financeira, execução da declaração e observações.</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-3">
+            <div className="space-y-1"><Label className="text-[11px]">Pesquisa</Label><Input value={tableFilters.search} onChange={(event) => { setTableFilters((current) => ({ ...current, search: event.target.value })); setTableCurrentPage(1); }} placeholder="Nome, CPF/CNPJ, responsável..." /></div>
             <div className="space-y-1"><Label className="text-[11px]">Data inicial</Label><Input type="date" className="ir-date-input" value={tableFilters.dateFrom} onChange={(event) => { setTableFilters((current) => ({ ...current, dateFrom: event.target.value })); setTableCurrentPage(1); }} /></div>
             <div className="space-y-1"><Label className="text-[11px]">Data final</Label><Input type="date" className="ir-date-input" value={tableFilters.dateTo} onChange={(event) => { setTableFilters((current) => ({ ...current, dateTo: event.target.value })); setTableCurrentPage(1); }} /></div>
             <div className="space-y-1"><Label className="text-[11px]">Valor mínimo</Label><Input value={tableFilters.minValue} onChange={(event) => { setTableFilters((current) => ({ ...current, minValue: event.target.value })); setTableCurrentPage(1); }} placeholder="0,00" /></div>
             <div className="space-y-1"><Label className="text-[11px]">Valor máximo</Label><Input value={tableFilters.maxValue} onChange={(event) => { setTableFilters((current) => ({ ...current, maxValue: event.target.value })); setTableCurrentPage(1); }} placeholder="999,99" /></div>
-            <div className="space-y-1"><Label className="text-[11px]">Pagamento</Label><Select value={tableFilters.paymentStatus} onValueChange={(value) => { setTableFilters((current) => ({ ...current, paymentStatus: value as UnifiedFilters["paymentStatus"] })); setTableCurrentPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{paymentStatusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-1"><Label className="text-[11px]">Tipo de Pagamento</Label><Select value={tableFilters.paymentStatus} onValueChange={(value) => { setTableFilters((current) => ({ ...current, paymentStatus: value as UnifiedFilters["paymentStatus"] })); setTableCurrentPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{paymentStatusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-1"><Label className="text-[11px]">Declaração</Label><Select value={tableFilters.declarationStatus} onValueChange={(value) => { setTableFilters((current) => ({ ...current, declarationStatus: value as UnifiedFilters["declarationStatus"] })); setTableCurrentPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{executionStatusOptions.map((status) => <SelectItem key={status} value={status}>{status === "Concluido" ? "Concluído" : status}</SelectItem>)}</SelectContent></Select></div>
           </div>
         </div>
@@ -574,20 +832,20 @@ export default function IRPage() {
               <div className="ir-mobile-card__meta">
                 <div className="ir-mobile-card__meta-item">
                   <span className="ir-mobile-card__meta-label">Responsável</span>
-                  <span className="ir-mobile-card__meta-value">{client.responsavel_ir || "—"}</span>
+                  <span className="ir-mobile-card__meta-value">{client.responsavel_ir || "-"}</span>
                 </div>
                 <div className="ir-mobile-card__meta-item">
-                  <span className="ir-mobile-card__meta-label">Vencimento</span>
+                  <span className="ir-mobile-card__meta-label">Data de Recebimento</span>
                   <span className="ir-date-chip">{formatDateLabel(client.vencimento)}</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-[11px] text-muted-foreground">Status de pagamento</Label>
-                  <Select value={client.status_pagamento} onValueChange={(value) => updateClientMutation.mutate({ id: client.id, updates: { status_pagamento: value as IrPaymentStatus }, successMessage: "Status de pagamento atualizado." })}>
-                    <SelectTrigger className={cn("w-full min-w-0 ir-status-trigger", client.status_pagamento === "Pago" ? "ir-status-trigger--success" : "ir-status-trigger--warning")}><SelectValue /></SelectTrigger>
-                    <SelectContent>{paymentStatusOptions.filter((status) => status !== "Todos").map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
+                  <Label className="text-[11px] text-muted-foreground">Tipo de Pagamento</Label>
+                  <Select value={client.status_pagamento} onValueChange={(value) => handlePaymentTypeUpdate(client, value as IrPaymentStatus)}>
+                    <SelectTrigger className={cn("w-full min-w-0 ir-status-trigger", getPaymentTriggerClass(client.status_pagamento))}><SelectValue /></SelectTrigger>
+                    <SelectContent>{IR_PAYMENT_OPTIONS.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
@@ -620,8 +878,8 @@ export default function IRPage() {
               <th className="w-[22%] px-3 py-3"><SortHeader label="Nome" column="nome" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
               <th className="w-[12%] px-3 py-3"><SortHeader label="Responsável" column="responsavel_ir" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
               <th className="w-[10%] px-3 py-3"><SortHeader label="Valor" column="valor_servico" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
-              <th className="w-[10%] px-3 py-3"><SortHeader label="Vencimento" column="vencimento" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
-              <th className="w-[14%] px-3 py-3"><SortHeader label="Pagamento" column="status_pagamento" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
+              <th className="w-[10%] px-3 py-3"><SortHeader label="Data de Recebimento" column="vencimento" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
+              <th className="w-[14%] px-3 py-3"><SortHeader label="Tipo de Pagamento" column="status_pagamento" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
               <th className="w-[14%] px-3 py-3"><SortHeader label="Declaração" column="status_declaracao" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
               <th className="w-[10%] text-left px-3 py-3 font-medium text-muted-foreground">Observações</th>
               <th className="w-[10%] text-left px-3 py-3 font-medium text-muted-foreground">Ações</th>
@@ -632,13 +890,13 @@ export default function IRPage() {
                   <div className="font-medium break-words leading-snug">{client.nome}</div>
                   <div className="text-[11px] text-muted-foreground mt-1 break-all">{client.cpf_cnpj}</div>
                 </td>
-                <td className="px-3 py-3 text-muted-foreground align-top break-words">{client.responsavel_ir || "—"}</td>
+                <td className="px-3 py-3 text-muted-foreground align-top break-words">{client.responsavel_ir || "-"}</td>
                 <td className="px-3 py-3 align-top"><span className="ir-value-chip">{formatCurrency(Number(client.valor_servico || 0))}</span></td>
                 <td className="px-3 py-3 text-muted-foreground align-top"><span className="ir-date-chip">{formatDateLabel(client.vencimento)}</span></td>
                 <td className="px-3 py-3 align-top">
-                  <Select value={client.status_pagamento} onValueChange={(value) => updateClientMutation.mutate({ id: client.id, updates: { status_pagamento: value as IrPaymentStatus }, successMessage: "Status de pagamento atualizado." })}>
-                    <SelectTrigger className={cn("w-full min-w-0 ir-status-trigger", client.status_pagamento === "Pago" ? "ir-status-trigger--success" : "ir-status-trigger--warning")}><SelectValue /></SelectTrigger>
-                    <SelectContent>{paymentStatusOptions.filter((status) => status !== "Todos").map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
+                  <Select value={client.status_pagamento} onValueChange={(value) => handlePaymentTypeUpdate(client, value as IrPaymentStatus)}>
+                    <SelectTrigger className={cn("w-full min-w-0 ir-status-trigger", getPaymentTriggerClass(client.status_pagamento))}><SelectValue /></SelectTrigger>
+                    <SelectContent>{IR_PAYMENT_OPTIONS.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
                   </Select>
                 </td>
                 <td className="px-3 py-3 align-top">
@@ -720,12 +978,29 @@ export default function IRPage() {
               <Input id="ir-edit-valor" value={editForm.valor_servico} onChange={(event) => setEditForm((current) => ({ ...current, valor_servico: formatCurrencyInput(event.target.value) }))} inputMode="numeric" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="ir-edit-vencimento">Vencimento</Label>
+              <Label htmlFor="ir-edit-tipo-pagamento">Tipo de Pagamento</Label>
+              <Select value={editForm.status_pagamento} onValueChange={(value) => setEditForm((current) => withPaymentTypeAndDate(current, value as IrPaymentStatus))}>
+                <SelectTrigger id="ir-edit-tipo-pagamento" className={cn("ir-status-trigger", getPaymentTriggerClass(editForm.status_pagamento))}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {IR_PAYMENT_OPTIONS.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ir-edit-vencimento">Data de Recebimento</Label>
               <Input id="ir-edit-vencimento" type="date" className="ir-date-input" value={editForm.vencimento} onChange={(event) => setEditForm((current) => ({ ...current, vencimento: event.target.value }))} />
             </div>
             <div className="md:col-span-2 space-y-2">
-              <Label htmlFor="ir-edit-observacoes">Observações</Label>
-              <Textarea id="ir-edit-observacoes" value={editForm.observacoes} onChange={(event) => setEditForm((current) => ({ ...current, observacoes: event.target.value }))} rows={4} />
+              <Label htmlFor="ir-edit-observacoes">Observação</Label>
+              <ObservationTextarea
+                id="ir-edit-observacoes"
+                value={editForm.observacoes}
+                onChange={(value) => setEditForm((current) => ({ ...current, observacoes: value }))}
+                rows={4}
+                companyNames={companyNames}
+              />
             </div>
           </div>
           <DialogFooter>
@@ -743,11 +1018,12 @@ export default function IRPage() {
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="ir-observation-modal">Anotações do cliente</Label>
-            <Textarea
+            <ObservationTextarea
               id="ir-observation-modal"
               value={notesDraft[observationClientId] ?? ""}
-              onChange={(event) => setNotesDraft((current) => ({ ...current, [observationClientId]: event.target.value }))}
+              onChange={(value) => setNotesDraft((current) => ({ ...current, [observationClientId]: value }))}
               rows={8}
+              companyNames={companyNames}
             />
           </div>
           <DialogFooter>
