@@ -76,6 +76,12 @@ function onlyDigits(value: string) {
 function formatIsoDate(value: string | null | undefined) {
   return value ? String(value).slice(0, 10) : "";
 }
+function formatDateLabel(value: string | null | undefined) {
+  if (!value) return "—";
+  const [year, month, day] = String(value).slice(0, 10).split("-");
+  if (!year || !month || !day) return String(value);
+  return `${day}/${month}/${year}`;
+}
 function cycleSort(current: SortState, key: Exclude<SortKey, null>): SortState {
   if (current.key !== key) return { key, direction: "desc" };
   if (current.direction === "desc") return { key, direction: "asc" };
@@ -479,7 +485,7 @@ export default function IRPage() {
               )}
             </div>
             <div className="space-y-2"><Label htmlFor="ir-valor">Valor do serviço</Label><Input id="ir-valor" value={form.valor_servico} onChange={(event) => setForm((current) => ({ ...current, valor_servico: formatCurrencyInput(event.target.value) }))} placeholder="R$ 150,00" inputMode="numeric" /></div>
-            <div className="space-y-2"><Label htmlFor="ir-vencimento">Vencimento</Label><Input id="ir-vencimento" type="date" value={form.vencimento} onChange={(event) => setForm((current) => ({ ...current, vencimento: event.target.value }))} /></div>
+            <div className="space-y-2"><Label htmlFor="ir-vencimento">Vencimento</Label><Input id="ir-vencimento" type="date" className="ir-date-input" value={form.vencimento} onChange={(event) => setForm((current) => ({ ...current, vencimento: event.target.value }))} /></div>
             <div className="md:col-span-2 space-y-2"><Label htmlFor="ir-observacoes">Observações</Label><Textarea id="ir-observacoes" value={form.observacoes} onChange={(event) => setForm((current) => ({ ...current, observacoes: event.target.value }))} placeholder="Informações complementares do cliente." rows={4} /></div>
             <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <label className="inline-flex items-center gap-3 rounded-full border border-border/70 bg-background/70 px-4 py-2 text-sm text-muted-foreground shadow-sm backdrop-blur-sm">
@@ -546,15 +552,69 @@ export default function IRPage() {
             <p className="text-xs text-muted-foreground mt-1">Tabela única com situação financeira, execução da declaração e observações.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
-            <div className="space-y-1"><Label className="text-[11px]">Data inicial</Label><Input type="date" value={tableFilters.dateFrom} onChange={(event) => { setTableFilters((current) => ({ ...current, dateFrom: event.target.value })); setTableCurrentPage(1); }} /></div>
-            <div className="space-y-1"><Label className="text-[11px]">Data final</Label><Input type="date" value={tableFilters.dateTo} onChange={(event) => { setTableFilters((current) => ({ ...current, dateTo: event.target.value })); setTableCurrentPage(1); }} /></div>
+            <div className="space-y-1"><Label className="text-[11px]">Data inicial</Label><Input type="date" className="ir-date-input" value={tableFilters.dateFrom} onChange={(event) => { setTableFilters((current) => ({ ...current, dateFrom: event.target.value })); setTableCurrentPage(1); }} /></div>
+            <div className="space-y-1"><Label className="text-[11px]">Data final</Label><Input type="date" className="ir-date-input" value={tableFilters.dateTo} onChange={(event) => { setTableFilters((current) => ({ ...current, dateTo: event.target.value })); setTableCurrentPage(1); }} /></div>
             <div className="space-y-1"><Label className="text-[11px]">Valor mínimo</Label><Input value={tableFilters.minValue} onChange={(event) => { setTableFilters((current) => ({ ...current, minValue: event.target.value })); setTableCurrentPage(1); }} placeholder="0,00" /></div>
             <div className="space-y-1"><Label className="text-[11px]">Valor máximo</Label><Input value={tableFilters.maxValue} onChange={(event) => { setTableFilters((current) => ({ ...current, maxValue: event.target.value })); setTableCurrentPage(1); }} placeholder="999,99" /></div>
             <div className="space-y-1"><Label className="text-[11px]">Pagamento</Label><Select value={tableFilters.paymentStatus} onValueChange={(value) => { setTableFilters((current) => ({ ...current, paymentStatus: value as UnifiedFilters["paymentStatus"] })); setTableCurrentPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{paymentStatusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-1"><Label className="text-[11px]">Declaração</Label><Select value={tableFilters.declarationStatus} onValueChange={(value) => { setTableFilters((current) => ({ ...current, declarationStatus: value as UnifiedFilters["declarationStatus"] })); setTableCurrentPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{executionStatusOptions.map((status) => <SelectItem key={status} value={status}>{status === "Concluido" ? "Concluído" : status}</SelectItem>)}</SelectContent></Select></div>
           </div>
         </div>
-        <div className="overflow-hidden">
+        <div className="md:hidden space-y-3 p-3">
+          {unifiedPagination.list.map((client) => (
+            <div key={client.id} className="ir-mobile-card">
+              <div className="ir-mobile-card__header">
+                <div className="min-w-0">
+                  <div className="ir-mobile-card__title">{client.nome}</div>
+                  <div className="ir-mobile-card__subtitle">{client.cpf_cnpj}</div>
+                </div>
+                <span className="ir-value-chip shrink-0">{formatCurrency(Number(client.valor_servico || 0))}</span>
+              </div>
+
+              <div className="ir-mobile-card__meta">
+                <div className="ir-mobile-card__meta-item">
+                  <span className="ir-mobile-card__meta-label">Responsável</span>
+                  <span className="ir-mobile-card__meta-value">{client.responsavel_ir || "—"}</span>
+                </div>
+                <div className="ir-mobile-card__meta-item">
+                  <span className="ir-mobile-card__meta-label">Vencimento</span>
+                  <span className="ir-date-chip">{formatDateLabel(client.vencimento)}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-[11px] text-muted-foreground">Status de pagamento</Label>
+                  <Select value={client.status_pagamento} onValueChange={(value) => updateClientMutation.mutate({ id: client.id, updates: { status_pagamento: value as IrPaymentStatus }, successMessage: "Status de pagamento atualizado." })}>
+                    <SelectTrigger className={cn("w-full min-w-0 ir-status-trigger", client.status_pagamento === "Pago" ? "ir-status-trigger--success" : "ir-status-trigger--warning")}><SelectValue /></SelectTrigger>
+                    <SelectContent>{paymentStatusOptions.filter((status) => status !== "Todos").map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[11px] text-muted-foreground">Status da declaração</Label>
+                  <Select value={client.status_declaracao} onValueChange={(value) => updateClientMutation.mutate({ id: client.id, updates: { status_declaracao: value as IrDeclarationStatus }, successMessage: "Status da declaração atualizado." })}>
+                    <SelectTrigger className={cn("w-full min-w-0 ir-status-trigger", client.status_declaracao === "Concluido" ? "ir-status-trigger--info" : "ir-status-trigger--warning")}><SelectValue /></SelectTrigger>
+                    <SelectContent>{executionStatusOptions.filter((status) => status !== "Todos").map((status) => <SelectItem key={status} value={status}>{status === "Concluido" ? "Concluído" : status}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <Button type="button" variant="outline" className="col-span-3 sm:col-span-1 w-full min-w-0 px-3" onClick={() => handleOpenObservationDialog(client)}>
+                  Observações
+                </Button>
+                <Button type="button" variant="outline" className="h-10 w-full min-w-0 px-3" onClick={() => handleEditClient(client)}>
+                  Editar
+                </Button>
+                <Button type="button" variant="outline" size="icon" className="h-10 w-full shrink-0 border-destructive/30 text-destructive hover:bg-destructive/10" onClick={() => handleDeleteClient(client)} disabled={deleteClientMutation.isPending}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="hidden overflow-hidden md:block">
           <table className="w-full table-fixed text-[11px]">
             <thead><tr className="border-b border-border bg-muted/50">
               <th className="w-[22%] px-3 py-3"><SortHeader label="Nome" column="nome" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
@@ -574,7 +634,7 @@ export default function IRPage() {
                 </td>
                 <td className="px-3 py-3 text-muted-foreground align-top break-words">{client.responsavel_ir || "—"}</td>
                 <td className="px-3 py-3 align-top"><span className="ir-value-chip">{formatCurrency(Number(client.valor_servico || 0))}</span></td>
-                <td className="px-3 py-3 text-muted-foreground align-top"><span className="ir-date-chip">{client.vencimento || "—"}</span></td>
+                <td className="px-3 py-3 text-muted-foreground align-top"><span className="ir-date-chip">{formatDateLabel(client.vencimento)}</span></td>
                 <td className="px-3 py-3 align-top">
                   <Select value={client.status_pagamento} onValueChange={(value) => updateClientMutation.mutate({ id: client.id, updates: { status_pagamento: value as IrPaymentStatus }, successMessage: "Status de pagamento atualizado." })}>
                     <SelectTrigger className={cn("w-full min-w-0 ir-status-trigger", client.status_pagamento === "Pago" ? "ir-status-trigger--success" : "ir-status-trigger--warning")}><SelectValue /></SelectTrigger>
@@ -661,7 +721,7 @@ export default function IRPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="ir-edit-vencimento">Vencimento</Label>
-              <Input id="ir-edit-vencimento" type="date" value={editForm.vencimento} onChange={(event) => setEditForm((current) => ({ ...current, vencimento: event.target.value }))} />
+              <Input id="ir-edit-vencimento" type="date" className="ir-date-input" value={editForm.vencimento} onChange={(event) => setEditForm((current) => ({ ...current, vencimento: event.target.value }))} />
             </div>
             <div className="md:col-span-2 space-y-2">
               <Label htmlFor="ir-edit-observacoes">Observações</Label>
