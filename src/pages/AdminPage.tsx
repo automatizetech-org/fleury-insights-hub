@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getUsersForAdmin, getProfile, updateProfile } from "@/services/profilesService"
 import { supabase } from "@/services/supabaseClient"
@@ -103,11 +103,13 @@ export default function AdminPage() {
   const [editUserSaving, setEditUserSaving] = useState(false)
   const [editUserError, setEditUserError] = useState("")
   const [passwordJustSet, setPasswordJustSet] = useState<string | null>(null)
+  const [companySearch, setCompanySearch] = useState("")
 
   const defaultPanelAccess: Record<string, boolean> = {
     dashboard: true,
     fiscal: true,
     dp: true,
+    ir: true,
     paralegal: true,
     financeiro: true,
     operacoes: true,
@@ -157,6 +159,16 @@ export default function AdminPage() {
     queryKey: ["admin-companies"],
     queryFn: () => getCompaniesForUser("all"),
   })
+  const filteredCompanies = useMemo(() => {
+    const q = companySearch.trim().toLowerCase()
+    if (!q) return companies
+    const digits = q.replace(/\D/g, "")
+    return companies.filter((company) => {
+      const name = String(company.name || "").toLowerCase()
+      const document = String((company as { document?: string | null }).document || "")
+      return name.includes(q) || (!!digits && document.replace(/\D/g, "").includes(digits))
+    })
+  }, [companies, companySearch])
 
   const { data: robotsForPaths = [] } = useQuery({
     queryKey: ["admin-robots"],
@@ -577,11 +589,19 @@ export default function AdminPage() {
         <GlassCard className="overflow-hidden">
           <div className="p-4 border-b border-border">
             <h3 className="text-sm font-semibold font-display">Empresas</h3>
+            <div className="relative mt-3">
+              <Input
+                value={companySearch}
+                onChange={(event) => setCompanySearch(event.target.value)}
+                placeholder="Buscar por nome ou CNPJ..."
+                className="h-9 text-xs"
+              />
+            </div>
           </div>
-          <div className="divide-y divide-border">
-            {companies.length === 0
+          <div className="max-h-[28rem] overflow-y-auto divide-y divide-border">
+            {filteredCompanies.length === 0
               ? <div className="px-4 py-6 text-center text-muted-foreground text-sm">Nenhuma empresa.</div>
-              : companies.map((emp) => (
+              : filteredCompanies.map((emp) => (
                   <div key={emp.id} className="px-4 py-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
                     <div>
                       <p className="text-xs font-medium">{emp.name}</p>

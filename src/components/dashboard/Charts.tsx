@@ -21,9 +21,9 @@ interface MiniChartProps {
 export function MiniChart({ data, type = "area", color = CHART_COLORS[0], height = 200, valueLabel }: MiniChartProps) {
   const tooltipFormatter = valueLabel ? (value: number) => [value, valueLabel] : undefined;
   const tooltipStyle = {
-    background: "hsl(var(--background))",
-    color: "hsl(var(--foreground))",
-    border: "1px solid hsl(var(--border))",
+    background: "var(--ap-tooltip-bg)",
+    color: "var(--ap-tooltip-text)",
+    border: "1px solid var(--ap-tooltip-border)",
     borderRadius: "8px",
     boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
     fontSize: "12px",
@@ -74,9 +74,9 @@ interface DonutChartProps {
 
 export function DonutChart({ data, height = 200 }: DonutChartProps) {
   const tooltipStyle = {
-    background: "hsl(var(--background))",
-    color: "hsl(var(--foreground))",
-    border: "1px solid hsl(var(--border))",
+    background: "var(--ap-tooltip-bg)",
+    color: "var(--ap-tooltip-text)",
+    border: "1px solid var(--ap-tooltip-border)",
     borderRadius: "8px",
     boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
     fontSize: "12px",

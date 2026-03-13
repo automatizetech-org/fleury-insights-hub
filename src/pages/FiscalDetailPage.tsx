@@ -2,8 +2,9 @@ import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { MiniChart } from "@/components/dashboard/Charts";
 import { StatsCard } from "@/components/dashboard/StatsCard";
+import { DataPagination } from "@/components/common/DataPagination";
 import { useParams } from "react-router-dom";
-import { FileText, FileDown, CalendarDays, Download, AlertCircle, ThumbsUp, FileArchive, DollarSign, ListOrdered, Calendar, ChevronLeft, ChevronRight, Medal } from "lucide-react";
+import { FileText, FileDown, CalendarDays, Download, AlertCircle, ThumbsUp, FileArchive, DollarSign, ListOrdered, Calendar, Medal } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
@@ -320,7 +321,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
                 <Pie data={chartData} cx="50%" cy="50%" innerRadius={52} outerRadius={72} paddingAngle={2} dataKey="value" stroke="transparent" label={({ value }) => value} labelLine={false}>
                   {chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
                 </Pie>
-                <Tooltip formatter={(value: number) => [value, "certidões"]} contentStyle={{ borderRadius: "10px", border: "1px solid hsl(var(--border))", fontSize: "12px" }} labelFormatter={(label) => label} />
+                <Tooltip formatter={(value: number) => [value, "certidões"]} contentStyle={{ background: "#ffffff", color: "#111827", borderRadius: "10px", border: "1px solid rgba(15, 23, 42, 0.12)", fontSize: "12px" }} labelFormatter={(label) => label} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -457,8 +458,8 @@ export default function FiscalDetailPage() {
   const [filterOrigem, setFilterOrigem] = useState<"all" | "recebidas" | "emitidas">("all");
   const [filterModelo, setFilterModelo] = useState<"all" | "55" | "65">("all");
   const [downloadingZip, setDownloadingZip] = useState(false);
-  const [nfsPageSize, setNfsPageSize] = useState(10);
-  const [nfsCurrentPage, setNfsCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const nfsDateFromResolved = type === "nfs" ? (nfsDateFrom || nfsPeriodDefault.first) : "";
   const nfsDateToResolved = type === "nfs" ? (nfsDateTo || nfsPeriodDefault.last) : "";
@@ -642,14 +643,13 @@ export default function FiscalDetailPage() {
     return buildVolumeMensalData(baseDocuments);
   }, [type, baseDocuments, filteredDocuments, nfsDateFromResolved, nfsDateToResolved, isNfeNfc]);
 
-  const nfsPagination = useMemo(() => {
-    if (type !== "nfs") return { list: filteredDocuments, totalPages: 1, currentPage: 1, from: 0, to: filteredDocuments.length, total: filteredDocuments.length };
+  const documentsPagination = useMemo(() => {
     const total = filteredDocuments.length;
-    const pageSize = Math.max(1, nfsPageSize);
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
-    const page = Math.min(nfsCurrentPage, totalPages);
-    const from = (page - 1) * pageSize;
-    const to = Math.min(from + pageSize, total);
+    const safePageSize = Math.max(1, pageSize);
+    const totalPages = Math.max(1, Math.ceil(total / safePageSize));
+    const page = Math.min(currentPage, totalPages);
+    const from = (page - 1) * safePageSize;
+    const to = Math.min(from + safePageSize, total);
     return {
       list: filteredDocuments.slice(from, to),
       totalPages,
@@ -658,14 +658,14 @@ export default function FiscalDetailPage() {
       to,
       total,
     };
-  }, [type, filteredDocuments, nfsPageSize, nfsCurrentPage]);
-  const documentsToShow = type === "nfs" ? nfsPagination.list : filteredDocuments;
+  }, [filteredDocuments, pageSize, currentPage]);
+  const documentsToShow = documentsPagination.list;
 
   useEffect(() => {
-    if (type === "nfs" && nfsPagination.totalPages > 0 && nfsCurrentPage > nfsPagination.totalPages) {
-      setNfsCurrentPage(1);
+    if (documentsPagination.totalPages > 0 && currentPage > documentsPagination.totalPages) {
+      setCurrentPage(1);
     }
-  }, [type, nfsCurrentPage, nfsPagination.totalPages]);
+  }, [currentPage, documentsPagination.totalPages]);
 
   const handleDownload = async (id: string, chave: string | null, filePath: string | null) => {
     try {
@@ -864,31 +864,30 @@ export default function FiscalDetailPage() {
               </select>
             )}
             {canDownload && (
-              <Button
-                variant="default"
-                size="sm"
-                className="gap-1.5 text-xs"
-                disabled={downloadingZip || filteredDocuments.filter((d) => d.file_path).length === 0}
-                onClick={async () => {
-                  const ids = filteredDocuments.filter((d) => d.file_path && String(d.file_path).trim()).map((d) => d.id);
-                  if (ids.length === 0) {
-                    toast.error("Nenhum documento com arquivo nos filtros selecionados.");
-                    return;
-                  }
-                  setDownloadingZip(true);
-                  try {
-                    const zipName = type ? `documentos-fiscais-${type}.zip` : "documentos-fiscais.zip";
-                    await downloadFiscalDocumentsZip(ids, type ?? undefined);
-                    toast.success(`Download iniciado: ${ids.length} arquivo(s) em ${zipName}`);
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : "Erro ao baixar ZIP.");
-                  } finally {
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  disabled={downloadingZip || documentsToShow.filter((d) => d.file_path).length === 0}
+                  onClick={async () => {
+                    const ids = documentsToShow.filter((d) => d.file_path && String(d.file_path).trim()).map((d) => d.id);
+                    if (ids.length === 0) {
+                      toast.error("Nenhum documento com arquivo disponível na página atual.");
+                      return;
+                    }
+                    setDownloadingZip(true);
+                    try {
+                      await downloadFiscalDocumentsZip(ids, type ?? undefined);
+                      toast.success(`Download iniciado: ${ids.length} arquivo(s) da página atual.`);
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Erro ao baixar ZIP.");
+                    } finally {
                     setDownloadingZip(false);
                   }
                 }}
               >
                 <FileArchive className="h-3.5 w-3.5" />
-                {downloadingZip ? "Gerando…" : "Baixar tudo (ZIP)"}
+                {downloadingZip ? "Gerando…" : "Baixar ZIP dos documentos listados"}
               </Button>
             )}
           </div>
@@ -952,48 +951,20 @@ export default function FiscalDetailPage() {
                 );})}
               </tbody>
             </table>
-            {type === "nfs" && filteredDocuments.length > 0 && nfsPagination.totalPages > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-2 p-3 border-t border-border bg-muted/20">
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-muted-foreground">Mostrar</span>
-                  <select
-                    value={nfsPageSize}
-                    onChange={(e) => { setNfsPageSize(Number(e.target.value)); setNfsCurrentPage(1); }}
-                    className="rounded border border-border bg-background px-2 py-1 text-xs"
-                  >
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                    <option value={50}>50</option>
-                  </select>
-                  <span className="text-xs text-muted-foreground">por página</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {nfsPagination.from}-{nfsPagination.to} de {nfsPagination.total}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    disabled={nfsPagination.currentPage <= 1}
-                    onClick={() => setNfsCurrentPage((p) => Math.max(1, p - 1))}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <span className="text-xs font-medium min-w-[4rem] text-center">
-                    Página {nfsPagination.currentPage} de {nfsPagination.totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    disabled={nfsPagination.currentPage >= nfsPagination.totalPages}
-                    onClick={() => setNfsCurrentPage((p) => Math.min(nfsPagination.totalPages, p + 1))}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
+            {filteredDocuments.length > 0 && (
+              <DataPagination
+                currentPage={documentsPagination.currentPage}
+                totalPages={documentsPagination.totalPages}
+                totalItems={documentsPagination.total}
+                from={documentsPagination.from}
+                to={documentsPagination.to}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={(next) => {
+                  setPageSize(next);
+                  setCurrentPage(1);
+                }}
+              />
             )}
             </>
           )}

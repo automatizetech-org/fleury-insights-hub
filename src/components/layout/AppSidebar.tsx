@@ -37,6 +37,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
+import { LionIcon } from "@/components/icons/LionIcon";
 
 interface NavItem {
   name: string;
@@ -90,6 +91,7 @@ const navItems: NavItem[] = [
       { name: "DRE", path: "/contabil/dre" },
     ],
   },
+  { name: "IR", path: "/ir", icon: LionIcon, description: "Clientes e declarações de IR", panelKey: "ir" },
   {
     name: "Paralegal",
     path: "/paralegal",

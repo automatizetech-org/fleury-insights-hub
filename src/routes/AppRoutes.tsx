@@ -19,6 +19,7 @@ import ContabilPage from "@/pages/ContabilPage";
 import ContabilDetailPage from "@/pages/ContabilDetailPage";
 import AlteracaoEmpresarialPage from "@/pages/AlteracaoEmpresarialPage";
 import ParalegalPage from "@/pages/ParalegalPage";
+import IRPage from "@/pages/IRPage";
 
 export function AppRoutes() {
   return (
@@ -32,6 +33,7 @@ export function AppRoutes() {
       <Route path="/dp/:topic" element={<ProtectedRoute><AppLayout><DPTopicPage /></AppLayout></ProtectedRoute>} />
       <Route path="/contabil" element={<ProtectedRoute><AppLayout><ContabilPage /></AppLayout></ProtectedRoute>} />
       <Route path="/contabil/:topic" element={<ProtectedRoute><AppLayout><ContabilDetailPage /></AppLayout></ProtectedRoute>} />
+      <Route path="/ir" element={<ProtectedRoute><AppLayout><IRPage /></AppLayout></ProtectedRoute>} />
       <Route path="/paralegal" element={<ProtectedRoute><AppLayout><ParalegalPage /></AppLayout></ProtectedRoute>} />
       <Route path="/paralegal/:topic" element={<ProtectedRoute><AppLayout><ParalegalPage /></AppLayout></ProtectedRoute>} />
       <Route path="/alteracao-empresarial" element={<ProtectedRoute><AppLayout><AlteracaoEmpresarialPage /></AppLayout></ProtectedRoute>} />

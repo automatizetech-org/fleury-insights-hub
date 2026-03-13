@@ -22,9 +22,10 @@ import {
 import { upsertRobotDisplayConfig } from "@/services/robotDisplayConfigService"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-import { CalendarClock, Play, Loader2, Bot, Building2, Square, GripVertical } from "lucide-react"
+import { CalendarClock, Play, Loader2, Bot, Building2, Square, GripVertical, Search } from "lucide-react"
 import { toast } from "sonner"
 import { format, startOfMonth, endOfMonth, addDays, subDays, startOfDay, isBefore } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -154,6 +155,7 @@ export function AdminScheduler({
   const [runDaily, setRunDaily] = useState(false)
   const [executionMode, setExecutionMode] = useState<RobotExecutionMode>("sequential")
   const [submitting, setSubmitting] = useState(false)
+  const [companySearch, setCompanySearch] = useState("")
   const [activeRuleId, setActiveRuleId] = useState<string | null>(null)
   const [countdownMs, setCountdownMs] = useState<number>(0)
   const [draggedId, setDraggedId] = useState<string | null>(null)
@@ -258,6 +260,11 @@ export function AdminScheduler({
     () => getCommonRobotNotesMode(selectedRobots),
     [selectedRobots]
   )
+  const filteredCompanies = useMemo(() => {
+    const q = companySearch.trim().toLowerCase()
+    if (!q) return companies
+    return companies.filter((company) => company.name.toLowerCase().includes(q))
+  }, [companies, companySearch])
 
   const persistDisplayConfig = useCallback(() => {
     if (companyIds.size === 0) return
@@ -370,8 +377,14 @@ export function AdminScheduler({
   const handleDragEnd = () => setDraggedId(null)
 
   const selectAllCompanies = () => {
-    if (companyIds.size === companies.length) setCompanyIds(new Set())
-    else setCompanyIds(new Set(companies.map((c) => c.id)))
+    const visibleIds = filteredCompanies.map((company) => company.id)
+    const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => companyIds.has(id))
+    setCompanyIds((prev) => {
+      const next = new Set(prev)
+      if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id))
+      else visibleIds.forEach((id) => next.add(id))
+      return next
+    })
   }
 
   const handleRun = async () => {
@@ -595,14 +608,23 @@ export function AdminScheduler({
               Empresas
             </Label>
             <Button type="button" variant="ghost" size="sm" className="text-[10px] h-7" onClick={selectAllCompanies}>
-              {companyIds.size === companies.length ? "Desmarcar todas" : "Marcar todas"}
+              {filteredCompanies.length > 0 && filteredCompanies.every((company) => companyIds.has(company.id)) ? "Desmarcar visíveis" : "Marcar visíveis"}
             </Button>
           </div>
+          <div className="relative mb-2">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={companySearch}
+              onChange={(event) => setCompanySearch(event.target.value)}
+              placeholder="Buscar empresa..."
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
           <div className="max-h-32 overflow-y-auto rounded border border-border bg-muted/30 p-2 space-y-1">
-            {companies.length === 0 ? (
+            {filteredCompanies.length === 0 ? (
               <p className="text-xs text-muted-foreground">Nenhuma empresa cadastrada.</p>
             ) : (
-              companies.map((c) => (
+              filteredCompanies.map((c) => (
                 <label key={c.id} className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 rounded px-2 py-1">
                   <Checkbox checked={companyIds.has(c.id)} onCheckedChange={() => toggleCompany(c.id)} />
                   <span className="text-xs truncate">{c.name}</span>

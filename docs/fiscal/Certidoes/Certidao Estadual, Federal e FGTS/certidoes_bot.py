@@ -2641,6 +2641,26 @@ class AutomationThread(QThread):
         page.set_extra_http_headers({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
+
+        def _read_fgts_page_text() -> str:
+            try:
+                return (page.locator("body").inner_text(timeout=3000) or "").strip()
+            except Exception:
+                return ""
+
+        def _detect_fgts_terminal_status() -> Optional[str]:
+            txt = _read_fgts_page_text()
+            if not txt:
+                return None
+            norm = _normalize_status_text(txt)
+            if "empregador nao cadastrado" in norm:
+                self.log.emit("⚠️ Empregador não cadastrado no FGTS.")
+                return "Empregador não cadastrado"
+            if _is_fgts_irregular_message(txt):
+                self.log.emit("⚠️ FGTS retornou aviso de impedimento/consulta manual. Marcando como irregular.")
+                return "Irregular"
+            return None
+
         url = "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf"
         self.log.emit("🌐 Abrindo certidão FGTS (Caixa)...")
         page.goto(url, wait_until="domcontentloaded", timeout=90000)
@@ -2664,6 +2684,10 @@ class AutomationThread(QThread):
         page.locator("#mainForm\\:btnConsultar, button[name='mainForm:btnConsultar']").click()
         page.wait_for_timeout(2000)
 
+        detected_status = _detect_fgts_terminal_status()
+        if detected_status:
+            return None, detected_status
+
         # verificar mensagem de empregador não cadastrado
         try:
             msg = page.locator("span.feedback-text")
@@ -2677,12 +2701,19 @@ class AutomationThread(QThread):
         except Exception:
             pass
 
+        detected_status = _detect_fgts_terminal_status()
+        if detected_status:
+            return None, detected_status
+
         # seguir para emissão do CRF
         try:
             page.locator("#mainForm\\:j_id51").click()
             page.wait_for_timeout(1500)
         except Exception:
             pass
+        detected_status = _detect_fgts_terminal_status()
+        if detected_status:
+            return None, detected_status
         try:
             page.locator("#mainForm\\:btnVisualizar").click()
             page.wait_for_timeout(1500)
@@ -2941,6 +2972,9 @@ class MainWindow(QMainWindow):
         api_cfg = get_robot_api_config() or {}
         self._segment_path: str = (api_cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip() or ROBOT_SEGMENT_PATH_DEFAULT
         self._date_rule: str = (api_cfg.get("date_rule") or "").strip()
+        if self.output_base:
+            self.config["_resolved_output_base"] = str(self.output_base)
+            self.config["reports_path"] = str(self.output_base)
         self._robot_supabase_url: Optional[str] = None
         self._robot_supabase_key: Optional[str] = None
         self._robot_id: Optional[str] = None

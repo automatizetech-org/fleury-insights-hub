@@ -1,12 +1,13 @@
 /**
  * Chave de painel para cada rota. Usado no sidebar (panel_access) e no guard de rota.
- * /admin não tem panelKey — controle só por role super_admin.
+ * /admin não tem panelKey, controle só por role super_admin.
  */
 export const PATH_TO_PANEL: Record<string, string> = {
   "/dashboard": "dashboard",
   "/fiscal": "fiscal",
   "/dp": "dp",
   "/contabil": "contabil",
+  "/ir": "ir",
   "/paralegal": "paralegal",
   "/financeiro": "financeiro",
   "/operacoes": "operacoes",
@@ -21,6 +22,7 @@ export const PANEL_KEYS = [
   "fiscal",
   "dp",
   "contabil",
+  "ir",
   "paralegal",
   "financeiro",
   "operacoes",
@@ -37,6 +39,7 @@ export const PANEL_LABELS: Record<PanelKey, string> = {
   fiscal: "Fiscal",
   dp: "Depto. Pessoal",
   contabil: "Contábil",
+  ir: "IR",
   paralegal: "Paralegal",
   financeiro: "Financeiro",
   operacoes: "Operações",

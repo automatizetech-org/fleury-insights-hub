@@ -4598,13 +4598,7 @@ class MainWindow(QMainWindow):
                             self._default_notes_mode = cfg["notes_mode"]
             if self.output_base:
                 seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
-                # Pasta de relatório = base da empresa dentro da pasta base definida no dashboard.
-                if self.companies:
-                    first_name = self.companies[0].get("name") or self.companies[0].get("doc") or "sem_nome"
-                    folder_label = safe_folder_name(first_name)
-                    self.report_path = self.output_base / folder_label / seg_slug
-                else:
-                    self.report_path = self.output_base / seg_slug
+                self.report_path = self.output_base / seg_slug
         else:
             self._robot_id = None
         self.preferences: Dict[str, Any] = load_path_preferences()
@@ -5522,12 +5516,7 @@ class MainWindow(QMainWindow):
             )
             self.companies = records
             self._reload_items()
-            if self.output_base and self.companies:
-                seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
-                first_name = self.companies[0].get("name") or self.companies[0].get("doc") or "sem_nome"
-                folder_label = safe_folder_name(first_name)
-                self.report_path = self.output_base / folder_label / seg_slug
-            elif self.output_base:
+            if self.output_base:
                 seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
                 self.report_path = self.output_base / seg_slug
         period_start = (cfg.get("period_start") or "").strip() or None
@@ -5686,9 +5675,10 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
         central_segment_path, central_date_rule = fetch_central_folder_structure(self._segment_path)
+        headless = self.chk_headless.isChecked()
         self.worker = DownloadThread(
             selected,
-            True,
+            headless,
             output_base,
             start_dt,
             end_dt,
@@ -5800,7 +5790,7 @@ class MainWindow(QMainWindow):
             self._log("Biblioteca reportlab nao encontrada; relatorio nao gerado.")
             return None
 
-        report_dir = self.report_path or self.output_base or BASE_DIR
+        report_dir = self.output_base / (self._segment_path or "FISCAL/NFS").replace("/", os.sep) if self.output_base else (self.report_path or BASE_DIR)
         if not report_dir:
             self._log("Caminho de relatorio nao definido.")
             return None

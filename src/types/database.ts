@@ -84,6 +84,16 @@ export type Database = {
         Insert: { key: string; value?: string; updated_at?: string }
         Update: { key?: string; value?: string; updated_at?: string }
       }
+      ir_clients: {
+        Row: { id: string; nome: string; cpf_cnpj: string; responsavel_ir: string | null; vencimento: string | null; valor_servico: number; status_pagamento: "Pago" | "Pendente"; status_declaracao: "Concluido" | "Pendente"; observacoes: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; nome: string; cpf_cnpj: string; responsavel_ir?: string | null; vencimento?: string | null; valor_servico?: number; status_pagamento?: "Pago" | "Pendente"; status_declaracao?: "Concluido" | "Pendente"; observacoes?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; nome?: string; cpf_cnpj?: string; responsavel_ir?: string | null; vencimento?: string | null; valor_servico?: number; status_pagamento?: "Pago" | "Pendente"; status_declaracao?: "Concluido" | "Pendente"; observacoes?: string | null; created_at?: string; updated_at?: string }
+      }
+      ir_settings: {
+        Row: { id: string; singleton: boolean; payment_due_date: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; singleton?: boolean; payment_due_date?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; singleton?: boolean; payment_due_date?: string | null; created_at?: string; updated_at?: string }
+      }
     }
     Views: { [_ in never]: never }
     Functions: { [_ in never]: never }

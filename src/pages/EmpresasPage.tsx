@@ -111,10 +111,13 @@ export default function EmpresasPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return companies
+    const digits = q.replace(/\D/g, "")
     return companies.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
-        (c.document ?? "").toLowerCase().replace(/\D/g, "").includes(q.replace(/\D/g, ""))
+        (!!digits && (c.document ?? "").replace(/\D/g, "").includes(digits)) ||
+        String((c as CompanyWithCert).state_registration ?? "").toLowerCase().includes(q) ||
+        String((c as CompanyWithCert).contador_nome ?? "").toLowerCase().includes(q)
     )
   }, [companies, search])
 
@@ -290,7 +293,7 @@ export default function EmpresasPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar por nome ou CNPJ..."
+                placeholder="Buscar por nome, CNPJ, IE ou contador..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9"

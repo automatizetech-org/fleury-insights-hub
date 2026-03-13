@@ -1,13 +1,14 @@
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { FileText, Download, Filter, Search } from "lucide-react";
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileText, Download, Filter, Search, FileArchive } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getAllFiscalDocuments } from "@/services/dashboardService";
-import { downloadFiscalDocument, fiscalSyncAll, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
+import { downloadFiscalDocument, downloadFiscalDocumentsZip, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { DataPagination } from "@/components/common/DataPagination";
 
 const tipoFilters = ["Todos", "NFS", "NFE", "NFC"];
 
@@ -33,48 +34,49 @@ function exportToCsv(
 export default function DocumentosPage() {
   const [filterTipo, setFilterTipo] = useState("Todos");
   const [search, setSearch] = useState("");
-  const [syncing, setSyncing] = useState(false);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [downloadingZip, setDownloadingZip] = useState(false);
   const { selectedCompanyIds } = useSelectedCompanyIds();
   const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
-  const queryClient = useQueryClient();
 
   const { data: documents = [], isLoading } = useQuery({
     queryKey: ["fiscal-documents-all", companyFilter],
     queryFn: () => getAllFiscalDocuments(companyFilter),
   });
 
-  const canSync = hasServerApi();
-
-  const handleSyncClick = () => {
-    if (!canSync) {
-      toast.error(
-        "Configure SERVER_API_URL no arquivo .env na raiz do projeto (URL do server-api, ex: do ngrok) e reinicie o app (npm run dev) para sincronizar os arquivos da VM."
-      );
-      return;
-    }
-    setSyncing(true);
-    fiscalSyncAll()
-      .then((r) => {
-        queryClient.invalidateQueries({ queryKey: ["fiscal-documents-all"] });
-        queryClient.invalidateQueries({ queryKey: ["fiscal-summary"] });
-        queryClient.invalidateQueries({ queryKey: ["fiscal-documents"] });
-        const parts = [];
-        if (r.inserted > 0) parts.push(`${r.inserted} inserido(s)`);
-        if (r.deleted > 0) parts.push(`${r.deleted} removido(s)`);
-        toast.success(parts.length ? parts.join(", ") + "." : "Sincronização concluída.");
-      })
-      .catch((e) => toast.error(e instanceof Error ? e.message : "Erro ao sincronizar"))
-      .finally(() => setSyncing(false));
-  };
-
   const filtered = documents.filter((doc) => {
     const matchesTipo = filterTipo === "Todos" || doc.type === filterTipo;
+    const docDate = String(doc.document_date ?? doc.created_at ?? "").slice(0, 10);
+    const matchesDateFrom = !dateFrom || (docDate && docDate >= dateFrom);
+    const matchesDateTo = !dateTo || (docDate && docDate <= dateTo);
     const matchesSearch =
       doc.empresa.toLowerCase().includes(search.toLowerCase()) ||
       (doc.cnpj && doc.cnpj.replace(/\D/g, "").includes(search.replace(/\D/g, ""))) ||
       (doc.chave && doc.chave.includes(search));
-    return matchesTipo && matchesSearch;
+    return matchesTipo && matchesSearch && matchesDateFrom && matchesDateTo;
   });
+
+  const pagination = useMemo(() => {
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(currentPage, totalPages);
+    const fromIndex = (page - 1) * pageSize;
+    const toIndex = Math.min(fromIndex + pageSize, total);
+    return {
+      total,
+      totalPages,
+      currentPage: page,
+      from: total ? fromIndex + 1 : 0,
+      to: toIndex,
+      list: filtered.slice(fromIndex, toIndex),
+    };
+  }, [filtered, pageSize, currentPage]);
+
+  const pageDocuments = pagination.list;
+  const canDownload = hasServerApi();
 
   const handleDownload = async (id: string, chave: string | null, filePath: string | null) => {
     try {
@@ -84,6 +86,27 @@ export default function DocumentosPage() {
       toast.success("Download iniciado.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao baixar.");
+    }
+  };
+
+  const handleZipDownload = async () => {
+    if (!canDownload) {
+      toast.error("Configure SERVER_API_URL para habilitar download em ZIP.");
+      return;
+    }
+    const ids = pageDocuments.filter((doc) => doc.file_path && String(doc.file_path).trim()).map((doc) => doc.id);
+    if (ids.length === 0) {
+      toast.error("Nenhum documento com arquivo disponível na página atual.");
+      return;
+    }
+    setDownloadingZip(true);
+    try {
+      await downloadFiscalDocumentsZip(ids, "documentos");
+      toast.success(`Download em ZIP iniciado para ${ids.length} documento(s).`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao gerar ZIP.");
+    } finally {
+      setDownloadingZip(false);
     }
   };
 
@@ -101,18 +124,9 @@ export default function DocumentosPage() {
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold font-display tracking-tight text-foreground">Documentos</h1>
           <p className="text-xs sm:text-sm text-muted-foreground mt-1 line-clamp-2">
-            {companyFilter ? `Filtrado por ${companyFilter.length} empresa(s)` : "Todas as empresas"} — Lista unificada de documentos fiscais
+            {companyFilter ? `Filtrado por ${companyFilter.length} empresa(s)` : "Todas as empresas"} — Lista unificada paginada de documentos fiscais
           </p>
         </div>
-        {canSync ? (
-          <Button variant="outline" size="sm" onClick={handleSyncClick} disabled={syncing}>
-            {syncing ? "Sincronizando…" : "Sincronizar"}
-          </Button>
-        ) : (
-          <Button variant="outline" size="sm" onClick={handleSyncClick} title="Adicione SERVER_API_URL no .env (URL do ngrok) e reinicie o app">
-            Sincronizar
-          </Button>
-        )}
       </div>
 
       <GlassCard className="overflow-hidden">
@@ -143,6 +157,26 @@ export default function DocumentosPage() {
                 className="rounded-xl border border-border bg-background pl-10 pr-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary/50 w-full min-w-0 touch-manipulation"
               />
             </div>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="rounded-xl border border-border bg-background px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary/50 touch-manipulation"
+              title="Data inicial"
+            />
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="rounded-xl border border-border bg-background px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary/50 touch-manipulation"
+              title="Data final"
+            />
             <button
               onClick={() => exportToCsv(filtered)}
               className="flex items-center justify-center gap-2 rounded-xl border border-border px-4 py-3 text-sm font-medium hover:bg-muted active:bg-muted/80 transition-colors touch-manipulation min-h-[44px] shrink-0"
@@ -150,6 +184,15 @@ export default function DocumentosPage() {
               <Download className="h-4 w-4 shrink-0" />
               Exportar CSV
             </button>
+            <Button
+              type="button"
+              onClick={handleZipDownload}
+              disabled={downloadingZip || !canDownload || pageDocuments.filter((doc) => doc.file_path).length === 0}
+              className="min-h-[44px] rounded-xl px-4 py-3 text-sm"
+            >
+              <FileArchive className="mr-2 h-4 w-4" />
+              {downloadingZip ? "Gerando ZIP…" : "Baixar ZIP dos documentos listados"}
+            </Button>
           </div>
         </div>
 
@@ -171,7 +214,7 @@ export default function DocumentosPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((doc) => (
+                {pageDocuments.map((doc) => (
                   <tr key={doc.id} className="border-b border-border hover:bg-muted/30 active:bg-muted/50 transition-colors">
                     <td className="px-3 sm:px-4 py-3 font-medium">{doc.empresa}</td>
                     <td className="px-3 sm:px-4 py-3 text-muted-foreground">{doc.cnpj ?? "—"}</td>
@@ -209,10 +252,26 @@ export default function DocumentosPage() {
             <FileText className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
             <p className="text-sm text-muted-foreground">
               {documents.length === 0
-                ? "Nenhum documento. Use Sincronizar para trazer arquivos da VM (pasta EMPRESAS)."
+                ? "Nenhum documento encontrado."
                 : "Nenhum documento encontrado com os filtros aplicados."}
             </p>
           </div>
+        )}
+
+        {!isLoading && filtered.length > 0 && (
+          <DataPagination
+            currentPage={pagination.currentPage}
+            totalPages={pagination.totalPages}
+            totalItems={pagination.total}
+            from={pagination.from}
+            to={pagination.to}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={(next) => {
+              setPageSize(next);
+              setCurrentPage(1);
+            }}
+          />
         )}
       </GlassCard>
     </div>

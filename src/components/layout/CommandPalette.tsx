@@ -18,6 +18,7 @@ import {
   FileSpreadsheet,
   Shield,
 } from "lucide-react";
+import { LionIcon } from "@/components/icons/LionIcon";
 
 const pages = [
   { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard, group: "Navegação" },
@@ -29,6 +30,7 @@ const pages = [
   { name: "Fiscal - IRRF/CSLL", path: "/fiscal/irrf-csll", icon: FileText, group: "Fiscal" },
   { name: "Fiscal - Certidões", path: "/fiscal/certidoes", icon: FileText, group: "Fiscal" },
   { name: "Departamento Pessoal", path: "/dp", icon: Users, group: "Navegação" },
+  { name: "IR", path: "/ir", icon: LionIcon, group: "Navegação" },
   { name: "Paralegal", path: "/paralegal", icon: Shield, group: "Navegação" },
   { name: "Paralegal - Certificados", path: "/paralegal/certificados", icon: Shield, group: "Paralegal" },
   { name: "Paralegal - Tarefas", path: "/paralegal/tarefas", icon: Shield, group: "Paralegal" },
@@ -54,7 +56,7 @@ export function CommandPalette() {
     return () => document.removeEventListener("keydown", down);
   }, []);
 
-  const groups = [...new Set(pages.map((p) => p.group))];
+  const groups = [...new Set(pages.map((page) => page.group))];
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
@@ -64,7 +66,7 @@ export function CommandPalette() {
         {groups.map((group) => (
           <CommandGroup key={group} heading={group}>
             {pages
-              .filter((p) => p.group === group)
+              .filter((page) => page.group === group)
               .map((page) => (
                 <CommandItem
                   key={page.path}
