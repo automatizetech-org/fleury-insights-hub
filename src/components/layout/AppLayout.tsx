@@ -99,7 +99,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 min-w-0 pb-[env(safe-area-inset-bottom)]">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 min-w-0 pb-[env(safe-area-inset-bottom)] [scrollbar-gutter:stable]">
           <CommandPalette />
           <div className="p-3 sm:p-4 md:p-6 w-full min-w-0 max-w-none animate-fade-in-up box-border">
             {noAccess ? <Navigate to="/dashboard" replace /> : children}
