@@ -5041,6 +5041,54 @@ def detectar_erro_503(page) -> bool:
         return False
 
 
+def detectar_erro_sem_dados_enviados_portal(page) -> str:
+    """Detecta erros transitórios do iframe do portal após a pesquisa."""
+    padroes = (
+        (
+            "nenhum dado foi enviado por",
+            "nfeweb.sefaz.go.gov.br",
+            "Erro 'Nenhum dado foi enviado' detectado",
+        ),
+        (
+            "sub-frame-error",
+            "a conexao foi redefinida.",
+            "Erro 'A conexao foi redefinida' detectado",
+        ),
+    )
+
+    def _texto_doc(frame) -> str:
+        try:
+            txt = frame.evaluate(
+                """() => {
+                    const body = document.body?.innerText || "";
+                    const root = document.documentElement?.innerText || "";
+                    return `${body}\n${root}`.trim();
+                }"""
+            )
+            return normalizar_txt(txt or "")
+        except Exception:
+            return ""
+
+    try:
+        frames = [page] + list(getattr(page, "frames", []) or [])
+    except Exception:
+        frames = [page]
+
+    for frame in frames:
+        texto = _texto_doc(frame)
+        if not texto:
+            continue
+        for marcador_1, marcador_2, descricao in padroes:
+            if marcador_1 in texto and marcador_2 in texto:
+                try:
+                    nome_frame = getattr(frame, "name", "") or "principal"
+                except Exception:
+                    nome_frame = "principal"
+                return f"{descricao} no frame {nome_frame}."
+
+    return ""
+
+
 def classificar_alerta(texto: Optional[str]) -> str:
     t = (texto or "").lower()
 
@@ -5224,12 +5272,50 @@ def pesquisar_intervalo(
         sleep(10)
         wait_and_click(page, XPATH_BTN_PESQUISAR)
 
+        erro_envio_portal = detectar_erro_sem_dados_enviados_portal(page)
+        if erro_envio_portal:
+            ultimo_alert_class = "SEM_DADOS_ENVIADOS"
+            ultimo_alert_text = erro_envio_portal
+            ultimo_motivo = "Portal retornou a pagina 'Nenhum dado foi enviado'."
+            if callable(log_fn):
+                log_fn(
+                    f"[WARN] Portal retornou erro de envio vazio apos a pesquisa "
+                    f"(tentativa {tentativa}/{max_tentativas}): {erro_envio_portal}"
+                )
+            return {
+                "success": False,
+                "tentativas": tentativa,
+                "tipo_alerta": "ERRO_PORTAL_SEM_DADOS",
+                "alert_text": erro_envio_portal,
+                "alert_class": "SEM_DADOS_ENVIADOS",
+                "motivo": "Portal retornou a pagina 'Nenhum dado foi enviado'.",
+            }
+
 
         tipo_alerta, texto_alerta = esperar_alertas(
             page,
             timeout_ms=15000,
             should_stop=should_stop,
         )
+
+        erro_envio_portal = detectar_erro_sem_dados_enviados_portal(page)
+        if erro_envio_portal:
+            ultimo_alert_class = "SEM_DADOS_ENVIADOS"
+            ultimo_alert_text = erro_envio_portal
+            ultimo_motivo = "Portal retornou a pagina 'Nenhum dado foi enviado'."
+            if callable(log_fn):
+                log_fn(
+                    f"[WARN] Portal retornou erro de envio vazio durante o retorno da pesquisa "
+                    f"(tentativa {tentativa}/{max_tentativas}): {erro_envio_portal}"
+                )
+            return {
+                "success": False,
+                "tentativas": tentativa,
+                "tipo_alerta": "ERRO_PORTAL_SEM_DADOS",
+                "alert_text": erro_envio_portal,
+                "alert_class": "SEM_DADOS_ENVIADOS",
+                "motivo": "Portal retornou a pagina 'Nenhum dado foi enviado'.",
+            }
 
         if tipo_alerta == "SEM_PERMISSAO":
             teve_sem_permissao = True
@@ -8472,6 +8558,35 @@ class AutomationWorker(QThread):
             processa_entrada = any((op or "").strip().lower().startswith("e") for op in (self.operacoes or []))
             processa_saida = any((op or "").strip().lower().startswith("s") for op in (self.operacoes or []))
             consecutivas_sem_entrada_saida = 0
+            falhas_sem_dados_enviados_consecutivas = 0
+
+            def _tratar_sem_dados_enviados(contexto: str) -> bool:
+                nonlocal page, falhas_sem_dados_enviados_consecutivas
+
+                falhas_sem_dados_enviados_consecutivas += 1
+                self._log(
+                    f"[WARN] Erro 'Nenhum dado foi enviado' detectado em {contexto} "
+                    f"(consecutivas: {falhas_sem_dados_enviados_consecutivas}/3)."
+                )
+
+                if falhas_sem_dados_enviados_consecutivas > 2:
+                    ok_restart = _restart_session_same_login(
+                        reason="Erro 'Nenhum dado foi enviado por nfeweb.sefaz.go.gov.br' repetido",
+                        wait_s=5.0,
+                    )
+                    if not ok_restart:
+                        self._log("[FATAL] Nao foi possivel reiniciar a sessao apos repeticao do erro de envio vazio.")
+                        return False
+                    page = self.page or page
+                    falhas_sem_dados_enviados_consecutivas = 0
+                else:
+                    try:
+                        abrir_menu_baixar_xml_nfe(page)
+                    except Exception:
+                        pass
+
+                sleep(2)
+                return True
 
             for ie in ies_ordenados:
                 if self.stop_requested:
@@ -8657,58 +8772,67 @@ class AutomationWorker(QThread):
                                 f"Operação: {operacao} | Período: {dt_ini} a {dt_fim}"
                             )
 
-                            try:
-                                resultado_dict = pesquisar_intervalo(
-                                page,
-                                ie,
-                                dt_ini,
-                                dt_fim,
-                                tipo_nota,
-                                log_fn=self._log,
-                                should_stop=lambda: self.stop_requested,
-                                )
-                            except Exception as e:
-                                self._log(
-                                    f"[ERRO] 💥 Exceção durante a pesquisa "
-                                    f"({display_name} | {operacao} | {dt_ini} a {dt_fim}): {e}"
-                                )
+                            while True:
+                                try:
+                                    resultado_dict = pesquisar_intervalo(
+                                        page,
+                                        ie,
+                                        dt_ini,
+                                        dt_fim,
+                                        tipo_nota,
+                                        log_fn=self._log,
+                                        should_stop=lambda: self.stop_requested,
+                                    )
+                                except Exception as e:
+                                    self._log(
+                                        f"[ERRO] 💥 Exceção durante a pesquisa "
+                                        f"({display_name} | {operacao} | {dt_ini} a {dt_fim}): {e}"
+                                    )
+                                    res = ResultadoExecucao(
+                                        ie=ie,
+                                        display_name=display_name,
+                                        operacao=operacao,
+                                        data_inicial=dt_ini,
+                                        data_final=dt_fim,
+                                        success=False,
+                                        tentativas=0,
+                                        alert_type="EXCECAO",
+                                        alert_class="EXCECAO_WORKER",
+                                        alert_text="",
+                                        motivo=f"Exceção durante a pesquisa: {e}",
+                                    )
+                                    self.resultados.append(res)
+
+                                    if not self.stop_requested:
+                                        try:
+                                            abrir_menu_baixar_xml_nfe(page)
+                                        except Exception:
+                                            pass
+                                    break
+
+                                if (resultado_dict.get("alert_class") or "") == "SEM_DADOS_ENVIADOS":
+                                    if not _tratar_sem_dados_enviados(
+                                        f"{display_name} | {operacao} | {dt_ini} a {dt_fim}"
+                                    ):
+                                        return
+                                    continue
+
+                                falhas_sem_dados_enviados_consecutivas = 0
                                 res = ResultadoExecucao(
                                     ie=ie,
                                     display_name=display_name,
                                     operacao=operacao,
                                     data_inicial=dt_ini,
                                     data_final=dt_fim,
-                                    success=False,
-                                    tentativas=0,
-                                    alert_type="EXCECAO",
-                                    alert_class="EXCECAO_WORKER",
-                                    alert_text="",
-                                    motivo=f"Exceção durante a pesquisa: {e}",
+                                    success=resultado_dict["success"],
+                                    tentativas=resultado_dict["tentativas"],
+                                    alert_type=resultado_dict.get("tipo_alerta"),
+                                    alert_class=resultado_dict.get("alert_class"),
+                                    alert_text=resultado_dict.get("alert_text", ""),
+                                    motivo=resultado_dict.get("motivo", ""),
                                 )
                                 self.resultados.append(res)
-
-                                # tenta voltar para a tela de filtros e seguir adiante
-                                if not self.stop_requested:
-                                    try:
-                                        abrir_menu_baixar_xml_nfe(page)
-                                    except Exception:
-                                        pass
-                                continue
-
-                            res = ResultadoExecucao(
-                                ie=ie,
-                                display_name=display_name,
-                                operacao=operacao,
-                                data_inicial=dt_ini,
-                                data_final=dt_fim,
-                                success=resultado_dict["success"],
-                                tentativas=resultado_dict["tentativas"],
-                                alert_type=resultado_dict.get("tipo_alerta"),
-                                alert_class=resultado_dict.get("alert_class"),
-                                alert_text=resultado_dict.get("alert_text", ""),
-                                motivo=resultado_dict.get("motivo", ""),
-                            )
-                            self.resultados.append(res)
+                                break
 
                             if res.success:
                                 self._log(
@@ -9110,35 +9234,43 @@ class AutomationWorker(QThread):
                                 break
 
                             try:
-                                # Garante que estamos na tela de filtros antes de refazer a consulta
-                                try:
-                                    abrir_menu_baixar_xml_nfe(page)
-                                except Exception:
-                                    pass
+                                while True:
+                                    try:
+                                        abrir_menu_baixar_xml_nfe(page)
+                                    except Exception:
+                                        pass
 
-                                tipo_nota = "entrada" if r.operacao.lower().startswith("e") else "saida"
+                                    tipo_nota = "entrada" if r.operacao.lower().startswith("e") else "saida"
 
-                                resultado_dict = pesquisar_intervalo(
-                                    page,
-                                    r.ie,
-                                    r.data_inicial,
-                                    r.data_final,
-                                    tipo_nota,
-                                    max_tentativas=MAX_TENTATIVAS_EMPRESA,
-                                    should_stop=lambda: self.stop_requested,
-                                    log_fn=self._log,
-                                )
+                                    resultado_dict = pesquisar_intervalo(
+                                        page,
+                                        r.ie,
+                                        r.data_inicial,
+                                        r.data_final,
+                                        tipo_nota,
+                                        max_tentativas=MAX_TENTATIVAS_EMPRESA,
+                                        should_stop=lambda: self.stop_requested,
+                                        log_fn=self._log,
+                                    )
 
-                                r.success = bool(resultado_dict.get("success"))
-                                r.tentativas = int(resultado_dict.get("tentativas") or 0)
-                                r.alert_type = resultado_dict.get("tipo_alerta")
-                                r.alert_class = resultado_dict.get("alert_class")
-                                r.alert_text = resultado_dict.get("alert_text", "")
-                                r.motivo = resultado_dict.get("motivo", "")
+                                    if (resultado_dict.get("alert_class") or "") == "SEM_DADOS_ENVIADOS":
+                                        if not _tratar_sem_dados_enviados(
+                                            f"retentativa {r.display_name} | {r.operacao} | {r.data_inicial} a {r.data_final}"
+                                        ):
+                                            return
+                                        continue
+
+                                    falhas_sem_dados_enviados_consecutivas = 0
+                                    r.success = bool(resultado_dict.get("success"))
+                                    r.tentativas = int(resultado_dict.get("tentativas") or 0)
+                                    r.alert_type = resultado_dict.get("tipo_alerta")
+                                    r.alert_class = resultado_dict.get("alert_class")
+                                    r.alert_text = resultado_dict.get("alert_text", "")
+                                    r.motivo = resultado_dict.get("motivo", "")
+                                    break
 
                                 # Se a pesquisa não foi bem-sucedida, deixa para a próxima rodada
                                 if not r.success:
-                                    # 503 é marcado pelo pesquisar_intervalo; outras falhas tratáveis podem reaparecer
                                     if r.alert_class == "SERVICE_503":
                                         sleep(3)
                                     continue
@@ -9308,23 +9440,10 @@ class AutomationWorker(QThread):
             self._log(f"[FATAL] 💥 Exceção não tratada no Worker: {e}")
         finally:
             try:
-                if browser:
-                    self._log("[INFO] 🔻 Fechando navegador/Chrome...")
-                    browser.close()      # ← FECHA O NAVEGADOR AO FINAL DO PROCESSO
+                self._log("[INFO] 🔻 Encerrando sessao final do navegador e proxy...")
+                _teardown_current_session(wipe_profile=False, wait_s=0.0)
             except Exception:
                 pass
-            try:
-                if page:
-                    page.close()
-            except Exception:
-                pass
-            try:
-                if pw:
-                    self._log("[INFO] 🔻 Encerrando Playwright...")
-                    pw.stop()            # ← ENCERRA O PLAYWRIGHT
-            except Exception:
-                pass
-            # Mesma garantia usada na troca de login: mata processo do Chrome e proxy.
             try:
                 _kill_automation_chrome_proc(log_fn=self._log)
             except Exception:
@@ -9338,7 +9457,7 @@ class AutomationWorker(QThread):
             except Exception:
                 pass
             try:
-                _teardown_current_session(wipe_profile=False, wait_s=0.0)
+                _kill_any_mitm_processes(log_fn=self._log)
             except Exception:
                 pass
             self._log("[INFO] 🔚 Worker finalizado.")
