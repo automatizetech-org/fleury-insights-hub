@@ -1,4 +1,4 @@
-import os, sys, json, re, unicodedata, base64
+import os, sys, json, re, unicodedata, base64, shutil
 import math
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -1108,6 +1108,19 @@ def resolve_report_output_path(config: Dict[str, Any], reference_dt: Optional[da
         report_dir = report_dir / part
     report_dir.mkdir(parents=True, exist_ok=True)
     return report_dir / "Relatorio de Certidoes.pdf"
+
+
+def ensure_report_in_vm_base(config: Dict[str, Any], pdf_path: Path, reference_dt: Optional[datetime] = None) -> Path:
+    target_path = resolve_report_output_path(config, reference_dt)
+    try:
+        if pdf_path.resolve() == target_path.resolve():
+            return target_path
+    except Exception:
+        if str(pdf_path) == str(target_path):
+            return target_path
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(pdf_path), str(target_path))
+    return target_path
 
 
 def normalize_result_status(status_text: str) -> str:
@@ -3923,8 +3936,12 @@ class MainWindow(QMainWindow):
             if details:
                 pdf_path = self._generate_pdf_report(details, started, finished)
                 if pdf_path:
+                    pdf_vm_base = ensure_report_in_vm_base(self.config, Path(pdf_path), finished)
                     self.log_message("📄 Relatório PDF gerado com sucesso:")
                     self.log_message(f"    {pdf_path}")
+                    if str(pdf_vm_base) != str(pdf_path):
+                        self.log_message("📁 Cópia do relatório salva na pasta base da VM:")
+                        self.log_message(f"    {pdf_vm_base}")
         except Exception as e:
             self.log_message(f"⚠️ Não consegui gerar o relatório PDF: {e}")
         # Sincronizar status e atualização no Monday.com

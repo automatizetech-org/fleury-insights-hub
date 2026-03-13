@@ -5413,6 +5413,26 @@ class MainWindow(QMainWindow):
     def _on_summary_ready(self, summary: Dict[str, Any]) -> None:
         self.last_summary = summary
 
+    def _ensure_report_in_vm_base(self, pdf_path: Path) -> Path:
+        if not self.output_base:
+            return pdf_path
+        if self.companies:
+            first_name = self.companies[0].get("name") or self.companies[0].get("doc") or "sem_nome"
+            folder_label = safe_folder_name(first_name)
+            report_dir = self.output_base / folder_label / (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
+        else:
+            report_dir = self.output_base / (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
+        report_dir.mkdir(parents=True, exist_ok=True)
+        target_path = report_dir / pdf_path.name
+        try:
+            if pdf_path.resolve() == target_path.resolve():
+                return target_path
+        except Exception:
+            if str(pdf_path) == str(target_path):
+                return target_path
+        shutil.copy2(str(pdf_path), str(target_path))
+        return target_path
+
     def _on_finished(self) -> None:
         if self._finish_logged:
             return
@@ -5470,6 +5490,9 @@ class MainWindow(QMainWindow):
                 if pdf_path:
                     pdf_label = friendly_path_display(pdf_path, keep_parts=3)
                     self._log(f"Relatorio salvo em: {pdf_label}")
+                    pdf_vm_base = self._ensure_report_in_vm_base(pdf_path)
+                    if str(pdf_vm_base) != str(pdf_path):
+                        self._log(f"Relatorio copiado para a pasta base da VM: {friendly_path_display(pdf_vm_base, keep_parts=3)}")
                     # Não abrir o PDF automaticamente; o usuário pode abrir pela pasta se quiser.
             except Exception as exc:  # noqa: BLE001
                 self._log(f"Falha ao gerar relatorio: {exc}")

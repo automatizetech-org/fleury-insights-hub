@@ -14501,6 +14501,14 @@ class MyCompactUI(QMainWindow):
         self.robot_presence_timer.stop()
         self.dashboard_sync_timer.stop()
         update_robot_status(self.robot_id, "inactive")
+        try:
+            _kill_automation_chrome_proc(log_fn=self.update_log)
+        except Exception:
+            pass
+        try:
+            _kill_automation_chrome_instances(log_fn=self.update_log)
+        except Exception:
+            pass
         _stop_proxy_if_running(log_fn=self.update_log)
         if self._tray_icon is not None:
             self._tray_icon.hide()
@@ -14750,38 +14758,15 @@ class MyCompactUI(QMainWindow):
         self.lbl_agenda_countdown.clear()
 
         if stopped_by_user:
-            # PARADA MANUAL: mostra mensagem de execução interrompida,
-            # mas ainda assim abre o PDF parcial se existir
             if pdf_path:
-                QMessageBox.information(
-                    self,
-                    "Execução interrompida",
-                    f"⏹️ Processamento interrompido pelo usuário.\n\n"
-                    f"Relatório parcial salvo em:\n{pdf_path}"
-                )
-                self.update_log("[OK] Execução interrompida pelo usuário (relatório parcial gerado).")
+                self.update_log(f"[OK] Execução interrompida pelo usuário (relatório parcial gerado em: {pdf_path}).")
             else:
-                QMessageBox.information(
-                    self,
-                    "Execução interrompida",
-                    "⏹️ Processamento interrompido pelo usuário.\n"
-                    "Nenhum dado suficiente para gerar relatório."
-                )
                 self.update_log("[OK] Execução interrompida pelo usuário (sem dados para relatório).")
         else:
-            # Fluxo normal (sem parada manual)
             if pdf_path:
-                QMessageBox.information(
-                    self,
-                    "Processo finalizado",
-                    f"✅ Processamento concluído.\n\nRelatório salvo em:\n{pdf_path}"
-                )
+                self.update_log(f"[OK] Execução concluída. Relatório salvo em: {pdf_path}")
             else:
-                QMessageBox.information(
-                    self,
-                    "Processo finalizado",
-                    "✅ Processamento concluído."
-                )
+                self.update_log("[OK] Execução concluída.")
             self.update_log("[OK] Execução concluída (Worker finalizado e GUI liberada).")
 
         # atualiza o Dashboard (pode ter novos XMLs baixados)

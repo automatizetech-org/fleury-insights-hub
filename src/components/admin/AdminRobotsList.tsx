@@ -61,6 +61,15 @@ function statusClass(s: Robot["status"]): string {
   }
 }
 
+function getCurrentMonthDefaultPeriod() {
+  const today = new Date()
+  const start = new Date(today.getFullYear(), today.getMonth(), 1)
+  return {
+    periodStart: format(start, "yyyy-MM-dd"),
+    periodEnd: format(today, "yyyy-MM-dd"),
+  }
+}
+
 function DepartmentTreeItem({
   node,
   depth,
@@ -193,6 +202,8 @@ export function AdminRobotsList({
 
   const openRename = (r: Robot) => {
     const kind: FiscalNotesKind = r.fiscal_notes_kind ?? (r.notes_mode === "modelo_55" || r.notes_mode === "modelo_65" || r.notes_mode === "modelos_55_65" ? "nfe_nfc" : "nfs")
+    const isFiscalRobot = Boolean(r.is_fiscal_notes_robot || r.fiscal_notes_kind || r.notes_mode)
+    const currentMonthDefault = getCurrentMonthDefaultPeriod()
     setEditing(r)
     setDisplayName(r.display_name)
     setSegmentPath(r.segment_path ?? "")
@@ -200,8 +211,8 @@ export function AdminRobotsList({
     setFiscalNotesKind(kind)
     setNotesMode(isNotesModeCompatible(kind, r.notes_mode) ? r.notes_mode : getDefaultNotesMode(kind))
     setDateExecutionMode((r.date_execution_mode === "competencia" ? "competencia" : "interval") as "competencia" | "interval")
-    setInitialPeriodStart(r.initial_period_start ?? "")
-    setInitialPeriodEnd(r.initial_period_end ?? "")
+    setInitialPeriodStart(r.initial_period_start ?? (isFiscalRobot ? currentMonthDefault.periodStart : ""))
+    setInitialPeriodEnd(r.initial_period_end ?? (isFiscalRobot ? currentMonthDefault.periodEnd : ""))
     setGlobalLogins(Array.isArray(r.global_logins) ? (r.global_logins as CompanySefazLogin[]) : [])
   }
 
@@ -321,7 +332,20 @@ export function AdminRobotsList({
               <Label>Modo de execução de datas</Label>
               <select
                 value={dateExecutionMode}
-                onChange={(e) => setDateExecutionMode(e.target.value as "competencia" | "interval")}
+                onChange={(e) => {
+                  const nextMode = e.target.value as "competencia" | "interval"
+                  setDateExecutionMode(nextMode)
+                  if (
+                    nextMode === "interval" &&
+                    (isFiscalNotesRobot || editing?.is_fiscal_notes_robot || editing?.fiscal_notes_kind || editing?.notes_mode) &&
+                    !initialPeriodStart &&
+                    !initialPeriodEnd
+                  ) {
+                    const currentMonthDefault = getCurrentMonthDefaultPeriod()
+                    setInitialPeriodStart(currentMonthDefault.periodStart)
+                    setInitialPeriodEnd(currentMonthDefault.periodEnd)
+                  }
+                }}
                 disabled={saving}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
               >
