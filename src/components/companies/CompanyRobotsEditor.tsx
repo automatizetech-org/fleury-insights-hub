@@ -8,6 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { canEnableRobotForCompany, getRobotEnableRequirementMessage } from "@/lib/companyRobotRequirements"
 import type { Accountant } from "@/services/accountantsService"
 import type { Robot } from "@/services/robotsService"
 import type { CompanySefazLogin, RobotCompanyConfigInput } from "@/services/companiesService"
@@ -91,6 +92,7 @@ export function CompanyRobotsEditor({
   configsByRobot,
   onConfigChange,
   contadorCpf,
+  stateRegistration,
   disabled = false,
 }: {
   robots: Robot[]
@@ -100,6 +102,7 @@ export function CompanyRobotsEditor({
   configsByRobot: Record<string, RobotCompanyConfigInput>
   onConfigChange: (robotTechnicalId: string, next: RobotCompanyConfigInput) => void
   contadorCpf: string
+  stateRegistration?: string | null
   disabled?: boolean
 }) {
   const selectedRobot =
@@ -123,6 +126,8 @@ export function CompanyRobotsEditor({
   const robotLogins = normalizeRobotLogins(selectedRobot.global_logins)
   const resolvedSelectedLogin = getDefaultLoginCpf(selectedRobot, contadorCpf, config.selected_login_cpf)
   const capabilities = getRobotCapabilities(selectedRobot)
+  const canEnableSelectedRobot = canEnableRobotForCompany(selectedRobot.technical_id, stateRegistration)
+  const enableRequirementMessage = getRobotEnableRequirementMessage(selectedRobot.technical_id)
   const accountantNameByCpf = new Map(
     accountants.map((accountant) => [onlyDigits(accountant.cpf), accountant.name])
   )
@@ -160,12 +165,16 @@ export function CompanyRobotsEditor({
               type="button"
               role="switch"
               aria-checked={config.enabled}
-              onClick={() => onConfigChange(selectedRobot.technical_id, { ...config, enabled: !config.enabled })}
-              disabled={disabled}
+              onClick={() => {
+                if (!config.enabled && !canEnableSelectedRobot) return
+                onConfigChange(selectedRobot.technical_id, { ...config, enabled: !config.enabled })
+              }}
+              disabled={disabled || (!config.enabled && !canEnableSelectedRobot)}
               className={cn(
                 "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50",
                 config.enabled ? "bg-primary" : "bg-muted"
               )}
+              title={!config.enabled && !canEnableSelectedRobot ? enableRequirementMessage ?? undefined : undefined}
             >
               <span
                 className={cn(
@@ -278,9 +287,14 @@ export function CompanyRobotsEditor({
         )}
 
         {!config.enabled && (
-          <p className="text-xs text-muted-foreground">
-            Este robô ficará ignorado para esta empresa até ser ligado.
-          </p>
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">
+              Este robô ficará ignorado para esta empresa até ser ligado.
+            </p>
+            {!canEnableSelectedRobot && enableRequirementMessage && (
+              <p className="text-xs text-amber-600">{enableRequirementMessage}</p>
+            )}
+          </div>
         )}
       </div>
     </div>

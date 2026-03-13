@@ -303,10 +303,9 @@ def resolve_dashboard_output_root() -> Optional[str]:
     base = get_resolved_output_base()
     if not base:
         return None
-    # Padrão do projeto: base_path aponta para a RAIZ (ex.: C:\Users\ROBO\Documents)
-    # e os robôs gravam dentro de: <base_path>\EMPRESAS\<EMPRESA>\...
-    root = pathlib.Path(base) / "EMPRESAS"
-    return str(root)
+    # A pasta base da VM definida no dashboard já é a raiz efetiva de gravação.
+    # Nada de prefixo fixo como EMPRESAS aqui.
+    return str(base)
 
 
 def get_robot_segment_under_company_parts() -> List[str]:
@@ -2745,6 +2744,7 @@ def extrair_e_separar_zips_por_modelo(
     empresa_ie: str = "",
     empresas_map: Optional[Dict[str, Dict[str, str]]] = None,
     estrutura_pastas: Optional[Dict[str, Any]] = None,
+    deletar_zips_gerados: bool = False,
 ):
     """
     Extrai XMLs de uma lista de ZIPs e separa por modelo (55/65).
@@ -2976,6 +2976,17 @@ def extrair_e_separar_zips_por_modelo(
                 log_fn(f"[OK] ZIP modelo 55 gerado: {zip55_path}")
             if zip65_path:
                 log_fn(f"[OK] ZIP modelo 65 gerado: {zip65_path}")
+
+        if deletar_zips_gerados:
+            for generated_zip in (zip55_path, zip65_path):
+                try:
+                    if generated_zip and path_isfile(generated_zip):
+                        os.remove(fs_path(generated_zip))
+                        if callable(log_fn):
+                            log_fn(f"[INFO] ZIP removido após extração dos XMLs: {generated_zip}")
+                except Exception as e:
+                    if callable(log_fn):
+                        log_fn(f"[WARN] Falha ao remover ZIP gerado '{generated_zip}': {e}")
         return (count_55, count_65)
 
     # -------------------------------------------------------------------------
@@ -6659,24 +6670,60 @@ def _build_fiscal_document_storage_key(info: Dict, xml_bytes: bytes) -> str:
     return hashlib.sha1(xml_bytes or b'').hexdigest()
 
 
-def _save_nfe_nfc_xml_for_dashboard(company_id: str, periodo: str, storage_key: str, xml_bytes: bytes) -> Optional[str]:
-    base = get_resolved_output_base()
-    if not base:
+def _save_nfe_nfc_xml_for_dashboard(
+    *,
+    company_folder_name: str,
+    storage_key: str,
+    xml_bytes: bytes,
+    document_date: date,
+    operacao: str,
+    model: str,
+    base_empresas_dir: Optional[str],
+    folder_structure: Optional[Dict[str, Any]],
+    separar_modelo_xml: bool,
+) -> Optional[str]:
+    base_root = get_resolved_output_base()
+    if not base_root:
         return None
 
-    rel_path = pathlib.Path("fiscal") / "nfe-nfc" / str(company_id) / str(periodo) / f"{storage_key}.xml"
-    abs_path = pathlib.Path(base) / rel_path
+    empresa_folder = safe_folder_name(nome_empresa_sem_ie(company_folder_name or ""))
+    if not empresa_folder:
+        return None
+
+    destino_dir = montar_caminho_estruturado(
+        str(base_empresas_dir or base_root),
+        folder_structure,
+        empresa_folder,
+        operacao=operacao,
+        pasta_mes=document_date.strftime("%m%Y"),
+        modelo=(model if separar_modelo_xml else None),
+        criar=True,
+    )
+    if not destino_dir:
+        return None
+
+    abs_path = pathlib.Path(destino_dir) / f"{storage_key}.xml"
     safe_makedirs(str(abs_path.parent))
     with open(fs_path(str(abs_path)), "wb") as fp:
         fp.write(xml_bytes)
-    return rel_path.as_posix()
+
+    try:
+        rel_path = abs_path.relative_to(base_root)
+        return rel_path.as_posix()
+    except Exception:
+        return None
 
 
 def sincronizar_fiscal_documents_nfe_nfc(
     company_id: str,
+    company_name: str,
     zip_paths: List[str],
     data_inicial: date,
     data_final: date,
+    operacao: str,
+    base_empresas_dir: Optional[str],
+    folder_structure: Optional[Dict[str, Any]],
+    separar_modelo_xml: bool,
     log_fn: Optional[Callable] = None
 ) -> Dict[str, int]:
     """
@@ -6729,7 +6776,17 @@ def sincronizar_fiscal_documents_nfe_nfc(
                             continue
                         seen_docs.add(dedupe_key)
 
-                        relative_file_path = _save_nfe_nfc_xml_for_dashboard(company_id, periodo, storage_key, xml_bytes)
+                        relative_file_path = _save_nfe_nfc_xml_for_dashboard(
+                            company_folder_name=company_name,
+                            storage_key=storage_key,
+                            xml_bytes=xml_bytes,
+                            document_date=dt_emi,
+                            operacao=operacao,
+                            model=model,
+                            base_empresas_dir=base_empresas_dir,
+                            folder_structure=folder_structure,
+                            separar_modelo_xml=separar_modelo_xml,
+                        )
                         if not relative_file_path:
                             result["errors"] += 1
                             continue
@@ -6791,6 +6848,10 @@ def enviar_dados_supabase_smart_upsert(
     zip_paths: List[str],
     data_inicial: date,
     data_final: date,
+    operacao: str,
+    base_empresas_dir: Optional[str],
+    folder_structure: Optional[Dict[str, Any]],
+    separar_modelo_xml: bool,
     log_fn: Optional[Callable] = None
 ) -> bool:
     """
@@ -6817,8 +6878,6 @@ def enviar_dados_supabase_smart_upsert(
         return False
     
     # Série diária (uma linha por data)
-    automation_id = 'xml-sefaz-daily'
-    
     try:
         if log_fn:
             log_fn(f"[INFO] 🔄 Processando XMLs e enviando para Supabase...")
@@ -6836,18 +6895,30 @@ def enviar_dados_supabase_smart_upsert(
 
         docs_sync_result = sincronizar_fiscal_documents_nfe_nfc(
             company_id=company_id,
+            company_name=empresa_nome,
             zip_paths=zip_paths,
             data_inicial=data_inicial,
             data_final=data_final,
+            operacao=operacao,
+            base_empresas_dir=base_empresas_dir,
+            folder_structure=folder_structure,
+            separar_modelo_xml=separar_modelo_xml,
             log_fn=log_fn,
         )
-        if log_fn and (docs_sync_result["inserted"] or docs_sync_result["updated"] or docs_sync_result["saved_files"]):
+        if log_fn:
             log_fn(
                 "[OK] ✅ fiscal_documents NFE/NFC sincronizado "
                 f"(arquivos={docs_sync_result['saved_files']}, "
-                f"novos={docs_sync_result['inserted']}, atualizados={docs_sync_result['updated']})"
+                f"novos={docs_sync_result['inserted']}, atualizados={docs_sync_result['updated']}, "
+                f"erros={docs_sync_result['errors']})"
             )
         
+        return bool(
+            docs_sync_result["saved_files"]
+            or docs_sync_result["inserted"]
+            or docs_sync_result["updated"]
+        )
+
         # Processa XMLs e agrega por data
         dados_por_data = processar_xmls_e_agregar_supabase(zip_paths, empresa_cnpj, empresa_nome)
         
@@ -7972,6 +8043,7 @@ class AutomationWorker(QThread):
                  companies_daily_flags: Dict[str, bool],
                  multiplos_meses: bool,
                  download_option: str,
+                 enviar_supabase: bool = True,
                   separar_modelo_xml: bool = True,
                   folder_structure: Optional[Dict[str, Any]] = None,
                   parent=None):
@@ -7987,6 +8059,7 @@ class AutomationWorker(QThread):
         self.companies_daily_flags = companies_daily_flags
         self.multiplos_meses = multiplos_meses
         self.download_option = download_option  # 'docs', 'eventos', 'ambos'
+        self.enviar_supabase = bool(enviar_supabase)
         # --- Controle de separação por modelo (55/65) ---
         # IMPORTANTE: a base sempre é a pasta definida em 'Caminhos Padrão' (base_empresas_dir).
         # Quando a opção de separar estiver marcada, as pastas 55/65 são criadas APÓS o mês.
@@ -8012,6 +8085,11 @@ class AutomationWorker(QThread):
     def stop(self):
         self.stop_requested = True
         try:
+            if self.page:
+                self.page.close()
+        except Exception:
+            pass
+        try:
             if self.browser:
                 self._log("[WARN] ⏹️ Parada solicitada pelo usuário. Encerrando navegador imediatamente...")
                 self.browser.close()   # ← FECHA O NAVEGADOR NA HORA
@@ -8023,6 +8101,10 @@ class AutomationWorker(QThread):
                 self.pw.stop()        # ← ENCERRA O PLAYWRIGHT
         except Exception:
             pass
+
+        self.page = None
+        self.browser = None
+        self.pw = None
 
     def run(self):
         pw = browser = page = None
@@ -8698,6 +8780,32 @@ class AutomationWorker(QThread):
                                                 res.alert_class = "DOWNLOAD_ERRO"
                                             res.motivo = "Erro ao aguardar/baixar ZIP no Histórico."
                                     else:
+                                        if self.enviar_supabase and SUPABASE_AVAILABLE:
+                                            try:
+                                                empresa_cnpj = info_emp.get("cnpj", "")
+                                                if empresa_cnpj:
+                                                    try:
+                                                        dt_sync_ini = datetime.strptime(dt_ini, "%d/%m/%Y").date()
+                                                        dt_sync_fim = datetime.strptime(dt_fim, "%d/%m/%Y").date()
+                                                        enviar_dados_supabase_smart_upsert(
+                                                            empresa_cnpj=empresa_cnpj,
+                                                            empresa_nome=display_name,
+                                                            zip_paths=zip_paths,
+                                                            data_inicial=dt_sync_ini,
+                                                            data_final=dt_sync_fim,
+                                                            operacao=operacao,
+                                                            base_empresas_dir=self.base_empresas_dir,
+                                                            folder_structure=self.folder_structure,
+                                                            separar_modelo_xml=self.separar_modelo_xml,
+                                                            log_fn=self._log
+                                                        )
+                                                    except ValueError as e:
+                                                        self._log(f"[WARN] âš ï¸ Erro ao converter datas do intervalo para Supabase: {e}")
+                                                else:
+                                                    self._log(f"[WARN] âš ï¸ CNPJ nÃ£o encontrado para empresa {display_name}. Dados nÃ£o enviados ao Supabase.")
+                                            except Exception as e:
+                                                self._log(f"[ERRO] âŒ Erro ao sincronizar ZIP baixado no Supabase: {e}")
+
                                         chave = (ie, operacao, mes_ini, mes_fim)
                                         if self.separar_modelo_xml:
                                             # processa e limpa imediatamente em modo separacao
@@ -8716,6 +8824,7 @@ class AutomationWorker(QThread):
                                                     data_final=mes_fim,
                                                     zipar=True,
                                                     remover_xmls=True,
+                                                    deletar_zips_gerados=True,
                                                     log_fn=self._log
                                                 )
                                                 self.total_modelo_55 += int(c55 or 0)
@@ -8779,6 +8888,7 @@ class AutomationWorker(QThread):
                                     data_final=mes_fim,         # para nome do .zip por modelo
                                     zipar=True,                 # gera o .zip por modelo
                                     remover_xmls=True,          # não deixa XMLs soltos nos modelos
+                                    deletar_zips_gerados=True,
                                     log_fn=self._log
                                 )
                                 self.total_modelo_55 += int(c55 or 0)
@@ -8786,7 +8896,7 @@ class AutomationWorker(QThread):
                                 self.metrics_signal.emit(self.total_modelo_55, self.total_modelo_65)
                                 
                                 # Integração Supabase: envia dados processados (modo separação)
-                                if SUPABASE_AVAILABLE and zip_list:
+                                if False and self.enviar_supabase and SUPABASE_AVAILABLE and zip_list:
                                     try:
                                         empresa_cnpj = info_emp.get("cnpj", "")
                                         if empresa_cnpj:
@@ -8799,6 +8909,10 @@ class AutomationWorker(QThread):
                                                     zip_paths=zip_list,
                                                     data_inicial=dt_ini,
                                                     data_final=dt_fim,
+                                                    operacao=operacao,
+                                                    base_empresas_dir=self.base_empresas_dir,
+                                                    folder_structure=self.folder_structure,
+                                                    separar_modelo_xml=self.separar_modelo_xml,
                                                     log_fn=self._log
                                                 )
                                             except ValueError as e:
@@ -8821,7 +8935,32 @@ class AutomationWorker(QThread):
                                         pasta_mes=pasta_mes,
                                         criar=True,
                                     ) or self.base_empresas_dir
-                                unificar_zips_xml(
+                                if False and self.enviar_supabase and SUPABASE_AVAILABLE and zip_list:
+                                    try:
+                                        empresa_cnpj = info_emp.get("cnpj", "")
+                                        if empresa_cnpj:
+                                            try:
+                                                dt_ini = datetime.strptime(mes_ini, "%d/%m/%Y").date()
+                                                dt_fim = datetime.strptime(mes_fim, "%d/%m/%Y").date()
+                                                enviar_dados_supabase_smart_upsert(
+                                                    empresa_cnpj=empresa_cnpj,
+                                                    empresa_nome=display_name,
+                                                    zip_paths=zip_list,
+                                                    data_inicial=dt_ini,
+                                                    data_final=dt_fim,
+                                                    operacao=operacao,
+                                                    base_empresas_dir=self.base_empresas_dir,
+                                                    folder_structure=self.folder_structure,
+                                                    separar_modelo_xml=self.separar_modelo_xml,
+                                                    log_fn=self._log
+                                                )
+                                            except ValueError as e:
+                                                self._log(f"[WARN] âš ï¸ Erro ao converter datas para Supabase: {e}")
+                                        else:
+                                            self._log(f"[WARN] âš ï¸ CNPJ nÃ£o encontrado para empresa {display_name}. Dados nÃ£o enviados ao Supabase.")
+                                    except Exception as e:
+                                        self._log(f"[ERRO] âŒ Erro ao enviar dados para Supabase: {e}")
+                                unified_zip_path = unificar_zips_xml(
                                     zip_paths=zip_list,
                                     dest_dir=destino_unificado,
                                     ie=ie,
@@ -8831,9 +8970,15 @@ class AutomationWorker(QThread):
                                     data_final=mes_fim,
                                     log_fn=self._log
                                 )
+                                try:
+                                    if unified_zip_path and path_isfile(unified_zip_path):
+                                        os.remove(fs_path(unified_zip_path))
+                                        self._log(f"[INFO] ZIP removido após extração dos XMLs: {unified_zip_path}")
+                                except Exception as e:
+                                    self._log(f"[WARN] Falha ao remover ZIP final '{unified_zip_path}': {e}")
                                 
                                 # Integração Supabase: envia dados processados
-                                if SUPABASE_AVAILABLE and zip_list:
+                                if False and self.enviar_supabase and SUPABASE_AVAILABLE and zip_list:
                                     try:
                                         empresa_cnpj = info_emp.get("cnpj", "")
                                         if empresa_cnpj:
@@ -9169,6 +9314,11 @@ class AutomationWorker(QThread):
             except Exception:
                 pass
             try:
+                if page:
+                    page.close()
+            except Exception:
+                pass
+            try:
                 if pw:
                     self._log("[INFO] 🔻 Encerrando Playwright...")
                     pw.stop()            # ← ENCERRA O PLAYWRIGHT
@@ -9185,6 +9335,10 @@ class AutomationWorker(QThread):
                 pass
             try:
                 _stop_proxy_if_running(log_fn=self._log)
+            except Exception:
+                pass
+            try:
+                _teardown_current_session(wipe_profile=False, wait_s=0.0)
             except Exception:
                 pass
             self._log("[INFO] 🔚 Worker finalizado.")
@@ -13246,7 +13400,7 @@ class MyCompactUI(QMainWindow):
             dt_ini = data.get("dt_ini")
             dt_fim = data.get("dt_fim")
             
-            if daily_data and empresa_cnpj and dt_ini and dt_fim and isinstance(dt_ini, date) and isinstance(dt_fim, date):
+            if False and daily_data and empresa_cnpj and dt_ini and dt_fim and isinstance(dt_ini, date) and isinstance(dt_fim, date):
                 # Busca nome da empresa
                 empresa_nome = ""
                 empresa_cnpj_clean = cnpj_somente_digitos(empresa_cnpj) if empresa_cnpj else ""
@@ -14529,6 +14683,7 @@ class MyCompactUI(QMainWindow):
             companies_daily_flags=companies_daily_flags,
             multiplos_meses=self.cbProcessarPorMeses.isChecked(),
             download_option=download_option,
+            enviar_supabase=bool(getattr(self, "chk_enviar_supabase", None) and self.chk_enviar_supabase.isChecked()),
             # --- Separação por modelo (55/65) ---
             separar_modelo_xml=self.cbSepararModelos.isChecked(),
             folder_structure=self.paths.get("estrutura_pastas", self.folder_structure),
@@ -14598,8 +14753,6 @@ class MyCompactUI(QMainWindow):
             # PARADA MANUAL: mostra mensagem de execução interrompida,
             # mas ainda assim abre o PDF parcial se existir
             if pdf_path:
-                if not _open_pdf_file(pdf_path, log_fn=self.update_log):
-                    self.update_log("[WARN] Não foi possível abrir o PDF automaticamente.")
                 QMessageBox.information(
                     self,
                     "Execução interrompida",
@@ -14618,8 +14771,6 @@ class MyCompactUI(QMainWindow):
         else:
             # Fluxo normal (sem parada manual)
             if pdf_path:
-                if not _open_pdf_file(pdf_path, log_fn=self.update_log):
-                    self.update_log("[WARN] Não foi possível abrir o PDF automaticamente.")
                 QMessageBox.information(
                     self,
                     "Processo finalizado",

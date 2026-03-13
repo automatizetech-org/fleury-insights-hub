@@ -36,6 +36,7 @@ import { PANEL_KEYS, PANEL_LABELS } from "@/lib/panelAccess"
 import { getPfxInfo } from "@/lib/validatePfxPassword"
 import { toast } from "sonner"
 import { CompanyRobotsEditor } from "@/components/companies/CompanyRobotsEditor"
+import { sanitizeRobotConfigForCompany } from "@/lib/companyRobotRequirements"
 
 const SUPABASE_URL = import.meta.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
@@ -356,12 +357,13 @@ export default function AdminPage() {
       await updateCompany(editingCompany.id, updates)
       await Promise.all(
         robotsForPaths.map((robot) => {
-          const config = editRobotConfigs[robot.technical_id] ?? {
+          const rawConfig = editRobotConfigs[robot.technical_id] ?? {
             enabled: false,
             auth_mode: "password" as const,
             nfs_password: null,
             selected_login_cpf: null,
           }
+          const config = sanitizeRobotConfigForCompany(robot.technical_id, rawConfig, editStateRegistration)
           return upsertCompanyRobotConfig(editingCompany.id, robot.technical_id, {
             enabled: config.enabled,
             auth_mode: config.auth_mode,
@@ -821,6 +823,7 @@ export default function AdminPage() {
                     }))
                   }
                   contadorCpf={editContadorCpf}
+                  stateRegistration={editStateRegistration}
                   disabled={editSaving}
                 />
               </TabsContent>

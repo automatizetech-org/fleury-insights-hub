@@ -30,6 +30,7 @@ import { getPfxInfo } from "@/lib/validatePfxPassword"
 import { toast } from "sonner"
 import { getRobots } from "@/services/robotsService"
 import { CompanyRobotsEditor } from "@/components/companies/CompanyRobotsEditor"
+import { sanitizeRobotConfigForCompany } from "@/lib/companyRobotRequirements"
 
 type FilterStatus = "active" | "inactive" | "all"
 
@@ -239,12 +240,13 @@ export default function EmpresasPage() {
       await updateCompany(editingCompany.id, updates)
       await Promise.all(
         robots.map((robot) => {
-          const config = editRobotConfigs[robot.technical_id] ?? {
+          const rawConfig = editRobotConfigs[robot.technical_id] ?? {
             enabled: false,
             auth_mode: "password" as const,
             nfs_password: null,
             selected_login_cpf: null,
           }
+          const config = sanitizeRobotConfigForCompany(robot.technical_id, rawConfig, editStateRegistration)
           return upsertCompanyRobotConfig(editingCompany.id, robot.technical_id, {
             enabled: config.enabled,
             auth_mode: config.auth_mode,
@@ -556,6 +558,7 @@ export default function EmpresasPage() {
                     }))
                   }
                   contadorCpf={editContadorCpf}
+                  stateRegistration={editStateRegistration}
                   disabled={editSaving}
                 />
               </TabsContent>

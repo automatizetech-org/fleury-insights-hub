@@ -3565,9 +3565,8 @@ class PathDialog(QDialog):
             return
         lines = [base]
         if self._central_segment_path:
-            lines.append("  └── EMPRESAS")
-            lines.append("      └── [nome_empresa]   ← mesmo nome do dashboard")
-            indent = "          "
+            lines.append("  └── [nome_empresa]   ← mesmo nome do dashboard")
+            indent = "      "
             for i, seg in enumerate(self._central_segment_path):
                 prefix = "└── " if i == len(self._central_segment_path) - 1 else "├── "
                 lines.append(f"{indent}{prefix} {seg}")
@@ -3660,9 +3659,8 @@ class PathDialog(QDialog):
         base = str(current)
         lines = [base] if base else ["(Pasta base do painel ou .env)"]
         if central_segments:
-            lines.append("  └── EMPRESAS")
-            lines.append("      └── [nome_empresa]   ← mesmo nome do dashboard")
-            indent = "          "
+            lines.append("  └── [nome_empresa]   ← mesmo nome do dashboard")
+            indent = "      "
             for i, seg in enumerate(central_segments):
                 prefix = "└── " if i == len(central_segments) - 1 else "├── "
                 lines.append(f"{indent}{prefix} {seg}")
@@ -3978,7 +3976,7 @@ class DownloadThread(QThread):
 
     def _company_base_dir(self, folder_label: str) -> Path:
         # Estrutura vem do dashboard: API (folder_structure) ou Supabase (robots.segment_path). Nada fixo no robô.
-        path = self.output_base / "EMPRESAS" / folder_label
+        path = self.output_base / folder_label
         if self._central_segment_path:
             for seg in self._central_segment_path:
                 path /= seg
@@ -4600,13 +4598,13 @@ class MainWindow(QMainWindow):
                             self._default_notes_mode = cfg["notes_mode"]
             if self.output_base:
                 seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
-                # Pasta de relatório = base da empresa (EMPRESAS/nome_empresa/segmento), não só EMPRESAS/segmento
+                # Pasta de relatório = base da empresa dentro da pasta base definida no dashboard.
                 if self.companies:
                     first_name = self.companies[0].get("name") or self.companies[0].get("doc") or "sem_nome"
                     folder_label = safe_folder_name(first_name)
-                    self.report_path = self.output_base / "EMPRESAS" / folder_label / seg_slug
+                    self.report_path = self.output_base / folder_label / seg_slug
                 else:
-                    self.report_path = self.output_base / "EMPRESAS" / seg_slug
+                    self.report_path = self.output_base / seg_slug
         else:
             self._robot_id = None
         self.preferences: Dict[str, Any] = load_path_preferences()
@@ -5505,10 +5503,10 @@ class MainWindow(QMainWindow):
                 seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
                 first_name = self.companies[0].get("name") or self.companies[0].get("doc") or "sem_nome"
                 folder_label = safe_folder_name(first_name)
-                self.report_path = self.output_base / "EMPRESAS" / folder_label / seg_slug
+                self.report_path = self.output_base / folder_label / seg_slug
             elif self.output_base:
                 seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
-                self.report_path = self.output_base / "EMPRESAS" / seg_slug
+                self.report_path = self.output_base / seg_slug
         period_start = (cfg.get("period_start") or "").strip() or None
         period_end = (cfg.get("period_end") or "").strip() or None
         if period_start and period_end:

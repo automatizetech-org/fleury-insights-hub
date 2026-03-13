@@ -1070,9 +1070,8 @@ def resolve_reports_root(config: Dict[str, Any]) -> Path:
         or BASE_DIR
     )
     base_path = Path(base)
-    root = base_path / "EMPRESAS"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path
 
 
 def resolve_date_segments(config: Dict[str, Any], reference_dt: Optional[datetime] = None) -> List[str]:
@@ -1113,6 +1112,11 @@ def resolve_report_output_path(config: Dict[str, Any], reference_dt: Optional[da
 
 def normalize_result_status(status_text: str) -> str:
     norm = _normalize_status_text(status_text)
+    if (
+        "informacoes disponiveis nao sao suficientes" in norm
+        and "comprovacao automatica da regularidade do empregador perante o fgts" in norm
+    ) or "conectividade social" in norm:
+        return "irregular"
     if "positiva com efeito de negativa" in norm or "positiva com efeitos de negativa" in norm:
         return "regular"
     if "regular" in norm:
@@ -1784,6 +1788,16 @@ def _is_error_status(val: str) -> bool:
     if not norm:
         return True
     return any(k in norm for k in ["erro", "falha", "timeout", "tempo esgotado", "indispon", "nao processado", "nao consegui"])
+
+
+def _is_fgts_irregular_message(val: str) -> bool:
+    norm = _normalize_status_text(val)
+    if not norm:
+        return False
+    return (
+        "informacoes disponiveis nao sao suficientes" in norm
+        and "comprovacao automatica da regularidade do empregador perante o fgts" in norm
+    ) or "conectividade social" in norm
 
 
 def _detail_has_error(detail: Dict[str, str]) -> bool:
@@ -2756,7 +2770,10 @@ class AutomationThread(QThread):
                             pdf_fgts, status_fgts = self._certidao_fgts(context, cnpj_raw, out_dir, page=current_page)
                             if pdf_fgts and pdf_fgts.exists():
                                 txt = _read_pdf_text(pdf_fgts)
-                                st = "Regular" if "regularidade" in txt.lower() or "situação regular" in txt.lower() else "Indefinido"
+                                if _is_fgts_irregular_message(txt):
+                                    st = "Irregular"
+                                else:
+                                    st = "Regular" if "regularidade" in txt.lower() or "situação regular" in txt.lower() else "Indefinido"
                                 detail["FGTS"] = st
                             elif status_fgts:
                                 detail["FGTS"] = status_fgts

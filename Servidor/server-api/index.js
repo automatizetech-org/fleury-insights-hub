@@ -385,8 +385,9 @@ function walkDir(dir, baseDir) {
  */
 async function runFiscalSyncAll(supabase) {
   const result = { inserted: 0, skipped: 0, deleted: 0, errors: [] };
-  const empresasPath = path.join(BASE_PATH, "EMPRESAS");
+  const empresasPath = BASE_PATH;
   const empresasExists = fs.existsSync(empresasPath) && fs.statSync(empresasPath).isDirectory();
+  const allPathsOnDisk = empresasExists ? new Set(walkDir("", BASE_PATH)) : new Set();
 
   const { data: companies } = await supabase.from("companies").select("id, name");
   const nameToId = new Map((companies || []).map((c) => [normalizeCompanyName(c.name), c.id]));
@@ -394,16 +395,13 @@ async function runFiscalSyncAll(supabase) {
   const pathsOnDiskByCompany = new Map((companies || []).map((c) => [c.id, new Set()]));
 
   if (!empresasExists) {
-    // Pasta EMPRESAS não existe: espelhar “zerando” — remover todos os registros que seriam dessa pasta.
-    for (const company of companies || []) {
-      const { data: rows } = await supabase
-        .from("fiscal_documents")
-        .select("id, file_path")
-        .eq("company_id", company.id)
-        .not("file_path", "is", null)
-        .ilike("file_path", "EMPRESAS/%/FISCAL/NFS/%");
-      if (!rows || rows.length === 0) continue;
-      const idsToDelete = rows.map((r) => r.id);
+    // Pasta base não existe: espelhar “zerando” para qualquer documento salvo no fiscal_documents.
+    const { data: rows } = await supabase
+      .from("fiscal_documents")
+      .select("id, file_path")
+      .not("file_path", "is", null);
+    const idsToDelete = (rows || []).map((r) => r.id);
+    if (idsToDelete.length > 0) {
       const { error: deleteError } = await supabase.from("fiscal_documents").delete().in("id", idsToDelete);
       if (!deleteError) result.deleted += idsToDelete.length;
     }
@@ -419,7 +417,7 @@ async function runFiscalSyncAll(supabase) {
     const pathsOnDisk = pathsOnDiskByCompany.get(companyId);
 
     for (const sub of ["Recebidas", "Emitidas"]) {
-      const segment = path.join("EMPRESAS", companyName, "FISCAL", "NFS", sub).replace(/\\/g, "/");
+      const segment = path.join(companyName, "FISCAL", "NFS", sub).replace(/\\/g, "/");
       const files = walkDir(segment, BASE_PATH);
       for (const fileRel of files) {
         pathsOnDisk.add(fileRel);
@@ -460,22 +458,15 @@ async function runFiscalSyncAll(supabase) {
     }
   }
 
-  // Espelhamento: remover do banco todo registro cujo arquivo não existe mais no disco (ou empresa sem pasta no server).
-  for (const company of companies || []) {
-    const companyId = company.id;
-    const pathsOnDisk = pathsOnDiskByCompany.get(companyId) || new Set();
-    // file_path no banco usa o nome da pasta no disco (ex: EMPRESAS/SERVICOS/...); não usar company.name por causa de acentos.
-    const { data: rows } = await supabase
-      .from("fiscal_documents")
-      .select("id, file_path")
-      .eq("company_id", companyId)
-      .not("file_path", "is", null)
-      .ilike("file_path", "EMPRESAS/%/FISCAL/NFS/%");
-    if (!rows || rows.length === 0) continue;
-
-    const idsToDelete = rows.filter((r) => !pathsOnDisk.has(r.file_path)).map((r) => r.id);
-    if (idsToDelete.length === 0) continue;
-
+  // Espelhamento genérico: remover do banco todo registro cujo arquivo não existe mais no disco.
+  const { data: rowsToMirrorDelete } = await supabase
+    .from("fiscal_documents")
+    .select("id, file_path")
+    .not("file_path", "is", null);
+  const idsToDelete = (rowsToMirrorDelete || [])
+    .filter((r) => !allPathsOnDisk.has(r.file_path))
+    .map((r) => r.id);
+  if (idsToDelete.length > 0) {
     const { error: deleteError } = await supabase.from("fiscal_documents").delete().in("id", idsToDelete);
     if (!deleteError) result.deleted += idsToDelete.length;
   }
@@ -599,9 +590,9 @@ function startFiscalWatcher() {
     console.log("[fiscal-watcher] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente; monitoramento automático desligado.");
     return;
   }
-  const empresasPath = path.join(BASE_PATH, "EMPRESAS");
+  const empresasPath = BASE_PATH;
   if (!fs.existsSync(empresasPath) || !fs.statSync(empresasPath).isDirectory()) {
-    console.log("[fiscal-watcher] Pasta EMPRESAS não encontrada; monitoramento desligado.");
+    console.log("[fiscal-watcher] Pasta base da VM não encontrada; monitoramento desligado.");
     return;
   }
   const supabase = createClient(supabaseUrl, serviceKey);
@@ -627,9 +618,9 @@ function startFiscalWatcher() {
         runSync();
       }, DEBOUNCE_MS);
     });
-    console.log("[fiscal-watcher] Monitorando EMPRESAS — novos XML/PDF serão sincronizados automaticamente.");
+    console.log("[fiscal-watcher] Monitorando a pasta base da VM — novos XML/PDF serão sincronizados automaticamente.");
   } catch (err) {
-    console.error("[fiscal-watcher] Não foi possível monitorar EMPRESAS:", err.message);
+    console.error("[fiscal-watcher] Não foi possível monitorar a pasta base da VM:", err.message);
   }
 }
 
