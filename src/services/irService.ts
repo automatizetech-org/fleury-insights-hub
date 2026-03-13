@@ -67,6 +67,14 @@ export async function updateIrClient(
   return data;
 }
 
+export async function deleteIrClient(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("ir_clients")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
 export async function getIrSettings(): Promise<IrSettings | null> {
   const { data, error } = await supabase
     .from("ir_settings")
