@@ -103,6 +103,7 @@ const navItems: NavItem[] = [
       { name: "Certificados", path: "/paralegal/certificados" },
       { name: "Tarefas", path: "/paralegal/tarefas" },
       { name: "Clientes", path: "/paralegal/clientes" },
+      { name: "Taxas e Impostos", path: "/paralegal/taxas-impostos" },
     ],
   },
   { name: "Financeiro", path: "/financeiro", icon: DollarSign, description: "Contas e Receita", panelKey: "financeiro" },

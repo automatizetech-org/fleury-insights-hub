@@ -84,6 +84,16 @@ export type Database = {
         Insert: { key: string; value?: string; updated_at?: string }
         Update: { key?: string; value?: string; updated_at?: string }
       }
+      municipal_tax_debts: {
+        Row: { id: string; company_id: string; ano: number | null; tributo: string; numero_documento: string | null; data_vencimento: string | null; valor: number; situacao: string | null; portal_inscricao: string | null; portal_cai: string | null; detalhes: Json; fetched_at: string; created_at: string; updated_at: string }
+        Insert: { id?: string; company_id: string; ano?: number | null; tributo: string; numero_documento?: string | null; data_vencimento?: string | null; valor?: number; situacao?: string | null; portal_inscricao?: string | null; portal_cai?: string | null; detalhes?: Json; fetched_at?: string; created_at?: string; updated_at?: string }
+        Update: { id?: string; company_id?: string; ano?: number | null; tributo?: string; numero_documento?: string | null; data_vencimento?: string | null; valor?: number; situacao?: string | null; portal_inscricao?: string | null; portal_cai?: string | null; detalhes?: Json; fetched_at?: string; created_at?: string; updated_at?: string }
+      }
+      municipal_tax_collection_runs: {
+        Row: { id: string; robot_technical_id: string; company_id: string | null; company_name: string | null; status: "pending" | "running" | "completed" | "failed"; started_at: string | null; finished_at: string | null; debts_found: number; error_message: string | null; metadata: Json; created_at: string; updated_at: string }
+        Insert: { id?: string; robot_technical_id: string; company_id?: string | null; company_name?: string | null; status: "pending" | "running" | "completed" | "failed"; started_at?: string | null; finished_at?: string | null; debts_found?: number; error_message?: string | null; metadata?: Json; created_at?: string; updated_at?: string }
+        Update: { id?: string; robot_technical_id?: string; company_id?: string | null; company_name?: string | null; status?: "pending" | "running" | "completed" | "failed"; started_at?: string | null; finished_at?: string | null; debts_found?: number; error_message?: string | null; metadata?: Json; created_at?: string; updated_at?: string }
+      }
       ir_clients: {
         Row: { id: string; nome: string; cpf_cnpj: string; responsavel_ir: string | null; vencimento: string | null; valor_servico: number; status_pagamento: "PIX" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "PERMUTA" | "A PAGAR"; status_declaracao: "Concluido" | "Pendente"; observacoes: string | null; created_at: string; updated_at: string }
         Insert: { id?: string; nome: string; cpf_cnpj: string; responsavel_ir?: string | null; vencimento?: string | null; valor_servico?: number; status_pagamento?: "PIX" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "PERMUTA" | "A PAGAR"; status_declaracao?: "Concluido" | "Pendente"; observacoes?: string | null; created_at?: string; updated_at?: string }
