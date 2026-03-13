@@ -117,8 +117,15 @@ input[type="time"]::-webkit-calendar-picker-indicator {
 .dark input[type="date"]::-webkit-calendar-picker-indicator,
 .dark input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 .dark input[type="time"]::-webkit-calendar-picker-indicator {
-  filter: invert(1) brightness(1.25);
-  opacity: 0.95;
+  filter: brightness(0) invert(1) contrast(1.15);
+  opacity: 1;
+}
+
+.dark input[type="date"]::-webkit-calendar-picker-indicator:hover,
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover,
+.dark input[type="time"]::-webkit-calendar-picker-indicator:hover {
+  filter: brightness(0) invert(1) contrast(1.2);
+  opacity: 1;
 }
 
 @layer base {
