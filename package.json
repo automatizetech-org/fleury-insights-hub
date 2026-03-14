@@ -18,7 +18,9 @@
     "test:watch": "vitest --config config/vitest.config.ts",
     "supabase:deploy": "supabase functions deploy auth",
     "supabase:deploy:login": "supabase functions deploy auth",
-    "supabase:deploy:bootstrap": "supabase functions deploy auth"
+    "supabase:deploy:bootstrap": "supabase functions deploy auth",
+    "supabase:deploy:ir-charge": "supabase functions deploy btg-create-ir-charge",
+    "supabase:deploy:ir-webhook": "supabase functions deploy btg-ir-webhook"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

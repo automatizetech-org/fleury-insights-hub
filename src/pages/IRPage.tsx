@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { toast } from "sonner";
-import { ArrowDownUp, FileCheck, FileClock, Landmark, Plus, Trash2, Wallet } from "lucide-react";
+import { ArrowDownUp, Copy, Download, FileCheck, FileClock, Landmark, Link2, Plus, QrCode, ReceiptText, Trash2, Wallet } from "lucide-react";
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { DataPagination } from "@/components/common/DataPagination";
@@ -19,8 +19,11 @@ import { cn } from "@/utils";
 import {
   createIrClient,
   deleteIrClient,
+  downloadBoletoPdf,
+  generateIrCharge,
   getIrClients,
   type IrClient,
+  type IrChargeType,
   type IrDeclarationStatus,
   type IrPaymentStatus,
   updateIrClient,
@@ -66,12 +69,13 @@ type ObservationAutocompleteContext = {
 };
 
 const IR_PAYMENT_OPTIONS: IrPaymentStatus[] = ["PIX", "DINHEIRO", "TRANSFERÊNCIA POUPANÇA", "PERMUTA", "A PAGAR"];
+const IR_PAYMENT_OPTIONS_WITH_CHARGES: IrPaymentStatus[] = ["PIX", "BOLETO", ...IR_PAYMENT_OPTIONS.slice(1)];
 const OBSERVATION_KEYWORDS = ["HONORARIO", "PRO BONO", "PERMUTA", "IRRF+MEI", "LIVRO CAIXA"];
 const emptyForm: IrFormState = { nome: "", cpf_cnpj: "", responsavel_ir: "", vencimento: "", valor_servico: "", observacoes: "", status_pagamento: "A PAGAR" };
 const emptyUnifiedFilters: UnifiedFilters = { search: "", paymentStatus: "Todos", declarationStatus: "Todos", dateFrom: "", dateTo: "", minValue: "", maxValue: "" };
 const emptyPaymentFilters: PaymentFilters = { status: "Todos", dateFrom: "", dateTo: "", minValue: "", maxValue: "" };
 const emptyExecutionFilters: ExecutionFilters = { status: "Todos", dateFrom: "", dateTo: "", minValue: "", maxValue: "" };
-const paymentStatusOptions: Array<"Todos" | IrPaymentStatus> = ["Todos", ...IR_PAYMENT_OPTIONS];
+const paymentStatusOptions: Array<"Todos" | IrPaymentStatus> = ["Todos", ...IR_PAYMENT_OPTIONS_WITH_CHARGES];
 const executionStatusOptions: Array<"Todos" | IrDeclarationStatus> = ["Todos", "Concluido", "Pendente"];
 const emptyEditForm: IrEditFormState = { id: "", nome: "", cpf_cnpj: "", responsavel_ir: "", vencimento: "", valor_servico: "", observacoes: "", status_pagamento: "A PAGAR" };
 const NEW_RESPONSIBLE_VALUE = "__novo_responsavel__";
@@ -116,6 +120,23 @@ function isReceivedPaymentType(status: IrPaymentStatus) {
 
 function getPaymentTriggerClass(status: IrPaymentStatus) {
   return isReceivedPaymentType(status) ? "ir-status-trigger--success" : "ir-status-trigger--warning";
+}
+
+function getChargeStatusLabel(client: IrClient) {
+  if (client.payment_charge_status === "paid") return "Pago automaticamente";
+  if (client.payment_charge_status === "pending" && client.payment_charge_type === "PIX") return "PIX gerado";
+  if (client.payment_charge_status === "pending" && client.payment_charge_type === "BOLETO") return "Boleto gerado";
+  if (client.payment_charge_status === "pending" && client.payment_charge_type === "BOLETO_HIBRIDO") return "Boleto hibrido gerado";
+  if (client.payment_charge_status === "failed") return "Falha na cobranca";
+  if (client.payment_charge_status === "cancelled") return "Cobranca cancelada";
+  return "Sem cobranca";
+}
+
+function getChargeStatusClass(client: IrClient) {
+  if (client.payment_charge_status === "paid") return "text-emerald-600";
+  if (client.payment_charge_status === "pending") return "text-amber-600";
+  if (client.payment_charge_status === "failed") return "text-destructive";
+  return "text-muted-foreground";
 }
 
 function withPaymentTypeAndDate<T extends { status_pagamento: IrPaymentStatus; vencimento: string }>(current: T, status: IrPaymentStatus): T {
@@ -350,16 +371,33 @@ export default function IRPage() {
   const [isObservationDialogOpen, setIsObservationDialogOpen] = useState(false);
   const [observationClientId, setObservationClientId] = useState<string>("");
   const [observationClientName, setObservationClientName] = useState("");
+  const [isChargeDialogOpen, setIsChargeDialogOpen] = useState(false);
+  const [chargeClient, setChargeClient] = useState<IrClient | null>(null);
+  const [chargeType, setChargeType] = useState<IrChargeType>("PIX");
 
   const { data: clients = [], isLoading } = useQuery({ queryKey: ["ir-clients"], queryFn: getIrClients });
   const { data: companies = [] } = useCompanies();
 
-  const companyNames = useMemo(
-    () => Array.from(new Set(companies.map((company) => company.name?.trim() || "").filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")),
+  const companyNames = useMemo<string[]>(
+    () =>
+      Array.from(
+        new Set(
+          (companies as Array<{ name?: string | null }>)
+            .map((company) => company.name?.trim() || "")
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b, "pt-BR")),
     [companies],
   );
 
   useEffect(() => setNotesDraft(Object.fromEntries(clients.map((client) => [client.id, client.observacoes ?? ""]))), [clients]);
+  useEffect(() => {
+    if (!chargeClient) return;
+    const freshClient = clients.find((client) => client.id === chargeClient.id);
+    if (freshClient) {
+      setChargeClient(freshClient);
+    }
+  }, [clients, chargeClient]);
 
   const refreshIrData = async () => {
     await Promise.all([
@@ -426,6 +464,28 @@ export default function IRPage() {
       toast.success("Cliente de IR excluído.");
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Não foi possível excluir o cliente."),
+  });
+
+  const generateChargeMutation = useMutation({
+    mutationFn: async ({ clientId, nextChargeType }: { clientId: string; nextChargeType: IrChargeType }) => {
+      return generateIrCharge({ clientId, chargeType: nextChargeType });
+    },
+    onSuccess: async (result, variables) => {
+      await refreshIrData();
+      if ((variables.nextChargeType === "BOLETO" || variables.nextChargeType === "BOLETO_HIBRIDO") && result.boletoPdfBase64) {
+        downloadBoletoPdf(`boleto-ir-${result.client.nome}.pdf`, result.boletoPdfBase64);
+        toast.success("Boleto gerado e baixado.");
+      } else if (variables.nextChargeType === "PIX") {
+        if (result.pixCopyPaste) {
+          await navigator.clipboard.writeText(result.pixCopyPaste);
+          toast.success("PIX gerado e codigo copiado.");
+        } else {
+          toast.success("PIX gerado.");
+        }
+      }
+      setChargeClient(result.client);
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Nao foi possivel gerar a cobranca."),
   });
 
   const responsibleOptions = useMemo(() => Array.from(new Set(clients.map((c) => c.responsavel_ir?.trim() || "").filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [clients]);
@@ -563,7 +623,7 @@ export default function IRPage() {
     updateClientMutation.mutate({
       id: client.id,
       updates: {
-        status_pagamento: status,
+        status_pagamento: status as IrClient["status_pagamento"],
         vencimento: status !== "A PAGAR" && !client.vencimento ? getTodayIsoDate() : client.vencimento,
       },
       successMessage: "Tipo de pagamento atualizado.",
@@ -606,7 +666,7 @@ export default function IRPage() {
         vencimento: editForm.vencimento || null,
         valor_servico: valorServico,
         observacoes: editForm.observacoes,
-        status_pagamento: editForm.vencimento ? editForm.status_pagamento : "A PAGAR",
+        status_pagamento: (editForm.vencimento ? editForm.status_pagamento : "A PAGAR") as IrClient["status_pagamento"],
       },
       successMessage: "Cliente de IR atualizado.",
     }, {
@@ -616,6 +676,37 @@ export default function IRPage() {
         setEditForm(emptyEditForm);
       },
     });
+  };
+
+  const handleOpenChargeDialog = (client: IrClient) => {
+    setChargeClient(client);
+    setChargeType(client.payment_charge_type ?? "PIX");
+    setIsChargeDialogOpen(true);
+  };
+
+  const handleGenerateCharge = async () => {
+    if (!chargeClient || generateChargeMutation.isPending) return;
+    const result = await generateChargeMutation.mutateAsync({ clientId: chargeClient.id, nextChargeType: chargeType });
+    if (chargeType === "PIX" && result.paymentLink) {
+      window.open(result.paymentLink, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleCopyPixLink = async () => {
+    if (!chargeClient?.payment_link) return;
+    await navigator.clipboard.writeText(chargeClient.payment_link);
+    toast.success("Link do PIX copiado.");
+  };
+
+  const handleCopyPixCode = async () => {
+    if (!chargeClient?.payment_pix_copy_paste) return;
+    await navigator.clipboard.writeText(chargeClient.payment_pix_copy_paste);
+    toast.success("Codigo PIX copiado.");
+  };
+
+  const handleDownloadExistingBoleto = () => {
+    if (!chargeClient?.payment_boleto_pdf_base64) return;
+    downloadBoletoPdf(`boleto-ir-${chargeClient.nome}.pdf`, chargeClient.payment_boleto_pdf_base64);
   };
 
   const handleOpenObservationDialog = (client: IrClient) => {
@@ -648,7 +739,7 @@ export default function IRPage() {
           <div className="ir-create-overlay__particle ir-create-overlay__particle--right" />
           <div className="ir-create-overlay__particle ir-create-overlay__particle--bottom" />
           <div className="ir-create-overlay__content">
-            <strong className="ir-create-overlay__title">AI E LOUCURA!!</strong>
+            <strong className="ir-create-overlay__title">AÍ É LOUCURA!!</strong>
           </div>
         </div>,
         document.body,
@@ -728,7 +819,7 @@ export default function IRPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {IR_PAYMENT_OPTIONS.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
+                  {IR_PAYMENT_OPTIONS_WITH_CHARGES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -802,7 +893,7 @@ export default function IRPage() {
         </GlassCard>
       </div>
 
-      <GlassCard className="overflow-hidden">
+      <GlassCard className="overflow-visible">
         <div className="p-4 border-b border-border space-y-4">
           <div>
             <h3 className="text-sm font-semibold font-display">Clientes IR</h3>
@@ -818,7 +909,7 @@ export default function IRPage() {
             <div className="space-y-1"><Label className="text-[11px]">Declaração</Label><Select value={tableFilters.declarationStatus} onValueChange={(value) => { setTableFilters((current) => ({ ...current, declarationStatus: value as UnifiedFilters["declarationStatus"] })); setTableCurrentPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{executionStatusOptions.map((status) => <SelectItem key={status} value={status}>{status === "Concluido" ? "Concluído" : status}</SelectItem>)}</SelectContent></Select></div>
           </div>
         </div>
-        <div className="md:hidden space-y-3 p-3">
+        <div className="xl:hidden grid grid-cols-1 gap-3 p-3 md:grid-cols-2">
           {unifiedPagination.list.map((client) => (
             <div key={client.id} className="ir-mobile-card">
               <div className="ir-mobile-card__header">
@@ -845,7 +936,7 @@ export default function IRPage() {
                   <Label className="text-[11px] text-muted-foreground">Tipo de Pagamento</Label>
                   <Select value={client.status_pagamento} onValueChange={(value) => handlePaymentTypeUpdate(client, value as IrPaymentStatus)}>
                     <SelectTrigger className={cn("w-full min-w-0 ir-status-trigger", getPaymentTriggerClass(client.status_pagamento))}><SelectValue /></SelectTrigger>
-                    <SelectContent>{IR_PAYMENT_OPTIONS.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
+                    <SelectContent>{IR_PAYMENT_OPTIONS_WITH_CHARGES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
@@ -858,8 +949,12 @@ export default function IRPage() {
               </div>
 
               <div className="grid grid-cols-3 gap-2">
+                <Button type="button" variant="outline" className="col-span-3 w-full min-w-0 px-3" onClick={() => handleOpenChargeDialog(client)}>
+                  {client.payment_charge_status === "pending" ? "Ver cobranca" : "Gerar cobranca"}
+                </Button>
+                <div className={cn("col-span-3 text-[11px] font-medium", getChargeStatusClass(client))}>{getChargeStatusLabel(client)}</div>
                 <Button type="button" variant="outline" className="col-span-3 sm:col-span-1 w-full min-w-0 px-3" onClick={() => handleOpenObservationDialog(client)}>
-                  Observações
+                  Observacoes
                 </Button>
                 <Button type="button" variant="outline" className="h-10 w-full min-w-0 px-3" onClick={() => handleEditClient(client)}>
                   Editar
@@ -872,17 +967,17 @@ export default function IRPage() {
           ))}
         </div>
 
-        <div className="hidden overflow-hidden md:block">
-          <table className="w-full table-fixed text-[11px]">
+        <div className="hidden overflow-x-auto xl:block">
+          <table className="min-w-[1480px] w-full table-fixed text-[11px]">
             <thead><tr className="border-b border-border bg-muted/50">
-              <th className="w-[22%] px-3 py-3"><SortHeader label="Nome" column="nome" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
-              <th className="w-[12%] px-3 py-3"><SortHeader label="Responsável" column="responsavel_ir" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
-              <th className="w-[10%] px-3 py-3"><SortHeader label="Valor" column="valor_servico" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
-              <th className="w-[10%] px-3 py-3"><SortHeader label="Data de Recebimento" column="vencimento" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
-              <th className="w-[14%] px-3 py-3"><SortHeader label="Tipo de Pagamento" column="status_pagamento" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
-              <th className="w-[14%] px-3 py-3"><SortHeader label="Declaração" column="status_declaracao" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
-              <th className="w-[10%] text-left px-3 py-3 font-medium text-muted-foreground">Observações</th>
-              <th className="w-[10%] text-left px-3 py-3 font-medium text-muted-foreground">Ações</th>
+              <th className="w-[320px] px-3 py-3"><SortHeader label="Nome" column="nome" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
+              <th className="w-[180px] px-3 py-3"><SortHeader label="Responsável" column="responsavel_ir" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
+              <th className="w-[130px] px-3 py-3"><SortHeader label="Valor" column="valor_servico" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
+              <th className="w-[170px] px-3 py-3"><SortHeader label="Data de Recebimento" column="vencimento" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
+              <th className="w-[210px] px-3 py-3"><SortHeader label="Tipo de Pagamento" column="status_pagamento" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
+              <th className="w-[210px] px-3 py-3"><SortHeader label="Declaração" column="status_declaracao" sort={tableSort} onToggle={(key) => setTableSort((current) => cycleSort(current, key))} /></th>
+              <th className="w-[130px] text-left px-3 py-3 font-medium text-muted-foreground">Observações</th>
+              <th className="w-[240px] text-left px-3 py-3 font-medium text-muted-foreground">Ações</th>
             </tr></thead>
             <tbody>{unifiedPagination.list.map((client) => (
               <tr key={client.id} className="ir-table-row border-b border-border hover:bg-muted/30 transition-colors">
@@ -896,7 +991,7 @@ export default function IRPage() {
                 <td className="px-3 py-3 align-top">
                   <Select value={client.status_pagamento} onValueChange={(value) => handlePaymentTypeUpdate(client, value as IrPaymentStatus)}>
                     <SelectTrigger className={cn("w-full min-w-0 ir-status-trigger", getPaymentTriggerClass(client.status_pagamento))}><SelectValue /></SelectTrigger>
-                    <SelectContent>{IR_PAYMENT_OPTIONS.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
+                    <SelectContent>{IR_PAYMENT_OPTIONS_WITH_CHARGES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent>
                   </Select>
                 </td>
                 <td className="px-3 py-3 align-top">
@@ -906,13 +1001,19 @@ export default function IRPage() {
                   </Select>
                 </td>
                 <td className="px-3 py-3 align-top">
-                  <Button type="button" variant="outline" className="w-full min-w-0 px-3" onClick={() => handleOpenObservationDialog(client)}>
-                    Observações
-                  </Button>
+                  <div className="space-y-2">
+                    <Button type="button" variant="outline" className="w-full min-w-[88px] px-3" onClick={() => handleOpenObservationDialog(client)}>
+                      Obs.
+                    </Button>
+                    <p className={cn("text-[11px] font-medium leading-snug", getChargeStatusClass(client))}>{getChargeStatusLabel(client)}</p>
+                  </div>
                 </td>
                 <td className="px-3 py-3 align-top">
-                  <div className="flex items-center gap-2 justify-end whitespace-nowrap">
-                    <Button type="button" variant="outline" className="h-9 px-3 shrink-0" onClick={() => handleEditClient(client)}>
+                  <div className="flex items-center gap-2 whitespace-nowrap">
+                    <Button type="button" variant="outline" className="h-9 min-w-[92px] px-3 shrink-0" onClick={() => handleOpenChargeDialog(client)}>
+                      Cobrar
+                    </Button>
+                    <Button type="button" variant="outline" className="h-9 min-w-[78px] px-3 shrink-0" onClick={() => handleEditClient(client)}>
                       Editar
                     </Button>
                     <Button type="button" variant="outline" size="icon" className="h-9 w-9 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/10" onClick={() => handleDeleteClient(client)} disabled={deleteClientMutation.isPending}>
@@ -927,6 +1028,78 @@ export default function IRPage() {
         {unifiedPagination.total > 0 && <DataPagination currentPage={unifiedPagination.currentPage} totalPages={unifiedPagination.totalPages} totalItems={unifiedPagination.total} from={unifiedPagination.from} to={unifiedPagination.to} pageSize={tablePageSize} onPageChange={setTableCurrentPage} onPageSizeChange={(next) => { setTablePageSize(next); setTableCurrentPage(1); }} />}
         {!isLoading && unifiedPagination.total === 0 && <div className="p-8 text-center text-sm text-muted-foreground">Nenhum cliente encontrado com os filtros aplicados.</div>}
       </GlassCard>
+
+      <Dialog open={isChargeDialogOpen} onOpenChange={setIsChargeDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Gerar cobranca IR</DialogTitle>
+            <DialogDescription>{chargeClient?.nome || "Cliente IR"}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Button type="button" variant={chargeType === "PIX" ? "default" : "outline"} className="justify-start gap-2" onClick={() => setChargeType("PIX")}>
+                <QrCode className="h-4 w-4" />PIX
+              </Button>
+              <Button type="button" variant={chargeType === "BOLETO" ? "default" : "outline"} className="justify-start gap-2" onClick={() => setChargeType("BOLETO")}>
+                <ReceiptText className="h-4 w-4" />Boleto
+              </Button>
+              <Button type="button" variant={chargeType === "BOLETO_HIBRIDO" ? "default" : "outline"} className="justify-start gap-2" onClick={() => setChargeType("BOLETO_HIBRIDO")}>
+                <ReceiptText className="h-4 w-4" />Boleto hibrido
+              </Button>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
+              <p><strong>Valor:</strong> {chargeClient ? formatCurrency(Number(chargeClient.valor_servico || 0)) : "-"}</p>
+              <p className={cn("mt-1 font-medium", chargeClient ? getChargeStatusClass(chargeClient) : "text-muted-foreground")}>{chargeClient ? getChargeStatusLabel(chargeClient) : "Sem cliente selecionado"}</p>
+              {chargeClient?.payment_payer_name ? <p className="mt-1 text-xs text-muted-foreground">Pagador: {chargeClient.payment_payer_name}</p> : null}
+            </div>
+            {chargeClient?.payment_charge_status === "pending" ? (
+              <div className="space-y-3 rounded-lg border border-border p-3">
+                {chargeClient.payment_charge_type === "PIX" ? (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" onClick={handleCopyPixCode} disabled={!chargeClient.payment_pix_copy_paste}>
+                        <Copy className="mr-2 h-4 w-4" />Copiar codigo PIX
+                      </Button>
+                      <Button type="button" variant="outline" onClick={handleCopyPixLink} disabled={!chargeClient.payment_link}>
+                        <Link2 className="mr-2 h-4 w-4" />Copiar link PIX
+                      </Button>
+                    </div>
+                    {chargeClient.payment_link ? <a className="text-sm text-primary underline underline-offset-4 break-all" href={chargeClient.payment_link} target="_blank" rel="noreferrer">{chargeClient.payment_link}</a> : null}
+                  </>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" onClick={handleDownloadExistingBoleto} disabled={!chargeClient.payment_boleto_pdf_base64}>
+                        <Download className="mr-2 h-4 w-4" />Baixar boleto
+                      </Button>
+                      {chargeClient.payment_pix_copy_paste ? (
+                        <Button type="button" variant="outline" onClick={handleCopyPixCode}>
+                          <Copy className="mr-2 h-4 w-4" />Copiar QR PIX
+                        </Button>
+                      ) : null}
+                      {chargeClient.payment_link ? (
+                        <Button type="button" variant="outline" onClick={handleCopyPixLink}>
+                          <Link2 className="mr-2 h-4 w-4" />Copiar link
+                        </Button>
+                      ) : null}
+                    </div>
+                    {chargeClient.payment_boleto_digitable_line ? <p className="text-xs text-muted-foreground break-all">Linha digitavel: {chargeClient.payment_boleto_digitable_line}</p> : null}
+                    {chargeClient.payment_charge_type === "BOLETO_HIBRIDO" && chargeClient.payment_pix_copy_paste ? (
+                      <p className="text-xs text-muted-foreground break-all">QR PIX disponivel junto com o boleto.</p>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsChargeDialogOpen(false)}>Fechar</Button>
+            <Button type="button" onClick={handleGenerateCharge} disabled={!chargeClient || generateChargeMutation.isPending}>
+              {generateChargeMutation.isPending ? "Gerando..." : chargeType === "PIX" ? "Gerar PIX" : chargeType === "BOLETO_HIBRIDO" ? "Gerar boleto hibrido" : "Gerar boleto"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="sm:max-w-2xl">
@@ -984,7 +1157,7 @@ export default function IRPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {IR_PAYMENT_OPTIONS.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
+                  {IR_PAYMENT_OPTIONS_WITH_CHARGES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
