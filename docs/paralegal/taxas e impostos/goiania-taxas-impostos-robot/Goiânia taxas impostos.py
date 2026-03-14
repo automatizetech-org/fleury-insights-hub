@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -11,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import quote, urlparse
+import urllib.request
 
 from dotenv import load_dotenv
 from playwright.async_api import BrowserContext, Frame, Page, async_playwright
@@ -40,7 +43,17 @@ import requests
 from supabase import Client, create_client
 
 
-BASE_DIR = Path(__file__).resolve().parent
+# Diretório base: quando iniciado pelo agendador, defina ROBOT_SCRIPT_DIR com a pasta do robô
+# (a que contém este .py e a pasta data/). Assim o perfil Chrome (data/chrome_cdp_profile) será sempre essa pasta.
+_base_from_env = os.environ.get("ROBOT_SCRIPT_DIR", "").strip().rstrip(os.sep)
+BASE_DIR = Path(_base_from_env).resolve() if _base_from_env else Path(__file__).resolve().parent
+os.chdir(BASE_DIR)
+
+# Perfil Chrome: data/chrome_cdp_profile relativo a BASE_DIR.
+# Com agendador, defina ROBOT_SCRIPT_DIR para a pasta do robô; o perfil será BASE_DIR/data/chrome_cdp_profile.
+def _get_chrome_profile_dir() -> Path:
+    return (BASE_DIR / "data" / "chrome_cdp_profile").resolve()
+
 ROBOTS_BASE_ENV_DIR = Path(r"C:\Users\ROBO\Documents\ROBOS")
 ENV_CANDIDATES = [
     ROBOTS_BASE_ENV_DIR / ".env",
@@ -53,20 +66,97 @@ for env_path in ENV_CANDIDATES:
         load_dotenv(env_path, override=False)
 
 DATA_DIR = BASE_DIR / "data"
+ROBOT_CONFIG_FILE = DATA_DIR / "goiania_robot_config.json"
 PNG_DIR = DATA_DIR / "image"
 ICO_DIR = DATA_DIR / "ico"
 PLAYWRIGHT_DIR = DATA_DIR / "ms-playwright"
 EXTENSIONS_DIR = DATA_DIR / "extensions"
 CDP_PORT = int(os.getenv("GOIANIA_CDP_PORT", "9223"))
-CHROME_EXE = DATA_DIR / "Chrome" / "chrome.exe"
-CHROME_PROFILE_DIR = DATA_DIR / "chrome_cdp_profile"
-CHROME_LOG_PATH = DATA_DIR / "chrome_start.log"
+
+
+def _is_cdp_port_in_use() -> bool:
+    """Retorna True se algo estiver escutando na porta CDP (navegador ainda aberto)."""
+    try:
+        with socket.create_connection(("127.0.0.1", CDP_PORT), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
+PROXY_DIR = DATA_DIR / "proxy"
+PROXIES_FILE = PROXY_DIR / "proxies.txt"
+CHROME_EXE = (DATA_DIR / "Chrome" / "chrome.exe").resolve()
+# Perfil obrigatório: só data/chrome_cdp_profile do robô (nunca AppData/Playwright).
+CHROME_PROFILE_DIR = _get_chrome_profile_dir()
+CHROME_LOG_PATH = (DATA_DIR / "chrome_start.log").resolve()
+
+
+def _load_proxy_list() -> list[str]:
+    """Carrega lista de proxies: env GOIANIA_PROXY_LIST (vírgula) ou data/proxy/proxies.txt (uma URL por linha)."""
+    from_env = os.getenv("GOIANIA_PROXY_LIST", "").strip()
+    if from_env:
+        return [p.strip() for p in from_env.split(",") if p.strip()]
+    if PROXIES_FILE.exists():
+        try:
+            lines = [ln.strip() for ln in PROXIES_FILE.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+            return lines
+        except Exception:
+            pass
+    return []
+
+
+PROXY_LIST_URL = "https://api.proxyscrape.com/?request=displayproxies&proxytype=http&country=BR"
+
+
+def _is_proxy_reachable(proxy_url: str, timeout: float = 3.0) -> bool:
+    """Verifica se o proxy está acessível (conexão TCP)."""
+    if not proxy_url or not proxy_url.strip():
+        return False
+    try:
+        parsed = urlparse(proxy_url.strip())
+        host = parsed.hostname or parsed.path.split(":")[0] if parsed.path else None
+        port = parsed.port
+        if not host:
+            return False
+        if port is None:
+            port = 80 if (parsed.scheme or "").lower() != "https" else 443
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def _update_proxy_list() -> int:
+    """Baixa lista de proxies HTTP (Brasil), testa cada um e grava em proxies.txt só os que respondem."""
+    try:
+        req = urllib.request.Request(
+            PROXY_LIST_URL,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return 0
+    lines = [ln.strip() for ln in data.splitlines() if ln.strip()]
+    urls = []
+    for ln in lines:
+        if ":" in ln and not ln.startswith("#"):
+            parts = ln.rsplit(":", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                urls.append(f"http://{ln.strip()}")
+    # Só gravar proxies que respondem ao teste de conectividade
+    working = [u for u in urls if _is_proxy_reachable(u, timeout=2.0)]
+    PROXY_DIR.mkdir(parents=True, exist_ok=True)
+    PROXIES_FILE.write_text("\n".join(working) + ("\n" if working else ""), encoding="utf-8")
+    return len(working)
+
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 GOIANIA_PORTAL_CPF = os.getenv("GOIANIA_PORTAL_CPF", "")
 GOIANIA_PORTAL_PASSWORD = os.getenv("GOIANIA_PORTAL_PASSWORD", "")
 SERVER_API_URL = (os.getenv("FOLDER_STRUCTURE_API_URL") or os.getenv("SERVER_API_URL") or "").strip()
+# Não usado para o Chrome do robô; o robô usa apenas CHROME_PROFILE_DIR (data/chrome_cdp_profile).
 PLAYWRIGHT_USER_DATA_DIR = os.getenv("PLAYWRIGHT_USER_DATA_DIR", str(BASE_DIR / ".playwright-profile"))
 
 ROBOT_TECHNICAL_ID = "goiania_taxas_impostos"
@@ -75,6 +165,8 @@ ROBOT_SEGMENT_PATH_DEFAULT = "PARALEGAL/TAXAS-IMPOSTOS"
 LOGIN_URL = "https://www10.goiania.go.gov.br/Internet/Login.aspx?OriginalURL="
 INTERNET_HOME_URL = "https://www10.goiania.go.gov.br/Internet/"
 HOME_URL = "https://servicos.goiania.go.gov.br/SicaePortal/"
+INTRANET_LOGIN_URL = "https://servicos.goiania.go.gov.br/Intranet/Login.aspx"
+LOGIN_NAVIGATION_TIMEOUT_MS = 25000
 PORTAL_TRIBUTOS_URL_PART = "PortalTributos/ConsultaTributos"
 DEBITOS_URL_PART = "MostraDebitos"
 HEARTBEAT_INTERVAL_MS = 30000
@@ -269,6 +361,7 @@ class CompanyItem:
     enabled_for_robot: bool
     selected_login_cpf: str | None = None
     state_registration: str | None = None
+    cae: str | None = None
     selected: bool = False
     status: str = "AGUARDANDO"
     message: str = "-"
@@ -291,6 +384,10 @@ class StopRequested(RuntimeError):
     pass
 
 
+class RecaptchaTimeoutError(RuntimeError):
+    """reCAPTCHA não foi resolvido em 1 minuto; permite fechar navegador, trocar porta e tentar de novo."""
+
+
 class RobotBackend:
     def __init__(self) -> None:
         if not SUPABASE_URL or not SUPABASE_ANON_KEY:
@@ -306,6 +403,41 @@ class RobotBackend:
         self.display_config_updated_at: str | None = None
         self._log_cb: Callable[[str], None] | None = None
         self.robot_id = self.register_robot()
+        self._proxy_list: list[str] = _load_proxy_list()
+        self._proxy_index: int = 0
+        self._mitmdump_proc: subprocess.Popen | None = None
+        self._mitmdump_port: int | None = None
+        self._use_proxy_rotation: bool = True
+
+    def set_use_proxy_rotation(self, value: bool) -> None:
+        """Ativa ou desativa o uso de rotação de proxy (lista + mitmdump)."""
+        self._use_proxy_rotation = value
+
+    def get_current_proxy(self) -> str | None:
+        """Retorna a URL do proxy atual (lista ou mitmdump local), ou None para não usar proxy."""
+        if not self._use_proxy_rotation:
+            return None
+        if self._proxy_list:
+            return self._proxy_list[self._proxy_index % len(self._proxy_list)]
+        if self._mitmdump_port is not None:
+            return f"http://127.0.0.1:{self._mitmdump_port}"
+        return None
+
+    def use_next_proxy(self) -> str | None:
+        """Avança para o próximo proxy (para retry após RecaptchaTimeoutError). Retorna o próximo em uso."""
+        if self._proxy_list:
+            self._proxy_index = (self._proxy_index + 1) % len(self._proxy_list)
+            return self.get_current_proxy()
+        if self._mitmdump_proc is not None:
+            self._stop_mitmdump()
+            self._start_mitmdump_if_needed()
+            return self.get_current_proxy()
+        return None
+
+    def reload_proxy_list(self) -> None:
+        """Recarrega a lista de proxies do arquivo (útil após atualizar proxies.txt)."""
+        self._proxy_list = _load_proxy_list()
+        self._proxy_index = 0
 
     def set_log_callback(self, cb: Callable[[str], None] | None) -> None:
         self._log_cb = cb
@@ -406,7 +538,7 @@ class RobotBackend:
         query = (
             self._client()
             .table("companies")
-            .select("id,name,document,active,state_registration,state_code,city_name")
+            .select("id,name,document,active,state_registration,state_code,city_name,cae")
             .eq("active", True)
             .order("name")
         )
@@ -438,6 +570,7 @@ class RobotBackend:
                     enabled_for_robot=bool(config),
                     selected_login_cpf=digits((config or {}).get("selected_login_cpf") or "") or None,
                     state_registration=(row.get("state_registration") or "").strip() or None,
+                    cae=(row.get("cae") or "").strip() or None,
                     status="ATIVO" if row.get("active", True) else "INATIVO",
                 )
             )
@@ -552,6 +685,51 @@ class RobotBackend:
             if exc.code != "PGRST205":
                 raise
 
+    def _clear_company_debts(self, company_id: str) -> None:
+        try:
+            self.supabase.table("municipal_tax_debts").delete().eq("company_id", company_id).execute()
+        except Exception:
+            pass
+
+    def _debt_to_json_item(self, debt: DebtRow) -> dict[str, Any]:
+        return {
+            "ano": debt.ano,
+            "tributo": debt.tributo,
+            "numero_documento": debt.numero_documento,
+            "data_vencimento": debt.data_vencimento,
+            "valor": debt.valor,
+            "situacao": debt.situacao,
+            "portal_inscricao": debt.portal_inscricao,
+            "portal_cai": debt.portal_cai,
+            "detalhes": debt.detalhes,
+        }
+
+    def replace_company_debts_rpc(self, company_id: str, debts: list[DebtRow]) -> int:
+        """Substitui todos os débitos da empresa pelos novos (uma operação atômica no Supabase)."""
+        payload = [self._debt_to_json_item(d) for d in debts]
+        result = self.supabase.rpc(
+            "replace_company_municipal_tax_debts",
+            {"p_company_id": company_id, "p_debts": payload},
+        ).execute()
+        return int(result.data) if result.data is not None else 0
+
+    def insert_one_debt(self, company_id: str, debt: DebtRow) -> None:
+        """Envia um débito ao Supabase assim que é capturado (fallback se a RPC não existir)."""
+        payload = {
+            "company_id": company_id,
+            "ano": debt.ano,
+            "tributo": debt.tributo,
+            "numero_documento": debt.numero_documento,
+            "data_vencimento": debt.data_vencimento,
+            "valor": debt.valor,
+            "situacao": debt.situacao,
+            "portal_inscricao": debt.portal_inscricao,
+            "portal_cai": debt.portal_cai,
+            "detalhes": debt.detalhes,
+            "fetched_at": utc_now_iso(),
+        }
+        self.supabase.table("municipal_tax_debts").insert(payload).execute()
+
     def sync_company_debts(self, company: CompanyItem, debts: list[DebtRow]) -> int:
         try:
             self.supabase.table("municipal_tax_debts").delete().eq("company_id", company.id).execute()
@@ -582,7 +760,7 @@ class RobotBackend:
         stored_rows = verify.data or []
         if len(stored_rows) != len(payload):
             raise RuntimeError(
-                f"Supabase nao confirmou a gravacao dos debitos de {company.name}. "
+                f"Supabase nao confirmou a gravacao dos debitos. "
                 f"Esperado: {len(payload)}, confirmado: {len(stored_rows)}"
             )
         return len(stored_rows)
@@ -670,18 +848,47 @@ class RobotBackend:
             raise FileNotFoundError(f"Chrome nao encontrado em: {chrome_exe}")
 
         self._kill_automation_chrome()
-        CHROME_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        for _ in range(25):
+            try:
+                with socket.create_connection(("127.0.0.1", CDP_PORT), timeout=0.3):
+                    pass
+            except OSError:
+                break
+            try:
+                await asyncio.sleep(0.4)
+            except Exception:
+                pass
+        profile_dir = _get_chrome_profile_dir()
+        profile_dir.mkdir(parents=True, exist_ok=True)
         try:
-            devtools_port = CHROME_PROFILE_DIR / "DevToolsActivePort"
+            devtools_port = profile_dir / "DevToolsActivePort"
             if devtools_port.exists():
                 devtools_port.unlink()
         except Exception:
             pass
 
+        proxy_url = self.get_current_proxy()
+        if proxy_url is None and not self._proxy_list and self._use_proxy_rotation:
+            self._start_mitmdump_if_needed()
+            proxy_url = self.get_current_proxy()
+        # Se temos lista de proxies e rotação ativa, testar antes de usar; trocar até achar um que responda
+        if self._proxy_list and self._use_proxy_rotation:
+            max_attempts = len(self._proxy_list)
+            for _ in range(max_attempts):
+                if not proxy_url:
+                    break
+                if _is_proxy_reachable(proxy_url):
+                    break
+                self._log("Proxy inacessível, tentando próximo...")
+                self.use_next_proxy()
+                proxy_url = self.get_current_proxy()
+            if proxy_url and not _is_proxy_reachable(proxy_url):
+                proxy_url = None
+                self._log("Nenhum proxy respondeu; iniciando sem proxy.")
         chrome_cmd = [
             str(chrome_exe),
             f"--remote-debugging-port={CDP_PORT}",
-            f"--user-data-dir={CHROME_PROFILE_DIR}",
+            f"--user-data-dir={profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-blink-features=AutomationControlled",
@@ -690,14 +897,18 @@ class RobotBackend:
             "--no-sandbox",
             "--disable-gpu",
             "--start-maximized",
+            "--ignore-certificate-errors",
         ]
+        if proxy_url:
+            chrome_cmd.append(f"--proxy-server={proxy_url}")
         CHROME_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(CHROME_LOG_PATH, "w", encoding="utf-8", errors="replace") as chrome_log:
             chrome_log.write(
-                "=== Chrome bootstrap ===\n"
+                "=== Chrome bootstrap (perfil exclusivo do robô) ===\n"
                 f"EXE: {chrome_exe}\n"
-                f"PROFILE_DIR: {CHROME_PROFILE_DIR}\n"
+                f"PROFILE_DIR: {profile_dir}\n"
                 f"CDP_PORT: {CDP_PORT}\n"
+                f"PROXY: {proxy_url or 'nenhum'}\n"
                 f"CMD: {' '.join(chrome_cmd)}\n\n"
             )
             self.chrome_proc = subprocess.Popen(
@@ -721,24 +932,98 @@ class RobotBackend:
         self.context.set_default_navigation_timeout(90000)
 
     async def close(self) -> None:
-        if self.browser:
+        """Desconecta Playwright e fecha o navegador Chrome por completo (incluindo processo)."""
+        try:
+            if self.browser:
+                try:
+                    await self.browser.close()
+                except Exception:
+                    pass
+                self.browser = None
+            self.context = None
+            self.page = None
+            if self.playwright:
+                try:
+                    await self.playwright.stop()
+                except Exception:
+                    pass
+                self.playwright = None
+        finally:
+            self._kill_automation_chrome()
+            self.chrome_proc = None
+            self.browser = None
+            self.context = None
+            self.page = None
+            self.playwright = None
+            self._stop_mitmdump()
             try:
-                await self.browser.close()
+                await asyncio.sleep(1.0)
             except Exception:
                 pass
-        elif self.context:
+
+    def _stop_mitmdump(self) -> None:
+        """Encerra o processo mitmdump iniciado por este backend."""
+        proc = self._mitmdump_proc
+        self._mitmdump_proc = None
+        self._mitmdump_port = None
+        if proc and proc.poll() is None:
             try:
-                await self.context.close()
+                proc.terminate()
+                proc.wait(timeout=5)
             except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+    def _start_mitmdump_if_needed(self) -> None:
+        """Se não há lista de proxies e existe mitmdump em data/proxy, inicia mitmdump local e usa como proxy."""
+        if self._proxy_list or self._mitmdump_proc is not None:
+            return
+        mitmdump_exe = PROXY_DIR / "mitmdump.exe"
+        if not mitmdump_exe.exists():
+            return
+        for port in (8889, 8890, 8891, 8892, 8893):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                    continue
+            except OSError:
                 pass
-        if self.playwright:
-            await self.playwright.stop()
-        self._kill_automation_chrome()
-        self.chrome_proc = None
-        self.browser = None
-        self.context = None
-        self.page = None
-        self.playwright = None
+            break
+        else:
+            return
+        self._mitmdump_port = port
+        log_path = PROXY_DIR / "mitmdump.log"
+        try:
+            with open(log_path, "a", encoding="utf-8", errors="replace") as log_file:
+                log_file.write(f"\n--- mitmdump start {datetime.now(UTC).isoformat()} porta={port}\n")
+            with open(log_path, "a", encoding="utf-8", errors="replace") as log_file:
+                self._mitmdump_proc = subprocess.Popen(
+                    [str(mitmdump_exe), "-p", str(port), "--set", "block_global=false"],
+                    cwd=str(PROXY_DIR),
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+        except Exception as e:
+            self._log(f"Aviso: não foi possível iniciar mitmdump: {e}")
+            self._mitmdump_proc = None
+            self._mitmdump_port = None
+            return
+        for _ in range(40):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                    self._log(f"Proxy mitmdump ativo em http://127.0.0.1:{port}")
+                    return
+            except OSError:
+                if self._mitmdump_proc and self._mitmdump_proc.poll() is not None:
+                    self._mitmdump_proc = None
+                    self._mitmdump_port = None
+                    return
+                import time
+                time.sleep(0.25)
+        self._stop_mitmdump()
+        self._log("Aviso: mitmdump não respondeu a tempo.")
 
     def _resolve_chrome_exe(self) -> Path:
         candidates = [
@@ -756,7 +1041,7 @@ class RobotBackend:
             pass
         return CHROME_EXE
 
-    async def _wait_for_cdp(self, timeout_seconds: int = 30) -> None:
+    async def _wait_for_cdp(self, timeout_seconds: int = 60) -> None:
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         while asyncio.get_running_loop().time() < deadline:
             if self.chrome_proc and self.chrome_proc.poll() not in (None, 0):
@@ -768,7 +1053,10 @@ class RobotBackend:
                     return
             except OSError:
                 await asyncio.sleep(0.5)
-        raise RuntimeError(f"Nao foi possivel conectar ao Chrome via CDP na porta {CDP_PORT}.")
+        raise RuntimeError(
+            f"Nao foi possivel conectar ao Chrome via CDP na porta {CDP_PORT} em {timeout_seconds}s. "
+            f"Verifique se outro Chrome usa a porta ou consulte {CHROME_LOG_PATH}"
+        )
 
     def _kill_automation_chrome(self) -> None:
         proc = self.chrome_proc
@@ -802,8 +1090,13 @@ class RobotBackend:
                 if chrome_exe.lower() in command_line or profile_dir.lower() in command_line:
                     if pid.isdigit():
                         pids.append(pid)
-            if pids:
-                subprocess.run(["taskkill", "/F", "/PID", *pids], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for pid in pids:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", pid],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=8,
+                )
         except Exception:
             pass
 
@@ -816,32 +1109,52 @@ class RobotBackend:
             self.portal_home_page = self.page
             return
 
-        await self.page.goto(LOGIN_URL, wait_until="domcontentloaded")
-        if log:
-            log("Abrindo login do portal da Prefeitura de Goiânia.")
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            if attempt > 1 and log:
+                log("Segunda tentativa de login no portal...")
+            await self.page.goto(LOGIN_URL, wait_until="domcontentloaded")
+            if log and attempt == 1:
+                log("Abrindo login do portal da Prefeitura de Goiânia.")
 
-        if self.page.url.startswith(INTERNET_HOME_URL):
-            await self._open_portal_do_contribuinte()
-
-        if await self._is_login_form_visible():
-            await self._submit_login_form(login_cpf, login_password)
-            await self.page.wait_for_load_state("networkidle")
             if self.page.url.startswith(INTERNET_HOME_URL):
                 await self._open_portal_do_contribuinte()
 
-        if "Intranet/Login.aspx" in self.page.url or await self._is_login_form_visible():
-            await self._submit_login_form(login_cpf, login_password)
-            await self.page.wait_for_load_state("networkidle")
+            if await self._is_login_form_visible():
+                await self._submit_login_form(login_cpf, login_password)
+                await self._wait_after_login()
+                if self.page.url.startswith(INTERNET_HOME_URL):
+                    await self._open_portal_do_contribuinte()
 
-        if self.page.url.startswith(INTERNET_HOME_URL):
-            await self._open_portal_do_contribuinte()
+            if "Intranet/Login.aspx" in self.page.url:
+                if log:
+                    log("Fazendo login na Intranet (portal servicos)...")
+                if await self._is_login_form_visible():
+                    await self._submit_login_form(login_cpf, login_password)
+                    await self._wait_after_login()
+                else:
+                    await self.page.goto(
+                        f"{INTRANET_LOGIN_URL}?OriginalURL={quote(HOME_URL)}",
+                        wait_until="domcontentloaded",
+                    )
+                    await self.page.wait_for_load_state("networkidle")
+                    if await self._is_login_form_visible():
+                        await self._submit_login_form(login_cpf, login_password)
+                        await self._wait_after_login()
 
-        if not self.page.url.startswith(HOME_URL):
-            raise RuntimeError(f"Login não concluído no portal. URL atual: {self.page.url}")
-        self.portal_home_page = self.page
+            if self.page.url.startswith(INTERNET_HOME_URL):
+                await self._open_portal_do_contribuinte()
+
+            if self.page.url.startswith(HOME_URL):
+                self.portal_home_page = self.page
+                return
+            await asyncio.sleep(2)
+
+        raise RuntimeError(f"Login não concluído no portal após {max_attempts} tentativa(s). URL atual: {self.page.url}")
 
     async def ensure_company_selection_screen(self) -> None:
         assert self.page is not None
+        nav_timeout = 20000
         if self.portal_home_page:
             try:
                 if not self.portal_home_page.is_closed():
@@ -849,9 +1162,16 @@ class RobotBackend:
             except Exception:
                 pass
         if self.page.url.startswith(HOME_URL):
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
             return
-        await self.page.goto(HOME_URL, wait_until="domcontentloaded")
-        await self.page.wait_for_load_state("networkidle")
+        await self.page.goto(HOME_URL, wait_until="domcontentloaded", timeout=nav_timeout)
+        try:
+            await self.page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
         self.portal_home_page = self.page
 
     async def _open_portal_do_contribuinte(self) -> None:
@@ -867,6 +1187,7 @@ class RobotBackend:
             self.page.get_by_placeholder("Informe o CPF"),
             self.page.locator("input[placeholder='Informe o CPF']"),
             self.page.locator("input[id*='wtLoginInput']").first,
+            self.page.locator("input[id*='txt'], input[name*='cpf'], input[name*='usuario']").first,
             self.page.locator("input[type='password']").first,
         ]:
             try:
@@ -879,8 +1200,18 @@ class RobotBackend:
 
     async def _submit_login_form(self, login_cpf: str, login_password: str) -> None:
         assert self.page is not None
-        cpf_input = self.page.locator("input[placeholder='Informe o CPF'], input[id*='wtLoginInput']").first
-        password_input = self.page.locator("input[type='password'], input[id*='wtPasswordInput']").first
+        cpf_selectors = (
+            "input[placeholder='Informe o CPF'], input[id*='wtLoginInput'], "
+            "input[id*='txtCPF'], input[id*='txtUsuario'], input[name*='cpf'], input[name*='usuario']"
+        )
+        password_selectors = (
+            "input[type='password'], input[id*='wtPasswordInput'], "
+            "input[id*='txtSenha'], input[id*='txtPassword'], input[name*='senha'], input[name*='password']"
+        )
+        cpf_input = self.page.locator(cpf_selectors).first
+        password_input = self.page.locator(password_selectors).first
+        if await cpf_input.count() == 0 or await password_input.count() == 0:
+            raise RuntimeError("Campos de CPF ou senha não encontrados na tela de login.")
         await cpf_input.fill(login_cpf)
         await password_input.fill(login_password)
         keep_connected = self.page.get_by_label("Mantenha-me Conectado")
@@ -892,7 +1223,8 @@ class RobotBackend:
         for locator in [
             self.page.get_by_role("button", name=re.compile("Entrar", re.I)),
             self.page.locator("button:has-text('ENTRAR')").first,
-            self.page.locator("input[type='submit']").first,
+            self.page.locator("input[type='submit'][value*='ntrar'], input[type='submit']").first,
+            self.page.locator("a:has-text('Entrar'), input[id*='btnEntrar']").first,
         ]:
             try:
                 target = locator.first
@@ -902,6 +1234,18 @@ class RobotBackend:
             except Exception:
                 continue
         raise RuntimeError("Botão Entrar não encontrado na tela de login.")
+
+    async def _wait_after_login(self) -> None:
+        """Aguarda redirecionamento após submit do login (especialmente na Intranet)."""
+        assert self.page is not None
+        try:
+            await self.page.wait_for_url(
+                lambda url: url.startswith(HOME_URL) or url.startswith(INTERNET_HOME_URL),
+                timeout=LOGIN_NAVIGATION_TIMEOUT_MS,
+            )
+        except Exception:
+            await self.page.wait_for_load_state("networkidle")
+            await asyncio.sleep(2)
 
     async def collect_company_debts(
         self,
@@ -920,37 +1264,65 @@ class RobotBackend:
         frame = await self.open_duam(company)
         stop_cb()
         status_cb("AGUARDANDO RECAPTCHA", "Tentando clicar no reCAPTCHA; conclua manualmente se o site exigir")
-        await self.try_click_recaptcha()
-        await self.wait_recaptcha_manual(stop_cb)
+        try:
+            await self.try_click_recaptcha()
+            await self.wait_recaptcha_manual(stop_cb)
+        except RecaptchaTimeoutError:
+            await self._close_debts_modal_and_return_home(frame, log)
+            raise
         stop_cb()
         status_cb("EXECUTANDO", "Consultando débitos municipais")
-        debts = await self.extract_debts(frame, company, stop_cb)
-        log(f"{company.name}: {len(debts)} débito(s) capturado(s) no portal.")
+        debts = await self.extract_debts(frame, company, stop_cb, log=log)
+        log(f"{company.name}: {len(debts)} débito(s) capturado(s) e enviados ao Supabase.")
+        await self._close_debts_modal_and_return_home(frame, log)
         return debts
 
     async def select_company(self, company: CompanyItem) -> None:
         assert self.page is not None
-        select = self.page.locator("select").first
-        await select.wait_for(timeout=20000)
-        options = await select.locator("option").evaluate_all(
-            "(nodes) => nodes.map((node) => ({ value: node.value, text: (node.textContent || '').trim() }))"
-        )
-        target_value = None
-        company_name = normalize_name(company.name)
-        company_document = digits(company.document)
-        for option in options:
-            option_text = normalize_name(option["text"])
-            if (
-                (company_name and company_name in option_text)
-                or (option_text and option_text in company_name)
-                or (company_document and company_document in digits(option["text"]))
-            ):
-                target_value = option["value"]
-                break
-        if not target_value:
-            raise RuntimeError(f"Empresa não localizada no seletor PERFIL: {company.name}")
+        for attempt in range(2):
+            select = self.page.locator("select").first
+            try:
+                await select.wait_for(state="visible", timeout=20000)
+            except Exception:
+                if attempt == 0 and self.page.url.startswith(HOME_URL):
+                    await self.page.reload(wait_until="domcontentloaded", timeout=15000)
+                    await asyncio.sleep(2)
+                    continue
+                raise
+            options = await select.locator("option").evaluate_all(
+                "(nodes) => nodes.map((node) => ({ value: node.value, text: (node.textContent || '').trim() }))"
+            )
+            target_value = None
+            cae_digits = digits(company.cae) if company.cae else ""
+            if cae_digits:
+                for option in options:
+                    opt_text = option["text"] or ""
+                    if f"CAE : {cae_digits}" in opt_text or (company.cae and company.cae in opt_text):
+                        target_value = option["value"]
+                        break
+            if not target_value:
+                company_name = normalize_name(company.name)
+                company_document = digits(company.document)
+                company_name_short = company_name.replace(" LTDA", "").replace(" ME", "").replace(" EPP", "").strip() if company_name else ""
+                for option in options:
+                    opt_text = option["text"]
+                    option_text = normalize_name(opt_text)
+                    opt_doc = digits(opt_text)
+                    if (
+                        (company_name and (company_name in option_text or option_text in company_name))
+                        or (company_name_short and company_name_short in option_text)
+                        or (company_document and (company_document in opt_doc or opt_doc in company_document))
+                    ):
+                        target_value = option["value"]
+                        break
+            if not target_value:
+                raise RuntimeError(f"Empresa não localizada no seletor PERFIL: {company.name}")
+            break
         await select.select_option(target_value)
-        await self.page.wait_for_load_state("networkidle")
+        try:
+            await self.page.wait_for_load_state("networkidle", timeout=20000)
+        except Exception:
+            pass
         await self.wait_notification_modal()
 
     async def wait_notification_modal(self) -> None:
@@ -961,6 +1333,85 @@ class RobotBackend:
             await modal.wait_for(state="hidden", timeout=12000)
         except Exception:
             return
+
+    async def _close_debts_modal_and_return_home(
+        self, frame: Frame | None, log: Callable[[str], None] | None = None
+    ) -> None:
+        """Fecha o modal de débitos (X do diálogo OutSystems/RichWidgets) e volta à tela inicial.
+        O modal fica na página principal (não no iframe); clicar no X fecha o diálogo de fato.
+        """
+        assert self.page is not None
+        click_timeout = 5000
+        nav_timeout = 8000
+        try:
+            page = self.page
+            # Priorizar a PÁGINA para o botão X: o diálogo os-internal-ui-dialog está no DOM da página,
+            # não dentro do iframe. Se tentarmos no frame primeiro, podemos acionar "Voltar" dentro do iframe.
+            targets: list[tuple[Frame | Page, str]] = [(page, "page")]
+            if frame and frame != page.main_frame:
+                targets.append((frame, "frame"))
+
+            close_candidates = [
+                # Botão X do diálogo OutSystems/RichWidgets (Portal do Contribuinte)
+                "a.os-internal-ui-dialog-titlebar-close-no-title",
+                ".os-internal-ui-dialog-titlebar-close-no-title",
+                "[class*='os-internal-ui-dialog'] a[role='button']",
+                ".os-internal-ui-dialog .os-internal-ui-dialog-titlebar a[href='#']",
+                ("xpath=/html/body/div[3]/div[1]/a", "xpath"),
+                "button[class*='close'], a[class*='close']",
+                "[class*='modal'] button[class*='close'], [class*='modal'] a[class*='close']",
+                "[class*='Modal'] button, [class*='Modal'] a[href='#']",
+                ".modal-header button, .modal-header a[href='#']",
+                "button[title*='Fechar'], [aria-label*='echar']",
+                # Evitar "Voltar" dentro do iframe (só fecha de fato o X do diálogo)
+                "button:has-text('Voltar'), a:has-text('Voltar')",
+                "a:has-text('Consultar Tributos')",
+            ]
+            clicked = False
+            for ctx, _ in targets:
+                locator_ctx = frame if ctx == frame else page
+                for sel in close_candidates:
+                    selector = sel[0] if isinstance(sel, tuple) else sel
+                    try:
+                        loc = locator_ctx.locator(selector).first
+                        if await loc.count() == 0:
+                            continue
+                        if await loc.is_visible():
+                            await loc.click(timeout=click_timeout)
+                            if log:
+                                log("Modal fechado; voltando à tela inicial.")
+                            clicked = True
+                            await asyncio.sleep(0.25)
+                            break
+                    except Exception:
+                        continue
+                if clicked:
+                    break
+
+            if self.portal_home_page and not self.portal_home_page.is_closed():
+                if self.page != self.portal_home_page:
+                    try:
+                        await self.page.close()
+                    except Exception:
+                        pass
+                self.page = self.portal_home_page
+            await self.page.wait_for_load_state("domcontentloaded", timeout=nav_timeout)
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=3000)
+            except Exception:
+                pass
+            if not self.page.url.startswith(HOME_URL):
+                await self.page.goto(HOME_URL, wait_until="domcontentloaded", timeout=nav_timeout)
+                await asyncio.sleep(0.25)
+                try:
+                    await self.page.wait_for_load_state("networkidle", timeout=3000)
+                except Exception:
+                    pass
+        except Exception as e:
+            if log:
+                log(f"Aviso ao fechar modal: {e}")
+            if self.portal_home_page and not self.portal_home_page.is_closed():
+                self.page = self.portal_home_page
 
     async def open_duam(self, company: CompanyItem) -> Frame:
         assert self.page is not None
@@ -1123,9 +1574,28 @@ class RobotBackend:
             company.name,
         )
 
-    async def try_click_recaptcha(self) -> None:
+    async def _wait_recaptcha_frame(self, timeout_seconds: float = 15.0) -> bool:
+        """Aguarda o iframe do reCAPTCHA aparecer na página. Retorna True se encontrado."""
         assert self.page is not None
-        for _ in range(20):
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        while asyncio.get_running_loop().time() < deadline:
+            for frame in self.page.frames:
+                if "recaptcha/api2/anchor" in frame.url:
+                    try:
+                        anchor = frame.locator("#recaptcha-anchor")
+                        if await anchor.count() > 0:
+                            return True
+                    except Exception:
+                        pass
+            await asyncio.sleep(0.5)
+        return False
+
+    async def try_click_recaptcha(self) -> None:
+        """Aguarda o reCAPTCHA aparecer, clica no anchor uma vez; o usuário resolve e wait_recaptcha_manual verifica a cada segundo."""
+        assert self.page is not None
+        if not await self._wait_recaptcha_frame(timeout_seconds=15.0):
+            return
+        for _ in range(5):
             for frame in self.page.frames:
                 if "recaptcha/api2/anchor" not in frame.url:
                     continue
@@ -1136,18 +1606,16 @@ class RobotBackend:
                     checked = await anchor.get_attribute("aria-checked")
                     if checked == "true":
                         return
-                    await anchor.click(force=True, timeout=3000)
-                    await asyncio.sleep(2)
-                    checked = await anchor.get_attribute("aria-checked")
-                    if checked == "true":
-                        return
+                    await anchor.click(force=True, timeout=5000)
+                    return
                 except Exception:
                     continue
-            await asyncio.sleep(1)
+            await asyncio.sleep(1.0)
 
     async def wait_recaptcha_manual(self, stop_cb: callable) -> None:
+        """Aguarda até 2 minutos pelo reCAPTCHA ser resolvido; verifica a cada segundo. Se não resolver, lança RecaptchaTimeoutError."""
         assert self.page is not None
-        for _ in range(240):
+        for _ in range(120):
             stop_cb()
             for frame in self.page.frames:
                 if "recaptcha/api2/anchor" in frame.url:
@@ -1155,9 +1623,15 @@ class RobotBackend:
                     if checked == "true":
                         return
             await asyncio.sleep(1)
-        raise RuntimeError("reCAPTCHA não foi concluído a tempo.")
+        raise RecaptchaTimeoutError("reCAPTCHA não foi concluído em 2 minutos.")
 
-    async def extract_debts(self, frame: Frame, company: CompanyItem, stop_cb: callable) -> list[DebtRow]:
+    async def extract_debts(
+        self,
+        frame: Frame,
+        company: CompanyItem,
+        stop_cb: callable,
+        log: Callable[[str], None] | None = None,
+    ) -> list[DebtRow]:
         if frame != self.page.main_frame:
             await frame.get_by_role("button", name=re.compile("Consultar", re.I)).click()
 
@@ -1165,6 +1639,10 @@ class RobotBackend:
             stop_cb()
             body = await frame.locator("body").inner_text()
             if "Nenhum débito" in body or "Nenhum debito" in body:
+                return []
+            if "Não foram encontradas guias" in body or "nao foram encontradas guias" in body.lower():
+                if log:
+                    log(f"{company.name}: nenhuma guia encontrada para os dados informados; indo para a próxima empresa.")
                 return []
             if await frame.locator("table").count():
                 break
@@ -1257,26 +1735,31 @@ class RobotBackend:
                 continue
             parsed_total = parse_money(mapped["valor"])
             parsed_original = parse_money(mapped["valor_original"])
-            debts.append(
-                DebtRow(
-                    ano=int(mapped["ano"]) if str(mapped["ano"]).isdigit() else None,
-                    tributo=mapped["tributo"] or "Tributo não identificado",
-                    numero_documento=mapped["numero_documento"] or f"{company.id}-{len(debts) + 1}",
-                    data_vencimento=parse_date(mapped["data_vencimento"]),
-                    valor=parsed_total or parsed_original,
-                    situacao=mapped["situacao"],
-                    portal_inscricao=mapped["inscricao"] or summary_info.get("inscricao"),
-                    portal_cai=mapped["cai"] or digits(company.document),
-                    detalhes={
-                        "linha_portal": mapped,
-                        "parcela": mapped["parcela"],
-                        "valor_original": parsed_original,
-                        "valor_total": parsed_total,
-                        "nome_portal": summary_info.get("nome"),
-                        "validade_guia": parse_date(summary_info.get("validade")),
-                    },
-                )
+            debt = DebtRow(
+                ano=int(mapped["ano"]) if str(mapped["ano"]).isdigit() else None,
+                tributo=mapped["tributo"] or "Tributo não identificado",
+                numero_documento=mapped["numero_documento"] or f"{company.id}-{len(debts) + 1}",
+                data_vencimento=parse_date(mapped["data_vencimento"]),
+                valor=parsed_total or parsed_original,
+                situacao=mapped["situacao"],
+                portal_inscricao=mapped["inscricao"] or summary_info.get("inscricao"),
+                portal_cai=mapped["cai"] or digits(company.document),
+                detalhes={
+                    "linha_portal": mapped,
+                    "parcela": mapped["parcela"],
+                    "valor_original": parsed_original,
+                    "valor_total": parsed_total,
+                    "nome_portal": summary_info.get("nome"),
+                    "validade_guia": parse_date(summary_info.get("validade")),
+                },
             )
+            debts.append(debt)
+        try:
+            self.replace_company_debts_rpc(company.id, debts)
+        except Exception as e:
+            if log:
+                log(f"Erro ao substituir débitos no Supabase: {e}")
+            raise
         return debts
 
 
@@ -1285,11 +1768,18 @@ class RobotWorker(QThread):
     log_message = Signal(str)
     company_changed = Signal(str, str, str)
 
-    def __init__(self, backend: RobotBackend, companies: list[CompanyItem], job: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        backend: RobotBackend,
+        companies: list[CompanyItem],
+        job: dict[str, Any] | None = None,
+        use_proxy_rotation: bool = True,
+    ) -> None:
         super().__init__()
         self.backend = backend
         self.companies = companies
         self.job = job
+        self.use_proxy_rotation = use_proxy_rotation
         self._stop_requested = False
         self.error_messages: list[str] = []
         self.was_stopped = False
@@ -1307,7 +1797,15 @@ class RobotWorker(QThread):
     async def _run(self) -> None:
         self.status_changed.emit("EXECUTANDO")
         self.backend.update_robot_status("processing")
+        self.backend.set_use_proxy_rotation(self.use_proxy_rotation)
         try:
+            if self.use_proxy_rotation:
+                self.log_message.emit("Atualizando lista de proxies...")
+                loop = asyncio.get_running_loop()
+                n = await loop.run_in_executor(None, _update_proxy_list)
+                self.backend.reload_proxy_list()
+                if n > 0:
+                    self.log_message.emit(f"Lista de proxies atualizada ({n} proxy(s)).")
             await self.backend.ensure_login(self.log_message.emit)
             self.backend.update_robot_heartbeat()
             self.log_message.emit("Login validado no portal da Prefeitura de Goiânia.")
@@ -1322,9 +1820,14 @@ class RobotWorker(QThread):
                         self.log_message.emit,
                         lambda status, message, company_id=company.id: self.company_changed.emit(company_id, status, message),
                     )
-                    synced_count = self.backend.sync_company_debts(company, debts)
+                    synced_count = len(debts)
                     self.backend.finish_run(run_id, "completed", debts_found=synced_count)
                     self.company_changed.emit(company.id, "CONCLUIDO", f"{synced_count} débito(s) sincronizado(s)")
+                except RecaptchaTimeoutError as exc:
+                    self.backend.finish_run(run_id, "failed", error_message=str(exc))
+                    self.company_changed.emit(company.id, "ERRO", str(exc))
+                    self.log_message.emit(f"{company.name}: reCAPTCHA não concluído em 2 min; modal fechado, próxima empresa.")
+                    self.error_messages.append(f"{company.name}: {exc}")
                 except StopRequested as exc:
                     self.backend.finish_run(run_id, "failed", error_message=str(exc))
                     self.company_changed.emit(company.id, "PARADO", str(exc))
@@ -1337,13 +1840,28 @@ class RobotWorker(QThread):
                     self.company_changed.emit(company.id, "ERRO", str(exc))
                     self.log_message.emit(f"{company.name}: erro - {exc}")
                     self.error_messages.append(f"{company.name}: {exc}")
+                if self.was_stopped:
+                    break
         except Exception as exc:
             self.log_message.emit(f"Erro: {exc}")
             self.error_messages.append(str(exc))
         finally:
             self.status_changed.emit("AGUARDANDO")
             self.backend.update_robot_status("active")
-            await self.backend.close()
+            if self.backend.browser is not None or self.backend.chrome_proc is not None:
+                self.log_message.emit("Fechando navegador...")
+                try:
+                    await self.backend.close()
+                    await asyncio.sleep(1.0)
+                    loop = asyncio.get_running_loop()
+                    still_open = await loop.run_in_executor(None, _is_cdp_port_in_use)
+                    if still_open:
+                        self.log_message.emit("O navegador pode ainda estar aberto.")
+                    else:
+                        self.log_message.emit("Navegador fechado.")
+                except Exception as e:
+                    self.log_message.emit(f"Aviso ao fechar navegador: {e}")
+                    self.log_message.emit("O navegador pode ainda estar aberto.")
 
 
 class LogFrame(QFrame):
@@ -1527,6 +2045,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log_frame, 2)
 
         bottom = QHBoxLayout()
+        self.check_use_proxy = QCheckBox("Usar rotação de proxy")
+        self.check_use_proxy.setToolTip("Quando ativo, atualiza e usa lista de proxies ao iniciar; desmarque para rodar sem proxy.")
+        self._load_robot_config()
+        self.check_use_proxy.stateChanged.connect(self._save_robot_config)
+        bottom.addWidget(self.check_use_proxy)
+
         self.btn_start = QPushButton("Iniciar downloads")
         self.btn_start.setStyleSheet(button_style("#27AE60", "#2ECC71", "#1E8449"))
         start_icon = qicon("iniciar")
@@ -1555,6 +2079,26 @@ class MainWindow(QMainWindow):
         layout.addLayout(bottom)
 
         self.setCentralWidget(central)
+
+    def _load_robot_config(self) -> None:
+        """Carrega opção 'Usar rotação de proxy' do arquivo de config."""
+        try:
+            if ROBOT_CONFIG_FILE.exists():
+                data = json.loads(ROBOT_CONFIG_FILE.read_text(encoding="utf-8"))
+                self.check_use_proxy.setChecked(bool(data.get("use_proxy_rotation", True)))
+            else:
+                self.check_use_proxy.setChecked(True)
+        except Exception:
+            self.check_use_proxy.setChecked(True)
+
+    def _save_robot_config(self) -> None:
+        """Persiste opção 'Usar rotação de proxy' no arquivo de config."""
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            data = {"use_proxy_rotation": self.check_use_proxy.isChecked()}
+            ROBOT_CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     def _setup_tray_icon(self) -> None:
         self._tray_icon = QSystemTrayIcon(self)
@@ -1776,7 +2320,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         self.backend.ensure_robot_registration()
         self.backend.update_robot_status("processing")
-        self.worker = RobotWorker(self.backend, companies, job=job)
+        use_proxy = self.check_use_proxy.isChecked()
+        self.worker = RobotWorker(self.backend, companies, job=job, use_proxy_rotation=use_proxy)
         self.worker.status_changed.connect(self.set_global_status)
         self.worker.log_message.connect(self.append_log)
         self.worker.company_changed.connect(self.update_company_state)

@@ -74,6 +74,7 @@ export default function EmpresasPage() {
   const [editStateRegistration, setEditStateRegistration] = useState("")
   const [editStateCode, setEditStateCode] = useState("")
   const [editCityName, setEditCityName] = useState("")
+  const [editCae, setEditCae] = useState("")
   const [editActive, setEditActive] = useState(true)
   const [editUseCertificate, setEditUseCertificate] = useState(false)
   const [editCertReplacing, setEditCertReplacing] = useState(false)
@@ -158,6 +159,7 @@ export default function EmpresasPage() {
     setEditStateRegistration(row.state_registration ?? "")
     setEditStateCode(row.state_code ?? "")
     setEditCityName(row.city_name ?? "")
+    setEditCae((row as CompanyWithCert).cae ?? "")
     setEditActive(row.active !== false)
     const withCert = row
     const shouldFocusCertificate = options?.focusCertificate ?? false
@@ -222,6 +224,7 @@ export default function EmpresasPage() {
         state_registration: editStateRegistration.trim() || null,
         state_code: editStateCode || null,
         city_name: editCityName || null,
+        cae: editCae.trim() || null,
         active: editActive,
       }
       if (!editUseCertificate) {
@@ -454,6 +457,17 @@ export default function EmpresasPage() {
                 disabled={editSaving}
                 placeholder="Inscrição estadual"
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-cae">CAE (Inscrição Municipal)</Label>
+              <Input
+                id="edit-cae"
+                value={editCae}
+                onChange={(e) => setEditCae(e.target.value)}
+                disabled={editSaving}
+                placeholder="Ex.: 2163519"
+              />
+              <p className="text-xs text-muted-foreground">Inscrição municipal (ex.: Prefeitura de Goiânia). Usado pelo robô de taxas para localizar a empresa no portal.</p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">

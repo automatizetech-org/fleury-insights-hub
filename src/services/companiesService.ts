@@ -79,6 +79,7 @@ export async function createCompany(params: {
   state_registration?: string | null
   state_code?: string | null
   city_name?: string | null
+  cae?: string | null
   sefaz_go_logins?: CompanySefazLogin[]
   auth_mode?: "password" | "certificate" | null
   cert_blob_b64?: string | null
@@ -97,6 +98,7 @@ export async function createCompany(params: {
         state_registration: params.state_registration ?? null,
         state_code: params.state_code ?? null,
         city_name: params.city_name ?? null,
+        cae: params.cae ?? null,
         sefaz_go_logins: params.sefaz_go_logins ?? [],
         auth_mode: params.auth_mode ?? null,
         cert_blob_b64: params.cert_blob_b64 ?? null,
@@ -120,6 +122,7 @@ export async function updateCompany(
     state_registration?: string | null
     state_code?: string | null
     city_name?: string | null
+    cae?: string | null
     sefaz_go_logins?: CompanySefazLogin[]
     active?: boolean
     auth_mode?: "password" | "certificate" | null

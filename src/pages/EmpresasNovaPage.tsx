@@ -57,6 +57,7 @@ export default function EmpresasNovaPage() {
   const [stateRegistration, setStateRegistration] = useState("")
   const [stateCode, setStateCode] = useState("")
   const [cityName, setCityName] = useState("")
+  const [cae, setCae] = useState("")
   const [useCertificate, setUseCertificate] = useState(false)
   const [certFile, setCertFile] = useState<File | null>(null)
   const [certPassword, setCertPassword] = useState("")
@@ -151,6 +152,7 @@ export default function EmpresasNovaPage() {
         state_registration: stateRegistration.trim() || null,
         state_code: stateCode || null,
         city_name: cityName || null,
+        cae: cae.trim() || null,
         auth_mode: useCertificate ? "certificate" : null,
         cert_blob_b64,
         cert_password,
@@ -279,6 +281,17 @@ export default function EmpresasNovaPage() {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="cae">CAE (Inscrição Municipal)</Label>
+            <Input
+              id="cae"
+              value={cae}
+              onChange={(e) => setCae(e.target.value)}
+              disabled={loading}
+              placeholder="Ex.: 2163519"
+            />
+            <p className="text-xs text-muted-foreground">Opcional. Inscrição municipal (ex.: Prefeitura de Goiânia). Usado pelo robô de taxas para localizar a empresa no portal.</p>
           </div>
           <div className="space-y-3 pt-2 border-t border-border">
             <div className="flex items-center gap-2">

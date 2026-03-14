@@ -38,7 +38,9 @@ function normalizeBaseDate() {
   return new Date(today.getFullYear(), today.getMonth(), today.getDate())
 }
 
-export function getMunicipalTaxStatusClass(dataVencimento: string | null): MunicipalTaxStatusClass {
+export function getMunicipalTaxStatusClass(dataVencimento: string | null, valor?: number | string | null): MunicipalTaxStatusClass {
+  const numValor = typeof valor === "string" ? Number(valor) : Number(valor ?? 0)
+  if (numValor === 0) return "regular"
   if (!dataVencimento) return "regular"
   const due = new Date(`${dataVencimento}T00:00:00`)
   const diff = Math.ceil((due.getTime() - normalizeBaseDate().getTime()) / DAY_IN_MS)
@@ -103,7 +105,7 @@ export async function getMunicipalTaxDebts(filters: MunicipalTaxFilters = {}): P
       ...item,
       company_name: companyMap.get(item.company_id)?.name ?? "Empresa sem nome",
       company_document: companyMap.get(item.company_id)?.document ?? null,
-      status_class: getMunicipalTaxStatusClass(item.data_vencimento),
+      status_class: getMunicipalTaxStatusClass(item.data_vencimento, item.valor),
       days_until_due: getMunicipalTaxDaysUntilDue(item.data_vencimento),
     }))
     .filter((item) => matchesFilters(item, filters))

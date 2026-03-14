@@ -2,8 +2,10 @@ import { useMemo, useState, type Dispatch, type SetStateAction } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
+  ArrowDownUp,
   AlertTriangle,
   Building2,
+  Calendar,
   Clock3,
   Crown,
   FileBadge2,
@@ -19,9 +21,11 @@ import { GlassCard } from "@/components/dashboard/GlassCard"
 import { StatsCard } from "@/components/dashboard/StatsCard"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { DataPagination } from "@/components/common/DataPagination"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useCompanies } from "@/hooks/useCompanies"
+import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies"
 import {
   QUALIFICACAO_DISPLAY,
   fetchSalarioMinimoBCB,
@@ -35,7 +39,6 @@ import {
   type CertificateStatus,
 } from "@/services/paralegalService"
 import {
-  getLatestMunicipalTaxRuns,
   getMunicipalTaxDebts,
   getMunicipalTaxSummary,
   type MunicipalTaxDebtView,
@@ -57,9 +60,9 @@ type MockTask = {
   status: "em_dia" | "vence_hoje" | "atrasada"
 }
 
-type MunicipalTaxFiltersState = {
+/** Filtros apenas da tabela completa de débitos (empresa vem do painel lateral). */
+type MunicipalTaxTableFiltersState = {
   search: string
-  companyId: string
   year: string
   status: "todos" | MunicipalTaxStatusClass
   periodFrom: string
@@ -72,7 +75,6 @@ const TOPIC_LINKS: Array<{ label: string; path: string; topic: Topic }> = [
   { label: "Visao Geral", path: "/paralegal", topic: "overview" },
   { label: "Certificados", path: "/paralegal/certificados", topic: "certificados" },
   { label: "Tarefas", path: "/paralegal/tarefas", topic: "tarefas" },
-  { label: "Clientes", path: "/paralegal/clientes", topic: "clientes" },
   { label: "Taxas e Impostos", path: "/paralegal/taxas-impostos", topic: "taxas-impostos" },
 ]
 
@@ -85,8 +87,19 @@ const CERTIFICATE_STATUS_META: Record<CertificateStatus, { label: string; tone: 
 
 const MUNICIPAL_TAX_META: Record<MunicipalTaxStatusClass, { label: string; tone: string; color: string }> = {
   vencido: { label: "Vencido", tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300", color: "#F43F5E" },
-  a_vencer: { label: "A vencer em ate 30 dias", tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300", color: "#F59E0B" },
+  a_vencer: { label: "A vencer (proximos 30 dias)", tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300", color: "#F59E0B" },
   regular: { label: "Regular", tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300", color: "#10B981" },
+}
+
+/** Retorna o texto da classificacao para exibicao. Para "a_vencer", usa os dias reais: "Vence hoje", "A vencer daqui 1 dia" ou "A vencer daqui N dias". */
+function getMunicipalTaxClassificationLabel(item: MunicipalTaxDebtView): string {
+  if (item.status_class === "a_vencer" && item.days_until_due != null) {
+    const n = item.days_until_due
+    if (n === 0) return "Vence hoje"
+    if (n === 1) return "A vencer daqui 1 dia"
+    return `A vencer daqui ${n} dias`
+  }
+  return MUNICIPAL_TAX_META[item.status_class].label
 }
 
 const MOCK_TASKS: MockTask[] = [
@@ -110,7 +123,7 @@ const MOCK_SALARIO_MINIMO = 1518
 function getTopicFromPath(pathname: string): Topic {
   if (pathname === "/paralegal/certificados") return "certificados"
   if (pathname === "/paralegal/tarefas") return "tarefas"
-  if (pathname === "/paralegal/clientes") return "clientes"
+  if (pathname === "/paralegal/clientes") return "overview"
   if (pathname === "/paralegal/taxas-impostos") return "taxas-impostos"
   return "overview"
 }
@@ -146,13 +159,71 @@ function formatCurrencyBRL(value: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value)
 }
 
-function sortTableByDueDate(items: MunicipalTaxDebtView[]) {
-  return [...items].sort((a, b) => {
-    const aDate = a.data_vencimento ?? "9999-12-31"
-    const bDate = b.data_vencimento ?? "9999-12-31"
-    if (aDate !== bDate) return aDate.localeCompare(bDate)
-    return a.company_name.localeCompare(b.company_name)
-  })
+type MunicipalTaxSortKey =
+  | "company_name"
+  | "tributo"
+  | "ano"
+  | "numero_documento"
+  | "data_vencimento"
+  | "valor"
+  | "situacao"
+  | "status_class"
+  | null
+type MunicipalTaxSortDirection = "asc" | "desc" | null
+type MunicipalTaxSortState = { key: MunicipalTaxSortKey; direction: MunicipalTaxSortDirection }
+
+function cycleMunicipalTaxSort(current: MunicipalTaxSortState, key: Exclude<MunicipalTaxSortKey, null>): MunicipalTaxSortState {
+  if (current.key !== key) return { key, direction: "desc" }
+  if (current.direction === "desc") return { key, direction: "asc" }
+  return { key: null, direction: null }
+}
+
+function compareMunicipalDebts(a: MunicipalTaxDebtView, b: MunicipalTaxDebtView, sort: MunicipalTaxSortState): number {
+  if (!sort.key || !sort.direction) return 0
+  const getVal = (item: MunicipalTaxDebtView) => {
+    switch (sort.key) {
+      case "company_name": return String(item.company_name ?? "").toLowerCase()
+      case "tributo": return String(item.tributo ?? "").toLowerCase()
+      case "ano": return String(item.ano ?? "")
+      case "numero_documento": return String(item.numero_documento ?? "")
+      case "data_vencimento": return String(item.data_vencimento ?? "")
+      case "valor": return Number(item.valor ?? 0)
+      case "situacao": return String(item.situacao ?? "").toLowerCase()
+      case "status_class": return String(item.status_class ?? "")
+      default: return ""
+    }
+  }
+  const aVal = getVal(a)
+  const bVal = getVal(b)
+  const result =
+    typeof aVal === "number" && typeof bVal === "number"
+      ? aVal - bVal
+      : String(aVal).localeCompare(String(bVal), "pt-BR", { numeric: true })
+  return sort.direction === "desc" ? -result : result
+}
+
+function MunicipalTaxSortHeader({
+  label,
+  column,
+  sort,
+  onToggle,
+}: {
+  label: string
+  column: Exclude<MunicipalTaxSortKey, null>
+  sort: MunicipalTaxSortState
+  onToggle: (key: Exclude<MunicipalTaxSortKey, null>) => void
+}) {
+  const active = sort.key === column ? (sort.direction === "desc" ? " ↓" : sort.direction === "asc" ? " ↑" : "") : ""
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(column)}
+      className="inline-flex items-center gap-1 text-left font-medium text-muted-foreground hover:text-foreground"
+    >
+      <span>{label}{active}</span>
+      <ArrowDownUp className={cn("h-3.5 w-3.5", sort.key === column ? "text-foreground" : "opacity-50")} />
+    </button>
+  )
 }
 
 function TasksPanel() {
@@ -222,23 +293,46 @@ function MunicipalTaxesPanel({
   setFilters,
   items,
   isLoading,
-  companies,
-  latestRuns,
 }: {
-  filters: MunicipalTaxFiltersState
-  setFilters: Dispatch<SetStateAction<MunicipalTaxFiltersState>>
+  filters: MunicipalTaxTableFiltersState
+  setFilters: Dispatch<SetStateAction<MunicipalTaxTableFiltersState>>
   items: MunicipalTaxDebtView[]
   isLoading: boolean
-  companies: Array<{ id: string; name: string }>
-  latestRuns: Array<{ id: string; status: string; company_name: string | null; debts_found: number | null; created_at: string }>
 }) {
   const summary = useMemo(() => getMunicipalTaxSummary(items), [items])
-  const itemsSorted = useMemo(() => sortTableByDueDate(items), [items])
+  const [tablePage, setTablePage] = useState(1)
+  const [tablePageSize, setTablePageSize] = useState(10)
 
   const yearOptions = useMemo(() => {
     const values = [...new Set(items.map((item) => item.ano).filter((value): value is number => typeof value === "number"))]
     return values.sort((a, b) => b - a)
   }, [items])
+
+  const tableFiltered = useMemo(() => {
+    return items.filter((item) => {
+      if (filters.search.trim()) {
+        const q = filters.search.trim().toLowerCase()
+        const haystack = [item.company_name, item.company_document, item.tributo, item.numero_documento].map((x) => String(x ?? "").toLowerCase()).join(" ")
+        if (!haystack.includes(q) && !String(item.company_document ?? "").replace(/\D/g, "").includes(q.replace(/\D/g, ""))) return false
+      }
+      if (filters.year !== "todos" && String(item.ano ?? "") !== filters.year) return false
+      if (filters.status !== "todos" && item.status_class !== filters.status) return false
+      if (filters.periodFrom && (item.data_vencimento ?? "") < filters.periodFrom) return false
+      if (filters.periodTo && (item.data_vencimento ?? "") > filters.periodTo) return false
+      return true
+    })
+  }, [items, filters])
+
+  const [tableSort, setTableSort] = useState<MunicipalTaxSortState>({ key: null, direction: null })
+  const sortedItems = useMemo(
+    () => [...tableFiltered].sort((a, b) => compareMunicipalDebts(a, b, tableSort)),
+    [tableFiltered, tableSort]
+  )
+  const totalFiltered = sortedItems.length
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / tablePageSize))
+  const from = (tablePage - 1) * tablePageSize
+  const to = Math.min(from + tablePageSize, totalFiltered)
+  const pageItems = sortedItems.slice(from, to)
 
   const statusChartData = useMemo(
     () =>
@@ -250,6 +344,15 @@ function MunicipalTaxesPanel({
       })),
     [items]
   )
+
+  /** Os 30 primeiros documentos com data de vencimento de hoje para frente (hoje ou futuro), ordenados do mais próximo. */
+  const documentsByDueDate = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return [...items]
+      .filter((item) => item.data_vencimento && item.data_vencimento >= today)
+      .sort((a, b) => String(a.data_vencimento ?? "").localeCompare(String(b.data_vencimento ?? "")))
+      .slice(0, 30)
+  }, [items])
 
   const companyChartData = useMemo(() => {
     const totals = new Map<string, number>()
@@ -270,52 +373,46 @@ function MunicipalTaxesPanel({
 
   return (
     <div className="space-y-4">
+      <GlassCard className="p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Calendar className="h-4 w-4 shrink-0" />
+            <span className="text-sm font-medium">Período</span>
+          </div>
+          <label className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">De</span>
+            <Input
+              type="date"
+              value={filters.periodFrom}
+              onChange={(e) => {
+                setFilters((c) => ({ ...c, periodFrom: e.target.value }))
+                setTablePage(1)
+              }}
+              className="h-8 w-[10rem]"
+            />
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Até</span>
+            <Input
+              type="date"
+              value={filters.periodTo}
+              onChange={(e) => {
+                setFilters((c) => ({ ...c, periodTo: e.target.value }))
+                setTablePage(1)
+              }}
+              className="h-8 w-[10rem]"
+            />
+          </label>
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">Todos os dados da página (estatísticas e tabela) seguem este período.</p>
+      </GlassCard>
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatsCard title="Total de debitos" value={formatCurrencyBRL(summary.totalValor)} icon={Landmark} />
         <StatsCard title="Total vencido" value={formatCurrencyBRL(summary.totalVencido)} icon={ShieldAlert} />
         <StatsCard title="Total a vencer" value={formatCurrencyBRL(summary.totalAVencer)} icon={Clock3} />
         <StatsCard title="Quantidade de debitos" value={summary.quantidadeDebitos.toString()} icon={FileBadge2} />
       </div>
-
-      <GlassCard className="p-6">
-        <div className="mb-4">
-          <h3 className="text-sm font-semibold font-display">Filtros da consulta municipal</h3>
-          <p className="mt-1 text-xs text-muted-foreground">Filtre por empresa, ano, classificacao de vencimento e periodo.</p>
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
-          <div className="xl:col-span-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Buscar por empresa, tributo ou documento..." className="pl-9" />
-            </div>
-          </div>
-          <Select value={filters.companyId} onValueChange={(value) => setFilters((current) => ({ ...current, companyId: value }))}>
-            <SelectTrigger><SelectValue placeholder="Empresa" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todas as empresas</SelectItem>
-              {companies.map((company) => <SelectItem key={company.id} value={company.id}>{company.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={filters.year} onValueChange={(value) => setFilters((current) => ({ ...current, year: value }))}>
-            <SelectTrigger><SelectValue placeholder="Ano" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos os anos</SelectItem>
-              {yearOptions.map((year) => <SelectItem key={year} value={String(year)}>{year}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={filters.status} onValueChange={(value) => setFilters((current) => ({ ...current, status: value as MunicipalTaxFiltersState["status"] }))}>
-            <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos os status</SelectItem>
-              <SelectItem value="vencido">Vencido</SelectItem>
-              <SelectItem value="a_vencer">A vencer em ate 30 dias</SelectItem>
-              <SelectItem value="regular">Regular</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input value={filters.periodFrom} onChange={(event) => setFilters((current) => ({ ...current, periodFrom: event.target.value }))} type="date" />
-          <Input value={filters.periodTo} onChange={(event) => setFilters((current) => ({ ...current, periodTo: event.target.value }))} type="date" />
-        </div>
-      </GlassCard>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
         <GlassCard className="p-6">
@@ -346,25 +443,30 @@ function MunicipalTaxesPanel({
 
         <GlassCard className="p-6">
           <div className="mb-4">
-            <h3 className="text-sm font-semibold font-display">Ultimas execucoes do robo</h3>
-            <p className="mt-1 text-xs text-muted-foreground">Historico resumido da coleta municipal em Goiania.</p>
+            <h3 className="text-sm font-semibold font-display">Documentos próximos de vencer</h3>
+            <p className="mt-1 text-xs text-muted-foreground">Os 30 primeiros com vencimento de hoje para frente (do mais próximo).</p>
           </div>
-          <div className="space-y-3">
-            {latestRuns.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Nenhuma execucao registrada ainda.</p>
+          <div className="space-y-2 max-h-[320px] overflow-y-auto -webkit-overflow-scrolling-touch">
+            {isLoading ? (
+              <p className="text-xs text-muted-foreground">Carregando...</p>
+            ) : documentsByDueDate.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Nenhum débito com vencimento de hoje em diante nos filtros atuais.</p>
             ) : (
-              latestRuns.map((run) => (
-                <div key={run.id} className="rounded-xl border border-border bg-background/60 px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{run.company_name || "Execucao geral"}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{formatDate(run.created_at.slice(0, 10))}</p>
+              documentsByDueDate.map((item) => (
+                <div key={item.id} className="rounded-xl border border-border bg-background/60 px-3 py-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{item.company_name}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground" title={item.tributo ?? undefined}>{item.tributo || "-"}</p>
                     </div>
-                    <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", run.status === "completed" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : run.status === "running" ? "bg-sky-500/15 text-sky-700 dark:text-sky-300" : run.status === "failed" ? "bg-rose-500/15 text-rose-700 dark:text-rose-300" : "bg-amber-500/15 text-amber-700 dark:text-amber-300")}>
-                      {run.status}
+                    <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium", MUNICIPAL_TAX_META[item.status_class].tone)}>
+                      {getMunicipalTaxClassificationLabel(item)}
                     </span>
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground">Debitos encontrados: {run.debts_found ?? 0}</p>
+                  <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>Venc.: {formatDate(item.data_vencimento)}</span>
+                    <span className="tabular-nums">{formatCurrencyBRL(Number(item.valor ?? 0))}</span>
+                  </div>
                 </div>
               ))
             )}
@@ -379,7 +481,7 @@ function MunicipalTaxesPanel({
             <p className="mt-1 text-xs text-muted-foreground">Top empresas com maior valor em debitos municipais.</p>
           </div>
           <ChartContainer className="h-[280px] w-full" config={{ total: { label: "Valor", color: "#2563EB" } }}>
-            <BarChart data={companyChartData} layout="vertical" margin={{ left: 24 }}>
+            <BarChart data={companyChartData} layout="vertical" margin={{ left: 24, right: 16, top: 8, bottom: 8 }}>
               <CartesianGrid horizontal={false} />
               <XAxis type="number" tickFormatter={(value) => formatCurrencyBRL(Number(value))} />
               <YAxis type="category" dataKey="name" width={140} tickLine={false} axisLine={false} />
@@ -395,10 +497,10 @@ function MunicipalTaxesPanel({
             <p className="mt-1 text-xs text-muted-foreground">Soma de valores agrupada pelo ano do debito.</p>
           </div>
           <ChartContainer className="h-[280px] w-full" config={{ total: { label: "Valor", color: "#0F766E" } }}>
-            <BarChart data={yearChartData}>
+            <BarChart data={yearChartData} margin={{ left: 60, right: 16, top: 8, bottom: 8 }}>
               <CartesianGrid vertical={false} />
               <XAxis dataKey="name" tickLine={false} axisLine={false} />
-              <YAxis tickFormatter={(value) => formatCurrencyBRL(Number(value))} />
+              <YAxis width={58} tickFormatter={(value) => formatCurrencyBRL(Number(value))} />
               <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatCurrencyBRL(Number(value))} />} />
               <Bar dataKey="total" fill="#0F766E" radius={[10, 10, 0, 0]} />
             </BarChart>
@@ -409,44 +511,85 @@ function MunicipalTaxesPanel({
       <GlassCard className="overflow-hidden">
         <div className="border-b border-border p-4">
           <h3 className="text-sm font-semibold font-display">Tabela completa de debitos</h3>
-          <p className="mt-1 text-xs text-muted-foreground">Consulta consolidada de taxas e impostos municipais da Prefeitura de Goiania.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Consulta consolidada de taxas e impostos municipais da Prefeitura de Goiania. Empresas conforme seleção do painel lateral.</p>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="relative lg:col-span-2">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={filters.search} onChange={(e) => { setFilters((c) => ({ ...c, search: e.target.value })); setTablePage(1); }} placeholder="Pesquisar por empresa ou CNPJ" className="pl-9" />
+            </div>
+            <Select value={filters.year} onValueChange={(v) => { setFilters((c) => ({ ...c, year: v })); setTablePage(1); }}>
+              <SelectTrigger><SelectValue placeholder="Ano" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os anos</SelectItem>
+                {yearOptions.map((year) => <SelectItem key={year} value={String(year)}>{year}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={filters.status} onValueChange={(v) => { setFilters((c) => ({ ...c, status: v as MunicipalTaxTableFiltersState["status"] })); setTablePage(1); }}>
+              <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="vencido">Vencido</SelectItem>
+                <SelectItem value="a_vencer">A vencer</SelectItem>
+                <SelectItem value="regular">Regular</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto -webkit-overflow-scrolling-touch rounded-b-lg border-x border-b border-border">
           {isLoading ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">Carregando debitos municipais...</div>
-          ) : itemsSorted.length === 0 ? (
+          ) : pageItems.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">Nenhum debito encontrado para os filtros informados.</div>
           ) : (
-            <table className="min-w-full text-sm">
-              <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Empresa</th>
-                  <th className="px-4 py-3 font-medium">Tributo</th>
-                  <th className="px-4 py-3 font-medium">Ano</th>
-                  <th className="px-4 py-3 font-medium">Documento</th>
-                  <th className="px-4 py-3 font-medium">Data de vencimento</th>
-                  <th className="px-4 py-3 font-medium">Valor</th>
-                  <th className="px-4 py-3 font-medium">Situacao</th>
-                  <th className="px-4 py-3 font-medium">Classificacao</th>
+            <table className="min-w-[1200px] w-full table-fixed text-[11px]">
+              <thead className="bg-muted/50 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                <tr className="border-b border-border">
+                  <th className="w-[160px] min-w-[160px] px-3 py-3 pr-6"><MunicipalTaxSortHeader label="Empresa" column="company_name" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
+                  <th className="w-[300px] min-w-[300px] px-3 py-3 pr-6"><MunicipalTaxSortHeader label="Tributo" column="tributo" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
+                  <th className="w-[52px] px-3 py-3"><MunicipalTaxSortHeader label="Ano" column="ano" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
+                  <th className="w-[90px] px-3 py-3"><MunicipalTaxSortHeader label="Documento" column="numero_documento" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
+                  <th className="w-[92px] px-3 py-3"><MunicipalTaxSortHeader label="Vencimento" column="data_vencimento" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
+                  <th className="w-[92px] px-3 py-3"><MunicipalTaxSortHeader label="Valor" column="valor" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
+                  <th className="w-[90px] px-3 py-3"><MunicipalTaxSortHeader label="Situacao" column="situacao" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
+                  <th className="w-[120px] px-3 py-3 whitespace-nowrap"><MunicipalTaxSortHeader label="Classificacao" column="status_class" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
                 </tr>
               </thead>
               <tbody>
-                {itemsSorted.map((item) => (
-                  <tr key={item.id} className="border-t border-border/70">
-                    <td className="px-4 py-3 align-top"><p className="font-medium">{item.company_name}</p><p className="mt-1 text-xs text-muted-foreground">{formatCnpj(item.company_document)}</p></td>
-                    <td className="px-4 py-3 align-top">{item.tributo || "-"}</td>
-                    <td className="px-4 py-3 align-top">{item.ano || "-"}</td>
-                    <td className="px-4 py-3 align-top">{item.numero_documento || "-"}</td>
-                    <td className="px-4 py-3 align-top">{formatDate(item.data_vencimento)}</td>
-                    <td className="px-4 py-3 align-top">{formatCurrencyBRL(Number(item.valor || 0))}</td>
-                    <td className="px-4 py-3 align-top">{item.situacao || "-"}</td>
-                    <td className="px-4 py-3 align-top"><span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", MUNICIPAL_TAX_META[item.status_class].tone)}>{MUNICIPAL_TAX_META[item.status_class].label}</span></td>
+                {pageItems.map((item) => (
+                  <tr key={item.id} className="border-b border-border/70 hover:bg-muted/30 transition-colors">
+                    <td className="w-[160px] min-w-[160px] px-3 py-3 pr-6 align-top min-w-0">
+                      <div className="font-medium truncate" title={item.company_name ?? undefined}>{item.company_name}</div>
+                      <div className="text-[11px] text-muted-foreground truncate mt-0.5" title={item.company_document ?? undefined}>{formatCnpj(item.company_document)}</div>
+                    </td>
+                    <td className="w-[300px] min-w-[300px] px-3 py-3 pr-6 align-top min-w-0">
+                      <div className="break-words leading-snug">{item.tributo || "-"}</div>
+                    </td>
+                    <td className="w-[52px] px-3 py-3 align-top whitespace-nowrap tabular-nums">{item.ano || "-"}</td>
+                    <td className="w-[90px] px-3 py-3 align-top min-w-0"><span className="block truncate" title={item.numero_documento ?? undefined}>{item.numero_documento || "-"}</span></td>
+                    <td className="w-[92px] px-3 py-3 align-top whitespace-nowrap tabular-nums">{formatDate(item.data_vencimento)}</td>
+                    <td className="w-[92px] px-3 py-3 align-top whitespace-nowrap tabular-nums">{formatCurrencyBRL(Number(item.valor || 0))}</td>
+                    <td className="w-[90px] px-3 py-3 align-top min-w-0"><span className="block truncate" title={item.situacao ?? undefined}>{item.situacao || "-"}</span></td>
+                    <td className="w-[120px] px-3 py-3 align-top whitespace-nowrap">
+                      <span className={cn("inline-block rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap", MUNICIPAL_TAX_META[item.status_class].tone)} title={getMunicipalTaxClassificationLabel(item)}>{getMunicipalTaxClassificationLabel(item)}</span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
         </div>
+        {totalFiltered > 0 && (
+          <DataPagination
+            currentPage={tablePage}
+            totalPages={totalPages}
+            totalItems={totalFiltered}
+            from={from + 1}
+            to={to}
+            pageSize={tablePageSize}
+            onPageChange={setTablePage}
+            onPageSizeChange={(next) => { setTablePageSize(next); setTablePage(1); }}
+          />
+        )}
       </GlassCard>
     </div>
   )
@@ -459,15 +602,15 @@ export default function ParalegalPage() {
 
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState<CertificateFilter>("todos")
-  const [municipalFilters, setMunicipalFilters] = useState<MunicipalTaxFiltersState>({
+  const [municipalFilters, setMunicipalFilters] = useState<MunicipalTaxTableFiltersState>({
     search: "",
-    companyId: "todos",
     year: "todos",
     status: "todos",
     periodFrom: "",
     periodTo: "",
   })
 
+  const { selectedCompanyIds } = useSelectedCompanyIds()
   const { data: companies = [] } = useCompanies()
   const { data: certificateItems = [], isLoading } = useQuery({
     queryKey: ["paralegal-certificates"],
@@ -481,10 +624,10 @@ export default function ParalegalPage() {
     refetchOnMount: "always",
   })
   const { data: municipalDebts = [], isLoading: municipalDebtsLoading } = useQuery({
-    queryKey: ["paralegal-municipal-taxes", municipalFilters],
+    queryKey: ["paralegal-municipal-taxes", selectedCompanyIds, municipalFilters],
     queryFn: () =>
       getMunicipalTaxDebts({
-        companyIds: municipalFilters.companyId === "todos" ? null : [municipalFilters.companyId],
+        companyIds: selectedCompanyIds.length > 0 ? selectedCompanyIds : null,
         year: municipalFilters.year,
         status: municipalFilters.status,
         dateFrom: municipalFilters.periodFrom || undefined,
@@ -492,11 +635,6 @@ export default function ParalegalPage() {
         search: municipalFilters.search,
       }),
   })
-  const { data: municipalRuns = [] } = useQuery({
-    queryKey: ["paralegal-municipal-tax-runs"],
-    queryFn: () => getLatestMunicipalTaxRuns(8),
-  })
-
   const salarioMinimo = salarioMinimoData ?? MOCK_SALARIO_MINIMO
   const certificateSummary = useMemo(() => getParalegalCertificateSummary(certificateItems), [certificateItems])
   const municipalSummary = useMemo(() => getMunicipalTaxSummary(municipalDebts), [municipalDebts])
@@ -523,6 +661,18 @@ export default function ParalegalPage() {
   )
 
   const certificatePieData = useMemo(() => certificateBarData.filter((item) => item.total > 0), [certificateBarData])
+
+  const overviewTaxChartData = useMemo(
+    () =>
+      (["vencido", "a_vencer", "regular"] as MunicipalTaxStatusClass[]).map((status) => ({
+        key: status,
+        name: MUNICIPAL_TAX_META[status].label,
+        total: municipalDebts.filter((item) => item.status_class === status).length,
+        fill: MUNICIPAL_TAX_META[status].color,
+      })),
+    [municipalDebts]
+  )
+  const overviewTaxPieData = useMemo(() => overviewTaxChartData.filter((entry) => entry.total > 0), [overviewTaxChartData])
 
   const overviewCards = (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -632,7 +782,7 @@ export default function ParalegalPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold font-display tracking-tight">Paralegal</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Controle de certificados, tarefas, clientes e taxas municipais.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Certificados, tarefas e taxas municipais.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {TOPIC_LINKS.map((item) => (
@@ -641,47 +791,66 @@ export default function ParalegalPage() {
           </Link>
         ))}
       </div>
-      {topic === "overview" && (
-        <div className="space-y-4">
-          {overviewCards}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <GlassCard className="p-6 lg:col-span-2">
-              <h3 className="mb-3 text-sm font-semibold font-display">Resumo rapido do Paralegal</h3>
-              <div className="space-y-3">
-                {certificateBarData.map((item) => (
-                  <div key={item.key}>
-                    <div className="mb-1 flex items-center justify-between text-xs"><span className="text-muted-foreground">{item.name}</span><span className="font-medium">{item.total}</span></div>
-                    <div className="h-2.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full" style={{ width: `${certificateSummary.total ? (item.total / certificateSummary.total) * 100 : 0}%`, backgroundColor: item.fill }} /></div>
-                  </div>
-                ))}
-              </div>
-            </GlassCard>
-            <GlassCard className="p-6">
-              <h3 className="mb-3 text-sm font-semibold font-display">Taxas e impostos</h3>
-              <div className="space-y-3 text-xs text-muted-foreground">
-                <p>Empresas com debitos vencidos: <span className="font-semibold text-foreground">{municipalSummary.empresasComVencidos}</span></p>
-                <p>Empresas com vencimento proximo: <span className="font-semibold text-foreground">{municipalSummary.empresasProximasVencimento}</span></p>
-                <p>Total de debitos municipais: <span className="font-semibold text-foreground">{municipalSummary.quantidadeDebitos}</span></p>
-                <p>Valor total monitorado: <span className="font-semibold text-foreground">{formatCurrencyBRL(municipalSummary.totalValor)}</span></p>
-              </div>
-            </GlassCard>
-          </div>
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
-            <StatsCard title="Empresas com debitos vencidos" value={municipalSummary.empresasComVencidos.toString()} icon={Building2} />
-            <StatsCard title="Debitos proximos do vencimento" value={municipalDebts.filter((item) => item.status_class === "a_vencer").length.toString()} icon={Clock3} />
-            <StatsCard title="Total de debitos municipais" value={municipalSummary.quantidadeDebitos.toString()} icon={Landmark} />
-            <StatsCard title="Valor total em aberto" value={formatCurrencyBRL(municipalSummary.totalValor)} icon={AlertTriangle} />
-          </div>
-          <div className="space-y-4">
+      {(topic === "overview" || topic === "clientes") && (
+        <div className="space-y-6">
+          <section>
+            <h2 className="mb-3 text-sm font-semibold font-display text-muted-foreground">Certificados</h2>
+            {overviewCards}
+            <div className="mt-4">
+              <GlassCard className="p-6">
+                <h3 className="mb-4 text-sm font-semibold font-display">Status dos certificados</h3>
+                <ChartContainer className="h-[260px] w-full" config={{ total: { label: "Empresas", color: "#2563EB" } }}>
+                  <BarChart data={certificateBarData}>
+                    <CartesianGrid vertical={false} />
+                    <XAxis dataKey="name" tickLine={false} axisLine={false} />
+                    <YAxis allowDecimals={false} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="total" radius={[10, 10, 0, 0]}>
+                      {certificateBarData.map((entry) => <Cell key={entry.key} fill={entry.fill} />)}
+                    </Bar>
+                  </BarChart>
+                </ChartContainer>
+              </GlassCard>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="mb-3 text-sm font-semibold font-display text-muted-foreground">Taxas e impostos (Goiania)</h2>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatsCard title="Empresas com debitos vencidos" value={municipalSummary.empresasComVencidos.toString()} icon={Building2} />
+              <StatsCard title="Debitos a vencer (30 dias)" value={municipalDebts.filter((item) => item.status_class === "a_vencer").length.toString()} icon={Clock3} />
+              <StatsCard title="Total de debitos" value={municipalSummary.quantidadeDebitos.toString()} icon={Landmark} />
+              <StatsCard title="Valor total em aberto" value={formatCurrencyBRL(municipalSummary.totalValor)} icon={AlertTriangle} />
+            </div>
+            <div className="mt-4">
+              <GlassCard className="p-6">
+                <h3 className="mb-4 text-sm font-semibold font-display">Classificacao dos debitos municipais</h3>
+                <ChartContainer className="h-[260px] w-full" config={{ total: { label: "Debitos", color: "#2563EB" } }}>
+                  {overviewTaxPieData.length === 0 ? (
+                    <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">Nenhum debito nos filtros atuais.</div>
+                  ) : (
+                    <PieChart>
+                      <Pie data={overviewTaxPieData} dataKey="total" nameKey="name" innerRadius={58} outerRadius={88} paddingAngle={3}>
+                        {overviewTaxPieData.map((entry) => <Cell key={entry.key} fill={entry.fill} />)}
+                      </Pie>
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                    </PieChart>
+                  )}
+                </ChartContainer>
+              </GlassCard>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="mb-3 text-sm font-semibold font-display text-muted-foreground">Tarefas</h2>
+            <p className="mb-4 text-xs text-muted-foreground">Controle em construcao; dados ilustrativos.</p>
             <TasksPanel />
-            <ClientsPanel salarioMinimo={salarioMinimo} salarioMinimoLoading={salarioMinimoLoading} />
-          </div>
+          </section>
         </div>
       )}
       {topic === "certificados" && certificatesPanel}
       {topic === "tarefas" && <TasksPanel />}
-      {topic === "clientes" && <ClientsPanel salarioMinimo={salarioMinimo} salarioMinimoLoading={salarioMinimoLoading} />}
-      {topic === "taxas-impostos" && <MunicipalTaxesPanel filters={municipalFilters} setFilters={setMunicipalFilters} items={municipalDebts} isLoading={municipalDebtsLoading} companies={companies.map((company) => ({ id: company.id, name: company.name }))} latestRuns={municipalRuns.map((run) => ({ id: run.id, status: run.status, company_name: run.company_name, debts_found: run.debts_found, created_at: run.created_at }))} />}
+      {topic === "taxas-impostos" && <MunicipalTaxesPanel filters={municipalFilters} setFilters={setMunicipalFilters} items={municipalDebts} isLoading={municipalDebtsLoading} />}
     </div>
   )
 }
