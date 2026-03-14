@@ -61,6 +61,8 @@ export interface CnpjFormData {
   data_abertura: string;
   tipo_atividade: string;
   inscricao_estadual: string;
+  state_code: string;
+  city_name: string;
   email: string;
   telefone: string;
   /** Lista de sócios (nome + CPF); pode vir mais de um da API */
@@ -134,6 +136,8 @@ interface BrasilApiResponse {
   cnpj?: string;
   razao_social?: string;
   nome_fantasia?: string;
+  uf?: string;
+  municipio?: string;
   data_inicio_atividade?: string;
   situacao_cadastral?: number;
   descricao_situacao_cadastral?: string;
@@ -196,6 +200,8 @@ function mapBrasilApiToFormData(data: BrasilApiResponse, digits: string): CnpjFo
     data_abertura: dataAbertura,
     tipo_atividade: tipoAtividade,
     inscricao_estadual: "",
+    state_code: String(data.uf ?? "").trim().toUpperCase(),
+    city_name: String(data.municipio ?? "").trim(),
     email: data.email ?? "",
     telefone,
     socios: socios.length > 0 ? socios : [{ nome: "", cpf_socio: "" }],
@@ -247,6 +253,8 @@ function mapPublicaToFormData(data: CnpjPublicaResponse, digits: string): CnpjFo
     data_abertura: formatData(est?.data_inicio_atividade),
     tipo_atividade: tipoAtividade,
     inscricao_estadual: ie ? formatIE(ie) : "",
+    state_code: String(est?.estado?.sigla ?? "").trim().toUpperCase(),
+    city_name: String(est?.cidade?.nome ?? "").trim(),
     email: est?.email ?? "",
     telefone,
     socios: socios.length > 0 ? socios : [{ nome: "", cpf_socio: "" }],

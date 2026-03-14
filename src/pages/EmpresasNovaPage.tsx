@@ -4,6 +4,8 @@ import { useQuery } from "@tanstack/react-query"
 import { createCompany, upsertCompanyRobotConfig, ROBOT_NFS_TECHNICAL_ID } from "@/services/companiesService"
 import { findAccountantByCpf, formatCpf, getAccountants } from "@/services/accountantsService"
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies"
+import { fetchCnpjPublica } from "@/services/cnpjPublicaService"
+import { getBrazilStates, getCitiesByState } from "@/services/ibgeLocationsService"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,8 +20,6 @@ import {
 import { getPfxInfo } from "@/lib/validatePfxPassword"
 import { toast } from "sonner"
 import { cn } from "@/utils"
-
-const BRASIL_API_CNPJ = "https://brasilapi.com.br/api/cnpj/v1"
 
 function onlyDigits(s: string) {
   return s.replace(/\D/g, "")
@@ -55,6 +55,8 @@ export default function EmpresasNovaPage() {
   const [name, setName] = useState("")
   const [document, setDocument] = useState("")
   const [stateRegistration, setStateRegistration] = useState("")
+  const [stateCode, setStateCode] = useState("")
+  const [cityName, setCityName] = useState("")
   const [useCertificate, setUseCertificate] = useState(false)
   const [certFile, setCertFile] = useState<File | null>(null)
   const [certPassword, setCertPassword] = useState("")
@@ -67,6 +69,17 @@ export default function EmpresasNovaPage() {
     queryKey: ["accountants"],
     queryFn: () => getAccountants(true),
     staleTime: 30000,
+  })
+  const { data: states = [] } = useQuery({
+    queryKey: ["ibge-states"],
+    queryFn: getBrazilStates,
+    staleTime: 24 * 60 * 60 * 1000,
+  })
+  const { data: cities = [] } = useQuery({
+    queryKey: ["ibge-cities", stateCode],
+    queryFn: () => getCitiesByState(stateCode),
+    enabled: !!stateCode,
+    staleTime: 24 * 60 * 60 * 1000,
   })
 
   const [nfsRobotEnabled, setNfsRobotEnabled] = useState(false)
@@ -82,17 +95,17 @@ export default function EmpresasNovaPage() {
     setError("")
     setLoadingCnpj(true)
     try {
-      const res = await fetch(`${BRASIL_API_CNPJ}/${digits}`)
-      if (!res.ok) {
-        if (res.status === 404) setError("CNPJ não encontrado.")
-        else setError("Não foi possível consultar o CNPJ. Tente novamente.")
+      const data = await fetchCnpjPublica(digits)
+      if (!data) {
+        setError("CNPJ não encontrado.")
         return
       }
-      const data = await res.json()
-      const razaoSocial = data.razao_social
-      if (razaoSocial && !name.trim()) setName(razaoSocial)
-    } catch {
-      setError("Erro ao consultar a Receita. Verifique a conexão.")
+      if (data.razao_social && !name.trim()) setName(data.razao_social)
+      if (data.inscricao_estadual && !stateRegistration.trim()) setStateRegistration(data.inscricao_estadual)
+      if (data.state_code) setStateCode(data.state_code)
+      if (data.city_name) setCityName(data.city_name)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Erro ao consultar a Receita. Verifique a conexão.")
     } finally {
       setLoadingCnpj(false)
     }
@@ -136,6 +149,8 @@ export default function EmpresasNovaPage() {
         name: name.trim(),
         document: document.trim() || null,
         state_registration: stateRegistration.trim() || null,
+        state_code: stateCode || null,
+        city_name: cityName || null,
         auth_mode: useCertificate ? "certificate" : null,
         cert_blob_b64,
         cert_password,
@@ -218,6 +233,52 @@ export default function EmpresasNovaPage() {
             <p className="text-xs text-muted-foreground">
               Logins específicos de robôs são configurados depois, em editar empresa ou editar robô.
             </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="state-code">Estado</Label>
+              <Select
+                value={stateCode || "none"}
+                onValueChange={(value) => {
+                  const nextState = value === "none" ? "" : value
+                  setStateCode(nextState)
+                  setCityName("")
+                }}
+                disabled={loading}
+              >
+                <SelectTrigger id="state-code">
+                  <SelectValue placeholder="Selecione o estado" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Não informado</SelectItem>
+                  {states.map((state) => (
+                    <SelectItem key={state.code} value={state.code}>
+                      {state.code} - {state.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="city-name">Município</Label>
+              <Select
+                value={cityName || "none"}
+                onValueChange={(value) => setCityName(value === "none" ? "" : value)}
+                disabled={loading || !stateCode}
+              >
+                <SelectTrigger id="city-name">
+                  <SelectValue placeholder={stateCode ? "Selecione o município" : "Selecione o estado primeiro"} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Não informado</SelectItem>
+                  {cities.map((city) => (
+                    <SelectItem key={city.name} value={city.name}>
+                      {city.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <div className="space-y-3 pt-2 border-t border-border">
             <div className="flex items-center gap-2">

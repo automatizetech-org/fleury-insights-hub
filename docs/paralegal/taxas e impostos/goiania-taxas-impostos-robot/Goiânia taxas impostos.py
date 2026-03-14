@@ -10,13 +10,13 @@ import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 from dotenv import load_dotenv
 from playwright.async_api import BrowserContext, Frame, Page, async_playwright
 from postgrest.exceptions import APIError
-from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QThread, QTimer, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -25,14 +25,18 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStyle,
+    QSystemTrayIcon,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+import requests
 from supabase import Client, create_client
 
 
@@ -52,8 +56,7 @@ DATA_DIR = BASE_DIR / "data"
 PNG_DIR = DATA_DIR / "image"
 ICO_DIR = DATA_DIR / "ico"
 PLAYWRIGHT_DIR = DATA_DIR / "ms-playwright"
-PLAYWRIGHT_DIR.mkdir(parents=True, exist_ok=True)
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(PLAYWRIGHT_DIR))
+EXTENSIONS_DIR = DATA_DIR / "extensions"
 CDP_PORT = int(os.getenv("GOIANIA_CDP_PORT", "9223"))
 CHROME_EXE = DATA_DIR / "Chrome" / "chrome.exe"
 CHROME_PROFILE_DIR = DATA_DIR / "chrome_cdp_profile"
@@ -63,6 +66,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 GOIANIA_PORTAL_CPF = os.getenv("GOIANIA_PORTAL_CPF", "")
 GOIANIA_PORTAL_PASSWORD = os.getenv("GOIANIA_PORTAL_PASSWORD", "")
+SERVER_API_URL = (os.getenv("FOLDER_STRUCTURE_API_URL") or os.getenv("SERVER_API_URL") or "").strip()
 PLAYWRIGHT_USER_DATA_DIR = os.getenv("PLAYWRIGHT_USER_DATA_DIR", str(BASE_DIR / ".playwright-profile"))
 
 ROBOT_TECHNICAL_ID = "goiania_taxas_impostos"
@@ -73,6 +77,9 @@ INTERNET_HOME_URL = "https://www10.goiania.go.gov.br/Internet/"
 HOME_URL = "https://servicos.goiania.go.gov.br/SicaePortal/"
 PORTAL_TRIBUTOS_URL_PART = "PortalTributos/ConsultaTributos"
 DEBITOS_URL_PART = "MostraDebitos"
+HEARTBEAT_INTERVAL_MS = 30000
+JOB_POLL_INTERVAL_MS = 10000
+DISPLAY_CONFIG_INTERVAL_MS = 10000
 
 
 def utc_now_iso() -> str:
@@ -88,6 +95,27 @@ def normalize_name(value: str | None) -> str:
     for token in [" LTDA", " EIRELI", " ME", " EPP", " S A", " SA", " SERVICOS", " SERVIÇOS"]:
         base = base.replace(token, " ")
     return " ".join(base.split())
+
+
+def normalize_location_name(value: str | None) -> str:
+    text = (value or "").upper()
+    replacements = {
+        "Á": "A",
+        "À": "A",
+        "Â": "A",
+        "Ã": "A",
+        "É": "E",
+        "Ê": "E",
+        "Í": "I",
+        "Ó": "O",
+        "Ô": "O",
+        "Õ": "O",
+        "Ú": "U",
+        "Ç": "C",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return " ".join(re.sub(r"[^A-Z0-9 ]", " ", text).split())
 
 
 def parse_money(value: str | None) -> float:
@@ -109,16 +137,86 @@ def parse_date(value: str | None) -> str | None:
     return f"{year}-{month}-{day}"
 
 
+_robot_api_config: dict[str, Any] | None = None
+
+
+def get_robot_supabase() -> tuple[str | None, str | None]:
+    url = SUPABASE_URL.strip()
+    key = SUPABASE_ANON_KEY.strip()
+    if url and key:
+        return (url, key)
+    return (None, None)
+
+
+def fetch_robot_config_from_api() -> dict[str, Any] | None:
+    url_base = SERVER_API_URL.rstrip("/")
+    if not url_base:
+        return None
+    try:
+        headers: dict[str, str] = {}
+        if "ngrok" in url_base.lower():
+            headers["ngrok-skip-browser-warning"] = "true"
+        response = requests.get(
+            f"{url_base}/api/robot-config",
+            params={"technical_id": ROBOT_TECHNICAL_ID},
+            headers=headers,
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def get_robot_api_config() -> dict[str, Any] | None:
+    global _robot_api_config
+    if _robot_api_config is None:
+        _robot_api_config = fetch_robot_config_from_api()
+    return _robot_api_config
+
+
+def normalize_dashboard_logins(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        cpf = digits(item.get("cpf") or item.get("login") or item.get("username") or "")
+        password = str(item.get("password") or item.get("senha") or "").strip()
+        city = str(item.get("city") or item.get("municipio") or item.get("provider") or "").strip().lower()
+        technical_id = str(item.get("robot_technical_id") or "").strip().lower()
+        if len(cpf) != 11 or not password:
+            continue
+        normalized.append(
+            {
+                "cpf": cpf,
+                "password": password,
+                "is_default": bool(item.get("is_default")),
+                "city": city,
+                "robot_technical_id": technical_id,
+            }
+        )
+    if normalized and not any(item.get("is_default") for item in normalized):
+        normalized[0]["is_default"] = True
+    return normalized
+
+
 def find_icon_path(*names: str) -> Path | None:
     candidates: list[Path] = []
     for name in names:
         raw = name.strip()
         if not raw:
             continue
-        normalized = raw.lower().replace(" ", "_")
+        stem = Path(raw).stem
+        normalized = stem.lower().replace(" ", "_")
         for folder in (ICO_DIR, PNG_DIR):
             candidates.append(folder / raw)
+            candidates.append(folder / stem)
             candidates.append(folder / normalized)
+            candidates.append(folder / f"{stem}.png")
+            candidates.append(folder / f"{stem}.ico")
             candidates.append(folder / f"{raw}.png")
             candidates.append(folder / f"{normalized}.png")
             candidates.append(folder / f"{raw}.ico")
@@ -169,6 +267,8 @@ class CompanyItem:
     document: str | None
     active: bool
     enabled_for_robot: bool
+    selected_login_cpf: str | None = None
+    state_registration: str | None = None
     selected: bool = False
     status: str = "AGUARDANDO"
     message: str = "-"
@@ -200,37 +300,158 @@ class RobotBackend:
         self.browser = None
         self.context: BrowserContext | None = None
         self.page: Page | None = None
+        self.portal_home_page: Page | None = None
         self.chrome_proc: subprocess.Popen | None = None
+        self.robot_row: dict[str, Any] | None = None
+        self.display_config_updated_at: str | None = None
+        self._log_cb: Callable[[str], None] | None = None
         self.robot_id = self.register_robot()
 
-    def fetch_companies(self) -> list[CompanyItem]:
-        response = (
-            self.supabase.table("companies")
-            .select("id,name,document,active,company_robot_config(enabled,robot_technical_id)")
-            .order("name")
-            .execute()
-        )
-        companies: list[CompanyItem] = []
-        for row in response.data or []:
-            configs = row.get("company_robot_config") or []
-            explicit_config = any(config.get("robot_technical_id") == ROBOT_TECHNICAL_ID for config in configs)
-            enabled = any(
-                config.get("robot_technical_id") == ROBOT_TECHNICAL_ID and config.get("enabled") is True
-                for config in configs
+    def set_log_callback(self, cb: Callable[[str], None] | None) -> None:
+        self._log_cb = cb
+
+    def _log(self, message: str) -> None:
+        print(message, file=sys.stderr)
+        if self._log_cb:
+            self._log_cb(message)
+
+    def _client(self) -> Client:
+        return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+    def fetch_robot_row(self) -> dict[str, Any] | None:
+        try:
+            response = (
+                self._client()
+                .table("robots")
+                .select("id,technical_id,display_name,status,segment_path,global_logins")
+                .eq("technical_id", ROBOT_TECHNICAL_ID)
+                .limit(1)
+                .execute()
             )
-            if not explicit_config:
-                enabled = bool(row.get("active", True))
+            rows = response.data or []
+            self.robot_row = rows[0] if rows else None
+            return self.robot_row
+        except Exception:
+            return None
+
+    def fetch_robot_display_config(self) -> dict[str, Any] | None:
+        try:
+            response = (
+                self._client()
+                .table("robot_display_config")
+                .select("*")
+                .eq("robot_technical_id", ROBOT_TECHNICAL_ID)
+                .limit(1)
+                .execute()
+            )
+            rows = response.data or []
+            return rows[0] if rows else None
+        except Exception:
+            return None
+
+    def get_dashboard_portal_credentials(self, selected_login_cpf: str | None = None) -> tuple[str, str]:
+        robot_row = self.fetch_robot_row() or self.robot_row or {}
+        candidates = normalize_dashboard_logins(robot_row.get("global_logins"))
+        goiania_only = [
+            item
+            for item in candidates
+            if item.get("robot_technical_id") in ("", ROBOT_TECHNICAL_ID)
+            and item.get("city") in ("", "goiania", "goiânia", "prefeitura_goiania", "prefeitura-goiania")
+        ]
+        if not goiania_only:
+            goiania_only = candidates
+
+        selected_cpf = digits(selected_login_cpf)
+        if selected_cpf:
+            for item in goiania_only:
+                if item.get("cpf") == selected_cpf:
+                    return (item["cpf"], item["password"])
+
+        for item in goiania_only:
+            if item.get("is_default"):
+                return (item["cpf"], item["password"])
+        if goiania_only:
+            return (goiania_only[0]["cpf"], goiania_only[0]["password"])
+
+        if GOIANIA_PORTAL_CPF and GOIANIA_PORTAL_PASSWORD:
+            return (digits(GOIANIA_PORTAL_CPF), GOIANIA_PORTAL_PASSWORD)
+        raise RuntimeError(
+            "Nenhum login da Prefeitura de Goiania foi encontrado em robots.global_logins nem no .env."
+        )
+
+    def _fetch_company_config_rows(self, company_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        query = (
+            self._client()
+            .table("company_robot_config")
+            .select("company_id,enabled,selected_login_cpf")
+            .eq("robot_technical_id", ROBOT_TECHNICAL_ID)
+            .eq("enabled", True)
+        )
+        if company_ids:
+            query = query.in_("company_id", company_ids)
+        response = query.execute()
+        return response.data or []
+
+    def _load_companies_by_ids(self, company_ids: list[str] | None = None) -> list[CompanyItem]:
+        config_rows = self._fetch_company_config_rows(company_ids)
+        config_by_company = {
+            row.get("company_id"): row
+            for row in config_rows
+            if row.get("company_id")
+        }
+        enabled_company_ids = list(config_by_company.keys())
+        if company_ids is not None and not enabled_company_ids:
+            return []
+
+        query = (
+            self._client()
+            .table("companies")
+            .select("id,name,document,active,state_registration,state_code,city_name")
+            .eq("active", True)
+            .order("name")
+        )
+        if company_ids is not None:
+            query = query.in_("id", company_ids)
+        elif enabled_company_ids:
+            query = query.in_("id", enabled_company_ids)
+
+        response = query.execute()
+        rows = response.data or []
+        companies: list[CompanyItem] = []
+        for row in rows:
+            company_id = row.get("id")
+            if not company_id:
+                continue
+            state_code = str(row.get("state_code") or "").strip().upper()
+            city_name = normalize_location_name(row.get("city_name"))
+            if state_code != "GO" or city_name != "GOIANIA":
+                continue
+            config = config_by_company.get(company_id)
+            if company_ids is None and not config:
+                continue
             companies.append(
                 CompanyItem(
-                    id=row["id"],
-                    name=row["name"],
+                    id=company_id,
+                    name=(row.get("name") or "").strip(),
                     document=row.get("document"),
                     active=bool(row.get("active", True)),
-                    enabled_for_robot=enabled,
+                    enabled_for_robot=bool(config),
+                    selected_login_cpf=digits((config or {}).get("selected_login_cpf") or "") or None,
+                    state_registration=(row.get("state_registration") or "").strip() or None,
                     status="ATIVO" if row.get("active", True) else "INATIVO",
                 )
             )
+
+        if company_ids is not None:
+            order_map = {company_id: index for index, company_id in enumerate(company_ids)}
+            companies.sort(key=lambda item: order_map.get(item.id, 10**9))
         return companies
+
+    def fetch_companies(self) -> list[CompanyItem]:
+        return self._load_companies_by_ids()
+
+    def fetch_companies_by_ids(self, company_ids: list[str]) -> list[CompanyItem]:
+        return self._load_companies_by_ids(company_ids)
 
     def create_run(self, company: CompanyItem) -> str:
         try:
@@ -251,53 +472,69 @@ class RobotBackend:
 
     def register_robot(self) -> str | None:
         try:
-            response = self.supabase.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).limit(1).execute()
+            client = self._client()
+            api_cfg = get_robot_api_config() or {}
+            segment_path = (api_cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
+            response = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).limit(1).execute()
             rows = response.data or []
             payload = {
                 "technical_id": ROBOT_TECHNICAL_ID,
                 "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
-                "segment_path": ROBOT_SEGMENT_PATH_DEFAULT,
+                "segment_path": segment_path,
                 "status": "active",
                 "last_heartbeat_at": utc_now_iso(),
             }
             if rows:
                 robot_id = rows[0]["id"]
-                self.supabase.table("robots").update(
+                client.table("robots").update(
                     {
                         "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
-                        "segment_path": ROBOT_SEGMENT_PATH_DEFAULT,
+                        "segment_path": segment_path,
                         "status": "active",
                         "last_heartbeat_at": utc_now_iso(),
                     }
                 ).eq("id", robot_id).execute()
+                self.fetch_robot_row()
                 return robot_id
 
-            insert_response = self.supabase.table("robots").insert(payload).select("id").execute()
-            insert_rows = insert_response.data or []
-            return insert_rows[0]["id"] if insert_rows else None
-        except Exception:
+            client.table("robots").insert(payload).execute()
+            reread = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).limit(1).execute()
+            reread_rows = reread.data or []
+            self.fetch_robot_row()
+            return reread_rows[0]["id"] if reread_rows else None
+        except Exception as exc:
+            self._log(f"[Robo] Falha ao registrar na tabela robots: {exc}")
             return None
 
+    def ensure_robot_registration(self) -> str | None:
+        if self.robot_id:
+            return self.robot_id
+        self.robot_id = self.register_robot()
+        return self.robot_id
+
     def update_robot_status(self, status: str) -> None:
-        if not self.robot_id:
+        if not self.ensure_robot_registration():
             return
         try:
-            self.supabase.table("robots").update(
+            client = self._client()
+            client.table("robots").update(
                 {
                     "status": status,
                     "last_heartbeat_at": utc_now_iso(),
                 }
             ).eq("id", self.robot_id).execute()
-        except Exception:
-            pass
+            self.fetch_robot_row()
+        except Exception as exc:
+            self._log(f"[Robo] Falha ao atualizar status '{status}' em robots: {exc}")
 
     def update_robot_heartbeat(self) -> None:
-        if not self.robot_id:
+        if not self.ensure_robot_registration():
             return
         try:
-            self.supabase.table("robots").update({"last_heartbeat_at": utc_now_iso()}).eq("id", self.robot_id).execute()
-        except Exception:
-            pass
+            client = self._client()
+            client.table("robots").update({"last_heartbeat_at": utc_now_iso()}).eq("id", self.robot_id).execute()
+        except Exception as exc:
+            self._log(f"[Robo] Falha ao atualizar heartbeat em robots: {exc}")
 
     def finish_run(self, run_id: str, status: str, debts_found: int = 0, error_message: str | None = None) -> None:
         if not run_id:
@@ -340,18 +577,90 @@ class RobotBackend:
         if not payload:
             return 0
 
-        inserted = self.supabase.table("municipal_tax_debts").insert(payload).select("id").execute()
-        rows = inserted.data or []
-        if len(rows) != len(payload):
-            verify = self.supabase.table("municipal_tax_debts").select("id").eq("company_id", company.id).execute()
-            stored_rows = verify.data or []
-            if len(stored_rows) != len(payload):
-                raise RuntimeError(
-                    f"Supabase nao confirmou a gravacao dos debitos de {company.name}. "
-                    f"Esperado: {len(payload)}, confirmado: {len(stored_rows)}"
+        self.supabase.table("municipal_tax_debts").insert(payload).execute()
+        verify = self.supabase.table("municipal_tax_debts").select("id").eq("company_id", company.id).execute()
+        stored_rows = verify.data or []
+        if len(stored_rows) != len(payload):
+            raise RuntimeError(
+                f"Supabase nao confirmou a gravacao dos debitos de {company.name}. "
+                f"Esperado: {len(payload)}, confirmado: {len(stored_rows)}"
+            )
+        return len(stored_rows)
+
+    def claim_execution_request(self, log_callback: Callable[[str], None] | None = None) -> dict[str, Any] | None:
+        if not self.ensure_robot_registration():
+            return None
+        try:
+            client = self._client()
+            try:
+                rpc_response = client.rpc(
+                    "claim_next_execution_request",
+                    {
+                        "p_robot_technical_id": ROBOT_TECHNICAL_ID,
+                        "p_robot_id": self.robot_id,
+                        "p_active_schedule_rule_ids": None,
+                    },
+                ).execute()
+                rpc_rows = getattr(rpc_response, "data", None) or []
+                if rpc_rows:
+                    return rpc_rows[0]
+            except Exception:
+                pass
+
+            response = (
+                client.table("execution_requests")
+                .select("*")
+                .eq("status", "pending")
+                .order("execution_order")
+                .order("created_at")
+                .limit(50)
+                .execute()
+            )
+            rows = response.data or []
+            for row in rows:
+                tech_ids = row.get("robot_technical_ids") or []
+                if "all" not in tech_ids and ROBOT_TECHNICAL_ID not in tech_ids:
+                    continue
+                client.table("execution_requests").update(
+                    {
+                        "status": "running",
+                        "robot_id": self.robot_id,
+                        "claimed_at": utc_now_iso(),
+                    }
+                ).eq("id", row["id"]).eq("status", "pending").execute()
+                claimed = (
+                    client.table("execution_requests")
+                    .select("*")
+                    .eq("id", row["id"])
+                    .eq("status", "running")
+                    .limit(1)
+                    .execute()
                 )
-            return len(stored_rows)
-        return len(rows)
+                claimed_rows = claimed.data or []
+                if claimed_rows:
+                    return claimed_rows[0]
+            return None
+        except Exception as exc:
+            if log_callback:
+                log_callback(f"[Robô] Erro ao buscar job da fila: {exc}")
+            return None
+
+    def complete_execution_request(
+        self,
+        request_id: str,
+        success: bool,
+        error_message: str | None = None,
+    ) -> None:
+        try:
+            self._client().table("execution_requests").update(
+                {
+                    "status": "completed" if success else "failed",
+                    "completed_at": utc_now_iso(),
+                    "error_message": error_message,
+                }
+            ).eq("id", request_id).execute()
+        except Exception:
+            pass
 
     async def ensure_browser(self) -> None:
         if self.page:
@@ -407,6 +716,7 @@ class RobotBackend:
             viewport={"width": 1440, "height": 960},
         )
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
+        self.portal_home_page = self.page
         self.page.set_default_timeout(90000)
         self.context.set_default_navigation_timeout(90000)
 
@@ -497,11 +807,13 @@ class RobotBackend:
         except Exception:
             pass
 
-    async def ensure_login(self, log: callable | None = None) -> None:
+    async def ensure_login(self, log: Callable[[str], None] | None = None, selected_login_cpf: str | None = None) -> None:
         await self.ensure_browser()
         assert self.page is not None
+        login_cpf, login_password = self.get_dashboard_portal_credentials(selected_login_cpf)
 
         if self.page.url.startswith(HOME_URL):
+            self.portal_home_page = self.page
             return
 
         await self.page.goto(LOGIN_URL, wait_until="domcontentloaded")
@@ -512,15 +824,13 @@ class RobotBackend:
             await self._open_portal_do_contribuinte()
 
         if await self._is_login_form_visible():
-            if not GOIANIA_PORTAL_CPF or not GOIANIA_PORTAL_PASSWORD:
-                raise RuntimeError("GOIANIA_PORTAL_CPF e GOIANIA_PORTAL_PASSWORD precisam estar definidos.")
-            await self._submit_login_form()
+            await self._submit_login_form(login_cpf, login_password)
             await self.page.wait_for_load_state("networkidle")
             if self.page.url.startswith(INTERNET_HOME_URL):
                 await self._open_portal_do_contribuinte()
 
         if "Intranet/Login.aspx" in self.page.url or await self._is_login_form_visible():
-            await self._submit_login_form()
+            await self._submit_login_form(login_cpf, login_password)
             await self.page.wait_for_load_state("networkidle")
 
         if self.page.url.startswith(INTERNET_HOME_URL):
@@ -528,6 +838,21 @@ class RobotBackend:
 
         if not self.page.url.startswith(HOME_URL):
             raise RuntimeError(f"Login não concluído no portal. URL atual: {self.page.url}")
+        self.portal_home_page = self.page
+
+    async def ensure_company_selection_screen(self) -> None:
+        assert self.page is not None
+        if self.portal_home_page:
+            try:
+                if not self.portal_home_page.is_closed():
+                    self.page = self.portal_home_page
+            except Exception:
+                pass
+        if self.page.url.startswith(HOME_URL):
+            return
+        await self.page.goto(HOME_URL, wait_until="domcontentloaded")
+        await self.page.wait_for_load_state("networkidle")
+        self.portal_home_page = self.page
 
     async def _open_portal_do_contribuinte(self) -> None:
         assert self.page is not None
@@ -552,12 +877,12 @@ class RobotBackend:
                 continue
         return False
 
-    async def _submit_login_form(self) -> None:
+    async def _submit_login_form(self, login_cpf: str, login_password: str) -> None:
         assert self.page is not None
         cpf_input = self.page.locator("input[placeholder='Informe o CPF'], input[id*='wtLoginInput']").first
         password_input = self.page.locator("input[type='password'], input[id*='wtPasswordInput']").first
-        await cpf_input.fill(GOIANIA_PORTAL_CPF)
-        await password_input.fill(GOIANIA_PORTAL_PASSWORD)
+        await cpf_input.fill(login_cpf)
+        await password_input.fill(login_password)
         keep_connected = self.page.get_by_label("Mantenha-me Conectado")
         try:
             if await keep_connected.count():
@@ -585,7 +910,8 @@ class RobotBackend:
         log: callable,
         status_cb: callable,
     ) -> list[DebtRow]:
-        await self.ensure_login(log)
+        await self.ensure_login(log, company.selected_login_cpf)
+        await self.ensure_company_selection_screen()
         stop_cb()
         status_cb("EXECUTANDO", "Selecionando empresa no PERFIL")
         await self.select_company(company)
@@ -638,10 +964,12 @@ class RobotBackend:
 
     async def open_duam(self, company: CompanyItem) -> Frame:
         assert self.page is not None
+        origin_page = self.page
         await self._ensure_activity_context()
 
         popup = await self._click_tax_tile()
         if popup:
+            self.portal_home_page = origin_page
             self.page = popup
             await self.page.wait_for_load_state("networkidle")
 
@@ -847,6 +1175,31 @@ class RobotBackend:
         ).first
         await table.wait_for(timeout=20000)
 
+        summary_info = {"inscricao": None, "nome": None, "validade": None}
+        try:
+            summary_info = await frame.evaluate(
+                """() => {
+                    const root = document.querySelector("main") || document.body;
+                    const nodes = Array.from(root.querySelectorAll("div, span, label, p"));
+                    const readValue = (label) => {
+                        const labelNode = nodes.find((node) => (node.textContent || "").trim() === label);
+                        if (!labelNode) return null;
+                        let valueNode = labelNode.nextElementSibling;
+                        while (valueNode && !(valueNode.textContent || "").trim()) {
+                            valueNode = valueNode.nextElementSibling;
+                        }
+                        return valueNode ? (valueNode.textContent || "").trim() : null;
+                    };
+                    return {
+                        inscricao: readValue("Inscrição"),
+                        nome: readValue("Nome"),
+                        validade: readValue("Validade"),
+                    };
+                }"""
+            )
+        except Exception:
+            pass
+
         headers = [text.strip().lower() for text in await table.locator("thead th, tr th").all_text_contents()]
         rows = await table.locator("tbody tr, tr").all()
         debts: list[DebtRow] = []
@@ -860,6 +1213,8 @@ class RobotBackend:
                 "numero_documento": None,
                 "data_vencimento": None,
                 "valor": None,
+                "valor_original": None,
+                "parcela": None,
                 "situacao": None,
                 "inscricao": None,
                 "cai": None,
@@ -872,9 +1227,13 @@ class RobotBackend:
                     mapped["tributo"] = cell
                 elif "document" in header or "processo" in header or "número" in header or "numero" in header:
                     mapped["numero_documento"] = cell
+                elif "parcela" in header:
+                    mapped["parcela"] = cell
                 elif "venc" in header:
                     mapped["data_vencimento"] = cell
-                elif "valor" in header:
+                elif "débito original" in header or "debito original" in header:
+                    mapped["valor_original"] = cell
+                elif "total" in header or ("valor" in header and not mapped["valor"]):
                     mapped["valor"] = cell
                 elif "situ" in header:
                     mapped["situacao"] = cell
@@ -884,21 +1243,38 @@ class RobotBackend:
                     mapped["cai"] = cell
             if not mapped["tributo"] and len(cells) >= 2:
                 mapped["tributo"] = cells[1]
+            if not mapped["parcela"] and len(cells) >= 4:
+                mapped["parcela"] = cells[3]
+            if not mapped["valor_original"] and len(cells) >= 7:
+                mapped["valor_original"] = cells[-2]
+            if not mapped["valor"] and len(cells) >= 8:
+                mapped["valor"] = cells[-1]
+            if not mapped["numero_documento"] and mapped["parcela"]:
+                mapped["numero_documento"] = f"Parcela {mapped['parcela']}"
             if not mapped["numero_documento"] and len(cells) >= 3:
                 mapped["numero_documento"] = cells[2]
             if not mapped["tributo"] and not mapped["numero_documento"]:
                 continue
+            parsed_total = parse_money(mapped["valor"])
+            parsed_original = parse_money(mapped["valor_original"])
             debts.append(
                 DebtRow(
                     ano=int(mapped["ano"]) if str(mapped["ano"]).isdigit() else None,
                     tributo=mapped["tributo"] or "Tributo não identificado",
                     numero_documento=mapped["numero_documento"] or f"{company.id}-{len(debts) + 1}",
                     data_vencimento=parse_date(mapped["data_vencimento"]),
-                    valor=parse_money(mapped["valor"]),
+                    valor=parsed_total or parsed_original,
                     situacao=mapped["situacao"],
-                    portal_inscricao=mapped["inscricao"],
+                    portal_inscricao=mapped["inscricao"] or summary_info.get("inscricao"),
                     portal_cai=mapped["cai"] or digits(company.document),
-                    detalhes={"linha_portal": mapped},
+                    detalhes={
+                        "linha_portal": mapped,
+                        "parcela": mapped["parcela"],
+                        "valor_original": parsed_original,
+                        "valor_total": parsed_total,
+                        "nome_portal": summary_info.get("nome"),
+                        "validade_guia": parse_date(summary_info.get("validade")),
+                    },
                 )
             )
         return debts
@@ -909,11 +1285,14 @@ class RobotWorker(QThread):
     log_message = Signal(str)
     company_changed = Signal(str, str, str)
 
-    def __init__(self, backend: RobotBackend, companies: list[CompanyItem]) -> None:
+    def __init__(self, backend: RobotBackend, companies: list[CompanyItem], job: dict[str, Any] | None = None) -> None:
         super().__init__()
         self.backend = backend
         self.companies = companies
+        self.job = job
         self._stop_requested = False
+        self.error_messages: list[str] = []
+        self.was_stopped = False
 
     def request_stop(self) -> None:
         self._stop_requested = True
@@ -950,15 +1329,80 @@ class RobotWorker(QThread):
                     self.backend.finish_run(run_id, "failed", error_message=str(exc))
                     self.company_changed.emit(company.id, "PARADO", str(exc))
                     self.log_message.emit(str(exc))
+                    self.was_stopped = True
+                    self.error_messages.append(str(exc))
                     break
                 except Exception as exc:
                     self.backend.finish_run(run_id, "failed", error_message=str(exc))
                     self.company_changed.emit(company.id, "ERRO", str(exc))
                     self.log_message.emit(f"{company.name}: erro - {exc}")
+                    self.error_messages.append(f"{company.name}: {exc}")
+        except Exception as exc:
+            self.log_message.emit(f"Erro: {exc}")
+            self.error_messages.append(str(exc))
         finally:
             self.status_changed.emit("AGUARDANDO")
             self.backend.update_robot_status("active")
             await self.backend.close()
+
+
+class LogFrame(QFrame):
+    def __init__(self, height: int = 230):
+        super().__init__()
+        self.setMinimumHeight(height)
+        self.setStyleSheet(
+            "QFrame { border:1px solid rgba(52,73,94,0.65); border-radius:12px; background:rgba(12,24,40,0.85); }"
+        )
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.text = QTextEdit(self)
+        self.text.setReadOnly(True)
+        self.text.setAcceptRichText(True)
+        self.text.setPlaceholderText("Logs da execucao...")
+        self.text.setStyleSheet(
+            "QTextEdit{background:transparent;color:#E8F4FF;font:10pt Consolas,'Courier New';padding:10px;}"
+        )
+        layout.addWidget(self.text)
+
+    def append(self, msg: str) -> None:
+        bar = self.text.verticalScrollBar()
+        at_bottom = bar.value() >= (bar.maximum() - 2)
+        old_value = bar.value()
+        self.text.append(msg)
+        if at_bottom:
+            bar.setValue(bar.maximum())
+        else:
+            bar.setValue(old_value)
+
+
+class CompanyListItem(QWidget):
+    def __init__(self, company: CompanyItem, toggle_cb: callable):
+        super().__init__()
+        self.company = company
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(8)
+
+        self.checkbox = QCheckBox()
+        self.checkbox.setChecked(company.selected)
+        self.checkbox.setEnabled(company.active)
+        self.checkbox.stateChanged.connect(lambda state: toggle_cb(company.id, state))
+        layout.addWidget(self.checkbox)
+
+        suffix = f" - {company.document}" if company.document else ""
+        self.label = QLabel(f"{company.name}{suffix}")
+        self.label.setStyleSheet("QLabel { color:#ECF0F1; font:9pt Verdana; font-weight:bold; }")
+        layout.addWidget(self.label, 1)
+
+        self.status = QLabel(company.status)
+        self.status.setStyleSheet("QLabel { color:#94A3B8; font:9pt Verdana; font-weight:bold; }")
+        layout.addWidget(self.status)
+
+        self.message = QLabel(company.message or "-")
+        self.message.setStyleSheet("QLabel { color:#CBD5E1; font:9pt Verdana; }")
+        layout.addWidget(self.message)
 
 
 class MainWindow(QMainWindow):
@@ -967,14 +1411,26 @@ class MainWindow(QMainWindow):
         self.backend = RobotBackend()
         self.all_companies: list[CompanyItem] = []
         self.filtered_companies: list[CompanyItem] = []
-        self.checkboxes: dict[str, QCheckBox] = {}
+        self.items: list[CompanyListItem] = []
         self.worker: RobotWorker | None = None
+        self.active_job: dict[str, Any] | None = None
+        self._tray_icon: QSystemTrayIcon | None = None
+        self.heartbeat_timer = QTimer(self)
+        self.heartbeat_timer.timeout.connect(self._on_robot_heartbeat)
+        self.display_config_timer = QTimer(self)
+        self.display_config_timer.timeout.connect(self._on_display_config_poll)
+        self.job_poll_timer = QTimer(self)
+        self.job_poll_timer.timeout.connect(self._on_robot_poll_job)
         self.setWindowTitle("Robô Goiânia - Taxas e Impostos")
         self.resize(980, 760)
-        icon = qicon("app.ico", "logo.png")
+        icon = qicon("app", "logo")
         if icon:
             self.setWindowIcon(icon)
         self._build_ui()
+        self.backend.set_log_callback(self.append_log)
+        QApplication.instance().aboutToQuit.connect(self._on_about_to_quit)
+        self._setup_tray_icon()
+        self._register_robot_panel()
         self.sync_companies()
 
     def _build_ui(self) -> None:
@@ -983,21 +1439,6 @@ class MainWindow(QMainWindow):
             QMainWindow { background:qlineargradient(x1:0,y1:0, x2:1,y2:1, stop:0 #0f1722, stop:1 #111827); }
             QWidget { color:#ECF0F1; }
             QLabel { font-weight:bold; font:9pt 'Verdana'; }
-            QTableWidget {
-                background: rgba(17,23,39,0.88);
-                border: 1px solid #22344a;
-                border-radius: 10px;
-                gridline-color: #1f2937;
-                alternate-background-color: #0f1627;
-            }
-            QHeaderView::section {
-                background: #172033;
-                color: #94a3b8;
-                border: none;
-                padding: 8px;
-                font: 9pt 'Verdana';
-                font-weight: bold;
-            }
             QLineEdit, QTextEdit {
                 background:#34495E;
                 color:#ECF0F1;
@@ -1006,10 +1447,7 @@ class MainWindow(QMainWindow):
                 font:9pt 'Verdana';
                 border: 1px solid #22344a;
             }
-            QTextEdit {
-                font: 10pt 'Consolas';
-                padding: 10px;
-            }
+            QScrollArea { border:none; }
             QCheckBox::indicator {
                 width: 18px;
                 height: 18px;
@@ -1070,25 +1508,23 @@ class MainWindow(QMainWindow):
         wrap_layout = QVBoxLayout(wrap)
         wrap_layout.setContentsMargins(5, 5, 5, 5)
 
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Selecionar", "Empresa", "Documento", "Status", "Mensagem"])
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setShowGrid(False)
-        self.table.setAlternatingRowColors(True)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        wrap_layout.addWidget(self.table)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border:none;")
+
+        self.list_container = QWidget()
+        self.list_layout = QVBoxLayout(self.list_container)
+        self.list_layout.setContentsMargins(6, 6, 6, 6)
+        self.list_layout.setSpacing(4)
+
+        scroll.setWidget(self.list_container)
+        wrap_layout.addWidget(scroll)
         layout.addWidget(wrap, 3)
 
-        log_label = QLabel("Log de execução")
-        log_label.setFont(QFont("Verdana", 10, QFont.Weight.Bold))
-        layout.addWidget(log_label)
-        self.log_box = QTextEdit()
-        self.log_box.setReadOnly(True)
-        self.log_box.setMinimumHeight(180)
-        layout.addWidget(self.log_box, 2)
+        self.log_frame = LogFrame(height=230)
+        self.log_frame.setMinimumHeight(120)
+        self.log_frame.setMaximumHeight(16777215)
+        layout.addWidget(self.log_frame, 2)
 
         bottom = QHBoxLayout()
         self.btn_start = QPushButton("Iniciar downloads")
@@ -1111,7 +1547,7 @@ class MainWindow(QMainWindow):
         clear_icon = qicon("limpar")
         if clear_icon:
             self.btn_clear.setIcon(clear_icon)
-        self.btn_clear.clicked.connect(self.log_box.clear)
+        self.btn_clear.clicked.connect(lambda: self.log_frame.text.clear())
 
         bottom.addWidget(self.btn_start)
         bottom.addWidget(self.btn_stop)
@@ -1119,6 +1555,55 @@ class MainWindow(QMainWindow):
         layout.addLayout(bottom)
 
         self.setCentralWidget(central)
+
+    def _setup_tray_icon(self) -> None:
+        self._tray_icon = QSystemTrayIcon(self)
+        app_icon = qicon("app", "logo")
+        if app_icon and not app_icon.isNull():
+            self._tray_icon.setIcon(app_icon)
+        else:
+            self._tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+        menu = QMenu()
+        show_act = QAction("Abrir janela", self)
+        show_act.triggered.connect(self._show_from_tray)
+        menu.addAction(show_act)
+        quit_act = QAction("Fechar robô", self)
+        quit_act.triggered.connect(self._quit_from_tray)
+        menu.addAction(quit_act)
+        self._tray_icon.setContextMenu(menu)
+        self._tray_icon.activated.connect(self._on_tray_activated)
+        self._tray_icon.setToolTip("Taxas e Impostos Goiânia")
+
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if not self.heartbeat_timer.isActive():
+            self.heartbeat_timer.start(HEARTBEAT_INTERVAL_MS)
+        if not self.display_config_timer.isActive():
+            self.display_config_timer.start(DISPLAY_CONFIG_INTERVAL_MS)
+        if not self.job_poll_timer.isActive():
+            self.job_poll_timer.start(JOB_POLL_INTERVAL_MS)
+
+    def _on_tray_activated(self, reason: int) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._show_from_tray()
+
+    def _quit_from_tray(self) -> None:
+        """Fechar de verdade: para timers, marca inativo e encerra o app."""
+        if self.worker and self.worker.isRunning():
+            self.worker.request_stop()
+            if not self.worker.wait(5000):
+                self.worker.terminate()
+                self.worker.wait(1000)
+        self.heartbeat_timer.stop()
+        self.display_config_timer.stop()
+        self.job_poll_timer.stop()
+        self.backend.ensure_robot_registration()
+        self.backend.update_robot_status("inactive")
+        if self._tray_icon is not None:
+            self._tray_icon.hide()
+        QApplication.quit()
 
     def _stat_card(self, title: str, value: str) -> tuple[QFrame, QLabel]:
         frame = QFrame()
@@ -1142,6 +1627,7 @@ class MainWindow(QMainWindow):
             self.apply_filter()
             self.append_log("Empresas sincronizadas do Supabase.")
         except Exception as exc:
+            self.append_log(f"Erro ao sincronizar empresas: {exc}")
             QMessageBox.critical(self, "Erro", str(exc))
 
     def apply_filter(self) -> None:
@@ -1157,20 +1643,18 @@ class MainWindow(QMainWindow):
         self.populate_table()
 
     def populate_table(self) -> None:
-        self.table.setRowCount(len(self.filtered_companies))
-        self.checkboxes.clear()
-        for row, company in enumerate(self.filtered_companies):
-            checkbox = QCheckBox()
-            checkbox.setChecked(company.selected)
-            checkbox.setEnabled(company.active)
-            checkbox.stateChanged.connect(lambda state, company_id=company.id: self.toggle_company(company_id, state))
-            self.checkboxes[company.id] = checkbox
-            self.table.setCellWidget(row, 0, checkbox)
-            self.table.setItem(row, 1, QTableWidgetItem(company.name))
-            self.table.setItem(row, 2, QTableWidgetItem(company.document or "-"))
-            self.table.setItem(row, 3, self._status_item(company.status))
-            self.table.setItem(row, 4, QTableWidgetItem(company.message))
-        self.table.resizeColumnsToContents()
+        while self.list_layout.count():
+            item = self.list_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        self.items = []
+        for company in self.filtered_companies:
+            item = CompanyListItem(company, self.toggle_company)
+            self.items.append(item)
+            self._apply_item_status(item, company.status, company.message)
+            self.list_layout.addWidget(item)
+        self.list_layout.addStretch()
 
     def toggle_company(self, company_id: str, state: int) -> None:
         for company in self.all_companies:
@@ -1189,20 +1673,24 @@ class MainWindow(QMainWindow):
             company.selected = False
         self.populate_table()
 
-    def _status_item(self, text: str) -> QTableWidgetItem:
-        item = QTableWidgetItem(text)
+    def _status_color(self, text: str) -> str:
         upper = text.upper()
         if "ERRO" in upper:
-            item.setForeground(QColor("#fb7185"))
-        elif "CONCLUIDO" in upper:
-            item.setForeground(QColor("#34d399"))
-        elif "EXECUTANDO" in upper or "AGUARDANDO" in upper:
-            item.setForeground(QColor("#60a5fa"))
-        elif "PARADO" in upper:
-            item.setForeground(QColor("#fbbf24"))
-        else:
-            item.setForeground(QColor("#cbd5e1"))
-        return item
+            return "#fb7185"
+        if "CONCLUIDO" in upper:
+            return "#34d399"
+        if "EXECUTANDO" in upper or "AGUARDANDO" in upper:
+            return "#60a5fa"
+        if "PARADO" in upper:
+            return "#fbbf24"
+        return "#cbd5e1"
+
+    def _apply_item_status(self, item: CompanyListItem, status: str, message: str) -> None:
+        item.status.setText(status)
+        item.status.setStyleSheet(
+            f"QLabel {{ color:{self._status_color(status)}; font:9pt Verdana; font-weight:bold; }}"
+        )
+        item.message.setText(message or "-")
 
     def update_company_state(self, company_id: str, status: str, message: str) -> None:
         for company in self.all_companies:
@@ -1215,16 +1703,80 @@ class MainWindow(QMainWindow):
     def set_global_status(self, status: str) -> None:
         self.title_label.setText(f"Robô Goiânia - Taxas e Impostos [{status}]")
 
+    def _register_robot_panel(self) -> None:
+        robot_id = self.backend.ensure_robot_registration()
+        if robot_id:
+            self.backend.update_robot_status("active")
+            self.heartbeat_timer.start(HEARTBEAT_INTERVAL_MS)
+            self.display_config_timer.start(DISPLAY_CONFIG_INTERVAL_MS)
+            self.job_poll_timer.start(JOB_POLL_INTERVAL_MS)
+            QTimer.singleShot(500, self._on_display_config_poll)
+            QTimer.singleShot(1500, self._on_robot_poll_job)
+            self.append_log("[Robo] Conectado ao painel. Status: active.")
+        else:
+            self.append_log("[Robo] Nao foi possivel registrar na tabela robots.")
+
+    def _on_robot_heartbeat(self) -> None:
+        self.backend.update_robot_heartbeat()
+
+    def _on_display_config_poll(self) -> None:
+        if self.worker and self.worker.isRunning():
+            return
+        cfg = self.backend.fetch_robot_display_config()
+        if not cfg:
+            return
+        updated = (cfg.get("updated_at") or "").strip()
+        if updated and updated == self.backend.display_config_updated_at:
+            return
+        self.backend.display_config_updated_at = updated or None
+        company_ids = cfg.get("company_ids")
+        selection = {company.id: company.selected for company in self.all_companies}
+        if isinstance(company_ids, list):
+            self.all_companies = self.backend.fetch_companies_by_ids([str(company_id) for company_id in company_ids])
+            for company in self.all_companies:
+                company.selected = True
+        else:
+            self.all_companies = self.backend.fetch_companies()
+            for company in self.all_companies:
+                company.selected = selection.get(company.id, False)
+        self.apply_filter()
+
+    def _on_robot_poll_job(self) -> None:
+        if self.worker and self.worker.isRunning():
+            return
+        job = self.backend.claim_execution_request(self.append_log)
+        if job:
+            self.append_log("[Robô] Job do dashboard iniciado.")
+            self._run_job(job)
+
+    def _run_job(self, job: dict[str, Any]) -> None:
+        company_ids = [str(company_id) for company_id in (job.get("company_ids") or []) if str(company_id).strip()]
+        if not company_ids:
+            self.backend.complete_execution_request(job["id"], False, "Nenhuma empresa no job")
+            return
+        companies = self.backend.fetch_companies_by_ids(company_ids)
+        if not companies:
+            self.backend.complete_execution_request(job["id"], False, "Nenhuma empresa habilitada de Goiânia encontrada")
+            self.append_log("[Robô] Nenhuma empresa habilitada retornada pelo dashboard para este job.")
+            return
+        for company in companies:
+            company.selected = True
+        self.active_job = job
+        self._start_worker(companies, job=job, origin_message=f"Job do dashboard com {len(companies)} empresa(s).")
+
     def append_log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_box.append(f"[{timestamp}] {message}")
+        self.log_frame.append(f"[{timestamp}] {message}")
 
-    def start_execution(self) -> None:
-        selected = [company for company in self.all_companies if company.selected and company.active]
-        if not selected:
-            QMessageBox.information(self, "Seleção", "Selecione ao menos uma empresa ativa.")
-            return
-        self.worker = RobotWorker(self.backend, selected)
+    def _start_worker(
+        self,
+        companies: list[CompanyItem],
+        job: dict[str, Any] | None = None,
+        origin_message: str | None = None,
+    ) -> None:
+        self.backend.ensure_robot_registration()
+        self.backend.update_robot_status("processing")
+        self.worker = RobotWorker(self.backend, companies, job=job)
         self.worker.status_changed.connect(self.set_global_status)
         self.worker.log_message.connect(self.append_log)
         self.worker.company_changed.connect(self.update_company_state)
@@ -1232,7 +1784,16 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.worker.start()
-        self.append_log(f"Iniciando coleta para {len(selected)} empresa(s).")
+        if origin_message:
+            self.append_log(origin_message)
+
+    def start_execution(self) -> None:
+        selected = [company for company in self.all_companies if company.selected and company.active]
+        if not selected:
+            QMessageBox.information(self, "Seleção", "Selecione ao menos uma empresa ativa.")
+            return
+        self.active_job = None
+        self._start_worker(selected, origin_message=f"Iniciando coleta para {len(selected)} empresa(s).")
 
     def stop_execution(self) -> None:
         if self.worker and self.worker.isRunning():
@@ -1241,18 +1802,36 @@ class MainWindow(QMainWindow):
             self.btn_stop.setEnabled(False)
 
     def execution_finished(self) -> None:
+        worker = self.worker
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.append_log("Execução finalizada.")
+        self.backend.ensure_robot_registration()
+        self.backend.update_robot_status("active")
+        if self.active_job:
+            error_message = "\n".join(worker.error_messages) if worker and worker.error_messages else None
+            success = not bool(error_message) and not (worker.was_stopped if worker else False)
+            self.backend.complete_execution_request(self.active_job["id"], success, error_message)
+            self.active_job = None
         self.worker = None
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        event.ignore()
+        self.hide()
+        if self._tray_icon is not None and not self._tray_icon.icon().isNull():
+            self._tray_icon.show()
+
+    def _on_about_to_quit(self) -> None:
+        self.heartbeat_timer.stop()
+        self.display_config_timer.stop()
+        self.job_poll_timer.stop()
+        self.backend.ensure_robot_registration()
         self.backend.update_robot_status("inactive")
-        super().closeEvent(event)
 
 
 def sync_local_resources() -> None:
     source = BASE_DIR.parent.parent / "nfs" / "NFs Padrao" / "data"
+    EXTENSIONS_DIR.mkdir(parents=True, exist_ok=True)
     if not source.exists():
         DATA_DIR.mkdir(parents=True, exist_ok=True)
     elif not DATA_DIR.exists():

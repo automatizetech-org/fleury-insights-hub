@@ -31,10 +31,11 @@ import { toast } from "sonner"
 import { getRobots } from "@/services/robotsService"
 import { CompanyRobotsEditor } from "@/components/companies/CompanyRobotsEditor"
 import { sanitizeRobotConfigForCompany } from "@/lib/companyRobotRequirements"
+import { getBrazilStates, getCitiesByState } from "@/services/ibgeLocationsService"
 
 type FilterStatus = "active" | "inactive" | "all"
 
-type CompanyWithCert = Company & { auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null; cert_valid_until?: string | null; contador_nome?: string | null; contador_cpf?: string | null; state_registration?: string | null }
+type CompanyWithCert = Company & { auth_mode?: string | null; cert_blob_b64?: string | null; cert_password?: string | null; cert_valid_until?: string | null; contador_nome?: string | null; contador_cpf?: string | null; state_registration?: string | null; state_code?: string | null; city_name?: string | null }
 
 function onlyDigits(s: string) {
   return s.replace(/\D/g, "")
@@ -71,6 +72,8 @@ export default function EmpresasPage() {
   const [editName, setEditName] = useState("")
   const [editDocument, setEditDocument] = useState("")
   const [editStateRegistration, setEditStateRegistration] = useState("")
+  const [editStateCode, setEditStateCode] = useState("")
+  const [editCityName, setEditCityName] = useState("")
   const [editActive, setEditActive] = useState(true)
   const [editUseCertificate, setEditUseCertificate] = useState(false)
   const [editCertReplacing, setEditCertReplacing] = useState(false)
@@ -97,6 +100,17 @@ export default function EmpresasPage() {
     queryFn: () => getAccountants(true),
     staleTime: 30000,
   })
+  const { data: states = [] } = useQuery({
+    queryKey: ["ibge-states"],
+    queryFn: getBrazilStates,
+    staleTime: 24 * 60 * 60 * 1000,
+  })
+  const { data: cities = [] } = useQuery({
+    queryKey: ["ibge-cities", editStateCode],
+    queryFn: () => getCitiesByState(editStateCode),
+    enabled: !!editStateCode,
+    staleTime: 24 * 60 * 60 * 1000,
+  })
 
   useEffect(() => {
     if (searchParams.get("editCompany") && filter !== "all") setFilter("all")
@@ -117,7 +131,9 @@ export default function EmpresasPage() {
         c.name.toLowerCase().includes(q) ||
         (!!digits && (c.document ?? "").replace(/\D/g, "").includes(digits)) ||
         String((c as CompanyWithCert).state_registration ?? "").toLowerCase().includes(q) ||
-        String((c as CompanyWithCert).contador_nome ?? "").toLowerCase().includes(q)
+        String((c as CompanyWithCert).contador_nome ?? "").toLowerCase().includes(q) ||
+        String((c as CompanyWithCert).state_code ?? "").toLowerCase().includes(q) ||
+        String((c as CompanyWithCert).city_name ?? "").toLowerCase().includes(q)
     )
   }, [companies, search])
 
@@ -140,6 +156,8 @@ export default function EmpresasPage() {
     setEditName(row.name)
     setEditDocument(row.document ?? "")
     setEditStateRegistration(row.state_registration ?? "")
+    setEditStateCode(row.state_code ?? "")
+    setEditCityName(row.city_name ?? "")
     setEditActive(row.active !== false)
     const withCert = row
     const shouldFocusCertificate = options?.focusCertificate ?? false
@@ -202,6 +220,8 @@ export default function EmpresasPage() {
         name: editName.trim(),
         document: editDocument.trim() || null,
         state_registration: editStateRegistration.trim() || null,
+        state_code: editStateCode || null,
+        city_name: editCityName || null,
         active: editActive,
       }
       if (!editUseCertificate) {
@@ -347,6 +367,11 @@ export default function EmpresasPage() {
                     {(emp as CompanyWithCert).state_registration && (
                       <p className="text-xs text-muted-foreground">IE: {(emp as CompanyWithCert).state_registration}</p>
                     )}
+                    {((emp as CompanyWithCert).state_code || (emp as CompanyWithCert).city_name) && (
+                      <p className="text-xs text-muted-foreground">
+                        Localidade: {[(emp as CompanyWithCert).city_name, (emp as CompanyWithCert).state_code].filter(Boolean).join(" - ")}
+                      </p>
+                    )}
                     {(emp as CompanyWithCert).contador_nome && (
                       <p className="text-xs text-muted-foreground mt-0.5">
                         Contador: {(emp as CompanyWithCert).contador_nome}
@@ -429,6 +454,52 @@ export default function EmpresasPage() {
                 disabled={editSaving}
                 placeholder="Inscrição estadual"
               />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Estado</Label>
+                <Select
+                  value={editStateCode || "none"}
+                  onValueChange={(value) => {
+                    const nextState = value === "none" ? "" : value
+                    setEditStateCode(nextState)
+                    setEditCityName("")
+                  }}
+                  disabled={editSaving}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o estado" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Não informado</SelectItem>
+                    {states.map((state) => (
+                      <SelectItem key={state.code} value={state.code}>
+                        {state.code} - {state.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Município</Label>
+                <Select
+                  value={editCityName || "none"}
+                  onValueChange={(value) => setEditCityName(value === "none" ? "" : value)}
+                  disabled={editSaving || !editStateCode}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={editStateCode ? "Selecione o município" : "Selecione o estado primeiro"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Não informado</SelectItem>
+                    {cities.map((city) => (
+                      <SelectItem key={city.name} value={city.name}>
+                        {city.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <input

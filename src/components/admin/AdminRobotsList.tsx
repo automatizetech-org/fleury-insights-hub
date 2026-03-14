@@ -147,6 +147,7 @@ export function AdminRobotsList({
   const [initialPeriodStart, setInitialPeriodStart] = useState("")
   const [initialPeriodEnd, setInitialPeriodEnd] = useState("")
   const [globalLogins, setGlobalLogins] = useState<CompanySefazLogin[]>([])
+  const [useGoianiaPortalLogin, setUseGoianiaPortalLogin] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const { data: queriedRobots = [], isLoading } = useQuery({
@@ -179,7 +180,7 @@ export function AdminRobotsList({
         date_execution_mode: dateExecutionMode,
         initial_period_start: dateExecutionMode === "interval" && initialPeriodStart ? initialPeriodStart : null,
         initial_period_end: dateExecutionMode === "interval" && initialPeriodEnd ? initialPeriodEnd : null,
-        global_logins: sanitizeSefazLogins(globalLogins),
+        global_logins: !useGoianiaPortalLogin ? [] : sanitizeSefazLogins(globalLogins),
       })
       queryClient.invalidateQueries({ queryKey: ["admin-robots"] })
       setEditing(null)
@@ -202,10 +203,13 @@ export function AdminRobotsList({
     setDateExecutionMode((r.date_execution_mode === "competencia" ? "competencia" : "interval") as "competencia" | "interval")
     setInitialPeriodStart(r.initial_period_start ?? "")
     setInitialPeriodEnd(r.initial_period_end ?? "")
-    setGlobalLogins(Array.isArray(r.global_logins) ? (r.global_logins as CompanySefazLogin[]) : [])
+    const nextLogins = Array.isArray(r.global_logins) ? (r.global_logins as CompanySefazLogin[]) : []
+    setGlobalLogins(nextLogins)
+    setUseGoianiaPortalLogin(nextLogins.length > 0)
   }
 
   const notesModeOptions = getNotesModeOptions(fiscalNotesKind)
+  const isSefazXmlRobot = editing?.technical_id === "sefaz_xml"
 
   return (
     <>
@@ -426,14 +430,34 @@ export function AdminRobotsList({
                 </p>
               )}
             </div>
-            {editing?.technical_id === "sefaz_xml" && (
+            {
+              <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-3">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    checked={useGoianiaPortalLogin}
+                    onCheckedChange={(checked) => setUseGoianiaPortalLogin(checked === true)}
+                    disabled={saving}
+                    id="use-goiania-portal-login"
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="use-goiania-portal-login">Usar login da Prefeitura de Goiânia</Label>
+                    <p className="text-[10px] text-muted-foreground">
+                      Ative para qualquer robô que precise autenticar no portal da Prefeitura de Goiânia com CPF e senha globais.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            }
+            {(isSefazXmlRobot || useGoianiaPortalLogin) && (
               <SefazLoginsField
                 value={globalLogins}
                 onChange={setGlobalLogins}
                 disabled={saving}
-                title="Logins globais do robô"
-                description="Cadastre os logins CPF/senha que este robô pode usar. Depois, no editar empresa, você escolhe qual login cada empresa usa."
-                defaultLabel="Login padrão global do robô"
+                title={useGoianiaPortalLogin ? "Login da Prefeitura de Goiânia" : "Logins globais do robô"}
+                description={useGoianiaPortalLogin
+                  ? "Cadastre aqui o CPF e a senha do portal da Prefeitura de Goiânia que o robô vai usar na inicialização."
+                  : "Cadastre os logins CPF/senha que este robô pode usar. Depois, no editar empresa, você escolhe qual login cada empresa usa."}
+                defaultLabel={useGoianiaPortalLogin ? "Login padrão da Prefeitura de Goiânia" : "Login padrão global do robô"}
               />
             )}
             <DialogFooter>

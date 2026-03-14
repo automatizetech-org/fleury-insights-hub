@@ -37,6 +37,7 @@ import { getPfxInfo } from "@/lib/validatePfxPassword"
 import { toast } from "sonner"
 import { CompanyRobotsEditor } from "@/components/companies/CompanyRobotsEditor"
 import { sanitizeRobotConfigForCompany } from "@/lib/companyRobotRequirements"
+import { getBrazilStates, getCitiesByState } from "@/services/ibgeLocationsService"
 
 const SUPABASE_URL = import.meta.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
@@ -83,6 +84,8 @@ export default function AdminPage() {
   const [editName, setEditName] = useState("")
   const [editDocument, setEditDocument] = useState("")
   const [editStateRegistration, setEditStateRegistration] = useState("")
+  const [editStateCode, setEditStateCode] = useState("")
+  const [editCityName, setEditCityName] = useState("")
   const [editActive, setEditActive] = useState(true)
   const [editContadorCpf, setEditContadorCpf] = useState("")
   const [editUseCertificate, setEditUseCertificate] = useState(false)
@@ -182,6 +185,17 @@ export default function AdminPage() {
     queryKey: ["accountants"],
     queryFn: () => getAccountants(true),
     staleTime: 30000,
+  })
+  const { data: states = [] } = useQuery({
+    queryKey: ["ibge-states"],
+    queryFn: getBrazilStates,
+    staleTime: 24 * 60 * 60 * 1000,
+  })
+  const { data: cities = [] } = useQuery({
+    queryKey: ["ibge-cities", editStateCode],
+    queryFn: () => getCitiesByState(editStateCode),
+    enabled: !!editStateCode,
+    staleTime: 24 * 60 * 60 * 1000,
   })
 
   useEffect(() => {
@@ -288,6 +302,8 @@ export default function AdminPage() {
     setEditName(row.name)
     setEditDocument(row.document ?? "")
     setEditStateRegistration((row as { state_registration?: string | null }).state_registration ?? "")
+    setEditStateCode((row as { state_code?: string | null }).state_code ?? "")
+    setEditCityName((row as { city_name?: string | null }).city_name ?? "")
     setEditActive((row as { active?: boolean }).active !== false)
     setEditContadorCpf((row as { contador_cpf?: string | null }).contador_cpf ?? "")
     const withCert = row as { cert_blob_b64?: string | null; auth_mode?: string | null }
@@ -330,6 +346,8 @@ export default function AdminPage() {
         name: editName.trim(),
         document: editDocument.trim() || null,
         state_registration: editStateRegistration.trim() || null,
+        state_code: editStateCode || null,
+        city_name: editCityName || null,
         active: editActive,
         contador_nome: editContadorCpf ? (findAccountantByCpf(accountants, editContadorCpf)?.name ?? null) : null,
         contador_cpf: editContadorCpf || null,
@@ -718,6 +736,52 @@ export default function AdminPage() {
             <div className="space-y-2">
               <Label>IE</Label>
               <Input value={editStateRegistration} onChange={(e) => setEditStateRegistration(e.target.value)} disabled={editSaving} placeholder="Inscrição estadual" />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Estado</Label>
+                <Select
+                  value={editStateCode || "none"}
+                  onValueChange={(value) => {
+                    const nextState = value === "none" ? "" : value
+                    setEditStateCode(nextState)
+                    setEditCityName("")
+                  }}
+                  disabled={editSaving}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o estado" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Não informado</SelectItem>
+                    {states.map((state) => (
+                      <SelectItem key={state.code} value={state.code}>
+                        {state.code} - {state.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Município</Label>
+                <Select
+                  value={editCityName || "none"}
+                  onValueChange={(value) => setEditCityName(value === "none" ? "" : value)}
+                  disabled={editSaving || !editStateCode}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={editStateCode ? "Selecione o município" : "Selecione o estado primeiro"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Não informado</SelectItem>
+                    {cities.map((city) => (
+                      <SelectItem key={city.name} value={city.name}>
+                        {city.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <input type="checkbox" id="edit-active" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} disabled={editSaving} className="rounded border-input" />
