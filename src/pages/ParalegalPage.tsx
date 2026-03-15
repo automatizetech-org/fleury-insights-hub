@@ -583,7 +583,13 @@ function MunicipalTaxesPanel({
                           size="sm"
                           className="h-7 gap-1 text-xs"
                           disabled={!item.guia_pdf_path}
-                          onClick={() => item.guia_pdf_path && downloadServerFileByPath(item.guia_pdf_path, `guia-${item.company_name}-${item.ano ?? ""}-${item.numero_documento ?? ""}.pdf`.replace(/\s+/g, "-"))}
+                          onClick={() =>
+                            item.guia_pdf_path &&
+                            downloadServerFileByPath(
+                              item.guia_pdf_path,
+                              item.guia_pdf_path.split(/[\\/]/).pop() || undefined,
+                            )
+                          }
                         >
                           <Download className="h-3.5 w-3.5" /> PDF
                         </Button>
