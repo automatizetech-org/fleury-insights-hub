@@ -17,6 +17,7 @@ import {
   Activity,
   FileSpreadsheet,
   Shield,
+  Landmark,
 } from "lucide-react";
 import { LionIcon } from "@/components/icons/LionIcon";
 
@@ -25,11 +26,14 @@ const pages = [
   { name: "Fiscal", path: "/fiscal", icon: FileText, group: "Navegação" },
   { name: "Fiscal - NFS", path: "/fiscal/nfs", icon: FileText, group: "Fiscal" },
   { name: "Fiscal - NFE/NFC", path: "/fiscal/nfe-nfc", icon: FileText, group: "Fiscal" },
-  { name: "Fiscal - Simples Nacional", path: "/fiscal/simples-nacional", icon: FileText, group: "Fiscal" },
   { name: "Fiscal - DIFAL", path: "/fiscal/difal", icon: FileText, group: "Fiscal" },
   { name: "Fiscal - IRRF/CSLL", path: "/fiscal/irrf-csll", icon: FileText, group: "Fiscal" },
   { name: "Fiscal - Certidões", path: "/fiscal/certidoes", icon: FileText, group: "Fiscal" },
   { name: "Departamento Pessoal", path: "/dp", icon: Users, group: "Navegação" },
+  { name: "Inteligência Tributária", path: "/inteligencia-tributaria", icon: Landmark, group: "Navegação" },
+  { name: "Tributária - Simples Nacional", path: "/inteligencia-tributaria/simples-nacional", icon: Landmark, group: "Inteligência Tributária" },
+  { name: "Tributária - Lucro Real", path: "/inteligencia-tributaria/lucro-real", icon: Landmark, group: "Inteligência Tributária" },
+  { name: "Tributária - Lucro Presumido", path: "/inteligencia-tributaria/lucro-presumido", icon: Landmark, group: "Inteligência Tributária" },
   { name: "IR", path: "/ir", icon: LionIcon, group: "Navegação" },
   { name: "Paralegal", path: "/paralegal", icon: Shield, group: "Navegação" },
   { name: "Paralegal - Certificados", path: "/paralegal/certificados", icon: Shield, group: "Paralegal" },

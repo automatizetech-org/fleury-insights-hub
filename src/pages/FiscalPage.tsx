@@ -13,7 +13,6 @@ import { getFiscalOverviewAnalytics, getRecentFiscalDocuments } from "@/services
 const topicos = [
   { label: "NFS", path: "/fiscal/nfs" },
   { label: "NFE/NFC", path: "/fiscal/nfe-nfc" },
-  { label: "Simples Nacional", path: "/fiscal/simples-nacional" },
   { label: "DIFAL", path: "/fiscal/difal" },
   { label: "IRRF/CSLL", path: "/fiscal/irrf-csll" },
   { label: "Certidões", path: "/fiscal/certidoes" },

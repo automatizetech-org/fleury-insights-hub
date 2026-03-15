@@ -7,7 +7,6 @@ import {
   Activity,
   FileSpreadsheet,
   Settings,
-  RefreshCw,
   ChevronDown,
   ChevronRight,
   Menu,
@@ -20,6 +19,7 @@ import {
   Calculator,
   ClipboardList,
   Shield,
+  Landmark,
 } from "lucide-react";
 import { cn } from "@/utils";
 import { useState, useEffect } from "react";
@@ -60,7 +60,6 @@ const navItems: NavItem[] = [
       { name: "Visão Geral", path: "/fiscal" },
       { name: "NFS", path: "/fiscal/nfs" },
       { name: "NFE/NFC", path: "/fiscal/nfe-nfc" },
-      { name: "Simples Nacional", path: "/fiscal/simples-nacional" },
       { name: "DIFAL", path: "/fiscal/difal" },
       { name: "IRRF/CSLL", path: "/fiscal/irrf-csll" },
       { name: "Certidões", path: "/fiscal/certidoes" },
@@ -93,13 +92,26 @@ const navItems: NavItem[] = [
   },
   { name: "IR", path: "/ir", icon: LionIcon, description: "Clientes e declarações de IR", panelKey: "ir" },
   {
+    name: "Inteligência Tributária",
+    path: "/inteligencia-tributaria",
+    icon: Landmark,
+    description: "Simples, Lucro Real e Presumido",
+    panelKey: "inteligencia_tributaria",
+    children: [
+      { name: "Visão Geral", path: "/inteligencia-tributaria" },
+      { name: "Simples Nacional", path: "/inteligencia-tributaria/simples-nacional" },
+      { name: "Lucro Real", path: "/inteligencia-tributaria/lucro-real" },
+      { name: "Lucro Presumido", path: "/inteligencia-tributaria/lucro-presumido" },
+    ],
+  },
+  {
     name: "Paralegal",
     path: "/paralegal",
     icon: Shield,
     description: "Certificados e rotinas",
     panelKey: "paralegal",
     children: [
-      { name: "Visao Geral", path: "/paralegal" },
+      { name: "Visão Geral", path: "/paralegal" },
       { name: "Certificados", path: "/paralegal/certificados" },
       { name: "Tarefas", path: "/paralegal/tarefas" },
       { name: "Clientes", path: "/paralegal/clientes" },

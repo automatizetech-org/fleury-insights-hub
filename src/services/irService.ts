@@ -25,7 +25,7 @@ export type IrClient = IrBaseClient & {
   payment_metadata: Record<string, unknown> | null;
 };
 export type IrSettings = Tables<"ir_settings">;
-export type IrPaymentStatus = "PIX" | "BOLETO" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "TRANSFERÃŠNCIA POUPANÃ‡A" | "PERMUTA" | "A PAGAR";
+export type IrPaymentStatus = "PIX" | "BOLETO" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "PERMUTA" | "A PAGAR";
 export type IrDeclarationStatus = "Concluido" | "Pendente";
 
 export type SaveIrClientInput = {

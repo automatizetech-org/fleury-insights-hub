@@ -104,6 +104,41 @@ export type Database = {
         Insert: { id?: string; singleton?: boolean; payment_due_date?: string | null; created_at?: string; updated_at?: string }
         Update: { id?: string; singleton?: boolean; payment_due_date?: string | null; created_at?: string; updated_at?: string }
       }
+      tax_rule_versions: {
+        Row: { id: string; regime: string; scope: string; version_code: string; effective_from: string; effective_to: string | null; title: string; source_reference: string; source_url: string | null; payload: Json; created_at: string; updated_at: string }
+        Insert: { id?: string; regime: string; scope: string; version_code: string; effective_from: string; effective_to?: string | null; title: string; source_reference: string; source_url?: string | null; payload?: Json; created_at?: string; updated_at?: string }
+        Update: { id?: string; regime?: string; scope?: string; version_code?: string; effective_from?: string; effective_to?: string | null; title?: string; source_reference?: string; source_url?: string | null; payload?: Json; created_at?: string; updated_at?: string }
+      }
+      simple_national_periods: {
+        Row: { id: string; company_id: string; apuration_period: string; company_start_date: string | null; current_period_revenue: number; municipal_iss_rate: number | null; subject_to_factor_r: boolean; base_annex: string; activity_label: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; company_id: string; apuration_period: string; company_start_date?: string | null; current_period_revenue?: number; municipal_iss_rate?: number | null; subject_to_factor_r?: boolean; base_annex?: string; activity_label?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; company_id?: string; apuration_period?: string; company_start_date?: string | null; current_period_revenue?: number; municipal_iss_rate?: number | null; subject_to_factor_r?: boolean; base_annex?: string; activity_label?: string | null; created_at?: string; updated_at?: string }
+      }
+      simple_national_entries: {
+        Row: { id: string; period_id: string; company_id: string; reference_month: string; entry_type: "revenue" | "payroll"; amount: number; created_at: string; updated_at: string }
+        Insert: { id?: string; period_id: string; company_id: string; reference_month: string; entry_type: "revenue" | "payroll"; amount?: number; created_at?: string; updated_at?: string }
+        Update: { id?: string; period_id?: string; company_id?: string; reference_month?: string; entry_type?: "revenue" | "payroll"; amount?: number; created_at?: string; updated_at?: string }
+      }
+      simple_national_historical_revenue_allocations: {
+        Row: { id: string; period_id: string; company_id: string; reference_month: string; annex_code: string; amount: number; created_at: string; updated_at: string }
+        Insert: { id?: string; period_id: string; company_id: string; reference_month: string; annex_code: string; amount?: number; created_at?: string; updated_at?: string }
+        Update: { id?: string; period_id?: string; company_id?: string; reference_month?: string; annex_code?: string; amount?: number; created_at?: string; updated_at?: string }
+      }
+      simple_national_revenue_segments: {
+        Row: { id: string; period_id: string; company_id: string; segment_code: string; market_type: string; description: string | null; amount: number; display_order: number; created_at: string; updated_at: string }
+        Insert: { id?: string; period_id: string; company_id: string; segment_code: string; market_type?: string; description?: string | null; amount?: number; display_order?: number; created_at?: string; updated_at?: string }
+        Update: { id?: string; period_id?: string; company_id?: string; segment_code?: string; market_type?: string; description?: string | null; amount?: number; display_order?: number; created_at?: string; updated_at?: string }
+      }
+      simple_national_payroll_compositions: {
+        Row: { id: string; period_id: string; company_id: string; employees_amount: number; pro_labore_amount: number; individual_contractors_amount: number; thirteenth_salary_amount: number; employer_cpp_amount: number; fgts_amount: number; excluded_profit_distribution_amount: number; excluded_rent_amount: number; excluded_interns_amount: number; excluded_mei_amount: number; created_at: string; updated_at: string }
+        Insert: { id?: string; period_id: string; company_id: string; employees_amount?: number; pro_labore_amount?: number; individual_contractors_amount?: number; thirteenth_salary_amount?: number; employer_cpp_amount?: number; fgts_amount?: number; excluded_profit_distribution_amount?: number; excluded_rent_amount?: number; excluded_interns_amount?: number; excluded_mei_amount?: number; created_at?: string; updated_at?: string }
+        Update: { id?: string; period_id?: string; company_id?: string; employees_amount?: number; pro_labore_amount?: number; individual_contractors_amount?: number; thirteenth_salary_amount?: number; employer_cpp_amount?: number; fgts_amount?: number; excluded_profit_distribution_amount?: number; excluded_rent_amount?: number; excluded_interns_amount?: number; excluded_mei_amount?: number; created_at?: string; updated_at?: string }
+      }
+      simple_national_calculations: {
+        Row: { id: string; period_id: string; company_id: string; rule_version_code: string; result_payload: Json; memory_payload: Json; created_at: string; updated_at: string }
+        Insert: { id?: string; period_id: string; company_id: string; rule_version_code: string; result_payload?: Json; memory_payload?: Json; created_at?: string; updated_at?: string }
+        Update: { id?: string; period_id?: string; company_id?: string; rule_version_code?: string; result_payload?: Json; memory_payload?: Json; created_at?: string; updated_at?: string }
+      }
     }
     Views: { [_ in never]: never }
     Functions: { [_ in never]: never }

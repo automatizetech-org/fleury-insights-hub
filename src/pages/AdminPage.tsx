@@ -112,6 +112,7 @@ export default function AdminPage() {
     dashboard: true,
     fiscal: true,
     dp: true,
+    inteligencia_tributaria: true,
     ir: true,
     paralegal: true,
     financeiro: true,

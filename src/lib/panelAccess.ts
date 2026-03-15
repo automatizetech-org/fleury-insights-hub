@@ -1,12 +1,13 @@
 /**
  * Chave de painel para cada rota. Usado no sidebar (panel_access) e no guard de rota.
- * /admin não tem panelKey, controle só por role super_admin.
+ * /admin nao tem panelKey, controle so por role super_admin.
  */
 export const PATH_TO_PANEL: Record<string, string> = {
   "/dashboard": "dashboard",
   "/fiscal": "fiscal",
   "/dp": "dp",
   "/contabil": "contabil",
+  "/inteligencia-tributaria": "inteligencia_tributaria",
   "/ir": "ir",
   "/paralegal": "paralegal",
   "/financeiro": "financeiro",
@@ -22,6 +23,7 @@ export const PANEL_KEYS = [
   "fiscal",
   "dp",
   "contabil",
+  "inteligencia_tributaria",
   "ir",
   "paralegal",
   "financeiro",
@@ -38,18 +40,18 @@ export const PANEL_LABELS: Record<PanelKey, string> = {
   dashboard: "Dashboard",
   fiscal: "Fiscal",
   dp: "Depto. Pessoal",
-  contabil: "Contábil",
+  contabil: "Contabil",
+  inteligencia_tributaria: "Inteligencia Tributaria",
   ir: "IR",
   paralegal: "Paralegal",
   financeiro: "Financeiro",
-  operacoes: "Operações",
+  operacoes: "Operacoes",
   documentos: "Documentos",
   empresas: "Empresas",
-  alteracao_empresarial: "Alteração Empresarial",
-  sync: "Sincronização",
+  alteracao_empresarial: "Alteracao Empresarial",
+  sync: "Sincronizacao",
 }
 
-/** Retorna a chave do painel para um path (ex: /fiscal/nfs -> fiscal). /admin não tem panelKey. */
 export function pathToPanelKey(pathname: string): string | null {
   for (const [path, key] of Object.entries(PATH_TO_PANEL)) {
     if (pathname === path || pathname.startsWith(path + "/")) return key

@@ -17,6 +17,8 @@ import EmpresasNovaPage from "@/pages/EmpresasNovaPage";
 import EmpresasPage from "@/pages/EmpresasPage";
 import ContabilPage from "@/pages/ContabilPage";
 import ContabilDetailPage from "@/pages/ContabilDetailPage";
+import InteligenciaTributariaPage from "@/pages/InteligenciaTributariaPage";
+import InteligenciaTributariaTopicPage from "@/pages/InteligenciaTributariaTopicPage";
 import AlteracaoEmpresarialPage from "@/pages/AlteracaoEmpresarialPage";
 import ParalegalPage from "@/pages/ParalegalPage";
 import IRPage from "@/pages/IRPage";
@@ -28,11 +30,14 @@ export function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/dashboard" element={<ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>} />
       <Route path="/fiscal" element={<ProtectedRoute><AppLayout><FiscalPage /></AppLayout></ProtectedRoute>} />
+      <Route path="/fiscal/simples-nacional" element={<Navigate to="/inteligencia-tributaria/simples-nacional" replace />} />
       <Route path="/fiscal/:type" element={<ProtectedRoute><AppLayout><FiscalDetailPage /></AppLayout></ProtectedRoute>} />
       <Route path="/dp" element={<ProtectedRoute><AppLayout><DPPage /></AppLayout></ProtectedRoute>} />
       <Route path="/dp/:topic" element={<ProtectedRoute><AppLayout><DPTopicPage /></AppLayout></ProtectedRoute>} />
       <Route path="/contabil" element={<ProtectedRoute><AppLayout><ContabilPage /></AppLayout></ProtectedRoute>} />
       <Route path="/contabil/:topic" element={<ProtectedRoute><AppLayout><ContabilDetailPage /></AppLayout></ProtectedRoute>} />
+      <Route path="/inteligencia-tributaria" element={<ProtectedRoute><AppLayout><InteligenciaTributariaPage /></AppLayout></ProtectedRoute>} />
+      <Route path="/inteligencia-tributaria/:topic" element={<ProtectedRoute><AppLayout><InteligenciaTributariaTopicPage /></AppLayout></ProtectedRoute>} />
       <Route path="/ir" element={<ProtectedRoute><AppLayout><IRPage /></AppLayout></ProtectedRoute>} />
       <Route path="/paralegal" element={<ProtectedRoute><AppLayout><ParalegalPage /></AppLayout></ProtectedRoute>} />
       <Route path="/paralegal/:topic" element={<ProtectedRoute><AppLayout><ParalegalPage /></AppLayout></ProtectedRoute>} />
