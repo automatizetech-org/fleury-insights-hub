@@ -9,6 +9,7 @@ import {
   Clock3,
   Crown,
   Download,
+  FileArchive,
   FileBadge2,
   FolderClock,
   Landmark,
@@ -45,8 +46,9 @@ import {
   type MunicipalTaxDebtView,
   type MunicipalTaxStatusClass,
 } from "@/services/municipalTaxesService"
-import { downloadServerFileByPath, hasServerApi } from "@/services/serverFileService"
+import { downloadServerFileByPath, downloadServerFilesZip, hasServerApi } from "@/services/serverFileService"
 import { cn } from "@/utils"
+import { toast } from "sonner"
 
 type Topic = "overview" | "certificados" | "tarefas" | "clientes" | "taxas-impostos"
 type CertificateFilter = "todos" | CertificateStatus
@@ -302,6 +304,7 @@ function MunicipalTaxesPanel({
   isLoading: boolean
 }) {
   const summary = useMemo(() => getMunicipalTaxSummary(items), [items])
+  const [downloadingZip, setDownloadingZip] = useState(false)
   const [tablePage, setTablePage] = useState(1)
   const [tablePageSize, setTablePageSize] = useState(10)
 
@@ -335,6 +338,7 @@ function MunicipalTaxesPanel({
   const from = (tablePage - 1) * tablePageSize
   const to = Math.min(from + tablePageSize, totalFiltered)
   const pageItems = sortedItems.slice(from, to)
+  const listedGuidePaths = sortedItems.map((item) => String(item.guia_pdf_path || "").trim()).filter(Boolean)
 
   const statusChartData = useMemo(
     () =>
@@ -469,6 +473,26 @@ function MunicipalTaxesPanel({
                     <span>Venc.: {formatDate(item.data_vencimento)}</span>
                     <span className="tabular-nums">{formatCurrencyBRL(Number(item.valor ?? 0))}</span>
                   </div>
+                  {hasServerApi() && (
+                    <div className="mt-2.5 flex justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1 text-xs"
+                        disabled={!item.guia_pdf_path}
+                        onClick={() =>
+                          item.guia_pdf_path &&
+                          downloadServerFileByPath(
+                            item.guia_pdf_path,
+                            item.guia_pdf_path.split(/[\\/]/).pop() || undefined,
+                          )
+                        }
+                      >
+                        <Download className="h-3.5 w-3.5" /> PDF
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -514,8 +538,8 @@ function MunicipalTaxesPanel({
         <div className="border-b border-border p-4">
           <h3 className="text-sm font-semibold font-display">Tabela completa de debitos</h3>
           <p className="mt-1 text-xs text-muted-foreground">Consulta consolidada de taxas e impostos municipais da Prefeitura de Goiania. Empresas conforme seleção do painel lateral.</p>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="relative lg:col-span-2">
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.35fr)_minmax(9rem,10rem)_minmax(9rem,10rem)_auto]">
+            <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input value={filters.search} onChange={(e) => { setFilters((c) => ({ ...c, search: e.target.value })); setTablePage(1); }} placeholder="Pesquisar por empresa ou CNPJ" className="pl-9" />
             </div>
@@ -535,6 +559,31 @@ function MunicipalTaxesPanel({
                 <SelectItem value="regular">Regular</SelectItem>
               </SelectContent>
             </Select>
+            {hasServerApi() && (
+              <Button
+                type="button"
+                className="gap-2 xl:justify-self-end"
+                disabled={downloadingZip || listedGuidePaths.length === 0}
+                onClick={async () => {
+                  if (listedGuidePaths.length === 0) {
+                    toast.error("Nenhum débito com guia disponível na página atual.")
+                    return
+                  }
+                  setDownloadingZip(true)
+                  try {
+                    await downloadServerFilesZip(listedGuidePaths, "guias-taxas-impostos")
+                    toast.success(`Download iniciado: ${listedGuidePaths.length} guia(s) da página atual.`)
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : "Erro ao baixar ZIP.")
+                  } finally {
+                    setDownloadingZip(false)
+                  }
+                }}
+              >
+                <FileArchive className="h-4 w-4" />
+                {downloadingZip ? "Gerando ZIP..." : "Baixar ZIP dos documentos listados"}
+              </Button>
+            )}
           </div>
         </div>
         <div className="overflow-x-auto -webkit-overflow-scrolling-touch rounded-b-lg border-x border-b border-border">

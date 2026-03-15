@@ -53,17 +53,22 @@ export function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div
       className={cn(
-        "grid w-full min-w-0 h-dvh overflow-x-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-500",
+        "grid w-full max-w-full min-w-0 h-dvh overflow-x-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-500",
         "grid-cols-1 md:transition-[grid-template-columns] md:duration-300 md:ease-in-out",
         sidebarOpen ? "md:grid-cols-[16rem_1fr]" : "md:grid-cols-[0_1fr]"
       )}
     >
       {/* No mobile: w-0 e h-0 para não ocupar espaço; o sidebar só mostra o botão/drawer (position fixed) */}
-      <div className="w-0 h-0 min-h-0 md:w-64 md:h-dvh shrink-0 overflow-visible md:flex-shrink-0">
+      <div
+        className={cn(
+          "w-0 h-0 min-h-0 shrink-0 overflow-visible md:h-dvh md:flex-shrink-0",
+          sidebarOpen ? "md:w-64" : "md:w-0"
+        )}
+      >
         <AppSidebar open={sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)} />
       </div>
 
-      <main className="min-w-0 w-full flex flex-col overflow-x-hidden relative min-h-0 h-dvh md:h-auto">
+      <main className="min-w-0 w-full max-w-full flex flex-col overflow-x-hidden relative min-h-0 h-dvh md:h-auto">
         <header className="flex-shrink-0 w-full flex flex-col border-b border-gray-200 dark:border-slate-700/80 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm min-w-0 pt-[env(safe-area-inset-top)]">
           <div className="h-14 min-h-[56px] flex items-center justify-between gap-2 pl-14 pr-3 sm:pl-4 sm:pr-4 md:pl-4 md:pr-6">
           <button
@@ -99,9 +104,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 min-w-0 pb-[env(safe-area-inset-bottom)] [scrollbar-gutter:stable]">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 min-w-0 max-w-full pb-[env(safe-area-inset-bottom)]">
           <CommandPalette />
-          <div className="p-3 sm:p-4 md:p-6 w-full min-w-0 max-w-none animate-fade-in-up box-border">
+          <div className="p-3 sm:p-4 md:p-6 w-full min-w-0 max-w-full animate-fade-in-up box-border">
             {noAccess ? <Navigate to="/dashboard" replace /> : children}
           </div>
         </div>

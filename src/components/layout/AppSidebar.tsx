@@ -332,7 +332,7 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
       />
       <aside
         className={cn(
-          "hidden md:flex md:w-64 md:flex-shrink-0 md:h-dvh bg-gradient-to-b from-white via-white to-gray-50 dark:from-slate-800 dark:via-slate-800 dark:to-slate-900 border-r border-gray-200 dark:border-slate-700 flex-col shadow-3d relative overflow-hidden transition-colors duration-500 sticky top-0 z-40 transition-transform duration-300 ease-in-out",
+          "hidden md:flex md:w-full md:flex-shrink-0 md:h-dvh bg-gradient-to-b from-white via-white to-gray-50 dark:from-slate-800 dark:via-slate-800 dark:to-slate-900 border-r border-gray-200 dark:border-slate-700 flex-col shadow-3d relative overflow-hidden transition-colors duration-500 sticky top-0 z-40 transition-transform duration-300 ease-in-out",
           open ? "translate-x-0" : "-translate-x-full"
         )}
         aria-hidden={!open}
