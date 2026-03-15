@@ -8,6 +8,7 @@ import {
   Calendar,
   Clock3,
   Crown,
+  Download,
   FileBadge2,
   FolderClock,
   Landmark,
@@ -44,6 +45,7 @@ import {
   type MunicipalTaxDebtView,
   type MunicipalTaxStatusClass,
 } from "@/services/municipalTaxesService"
+import { downloadServerFileByPath, hasServerApi } from "@/services/serverFileService"
 import { cn } from "@/utils"
 
 type Topic = "overview" | "certificados" | "tarefas" | "clientes" | "taxas-impostos"
@@ -552,6 +554,7 @@ function MunicipalTaxesPanel({
                   <th className="w-[92px] px-3 py-3"><MunicipalTaxSortHeader label="Valor" column="valor" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
                   <th className="w-[90px] px-3 py-3"><MunicipalTaxSortHeader label="Situacao" column="situacao" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
                   <th className="w-[120px] px-3 py-3 whitespace-nowrap"><MunicipalTaxSortHeader label="Classificacao" column="status_class" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
+                  {hasServerApi() && <th className="w-[80px] px-3 py-3 text-left">Guia PDF</th>}
                 </tr>
               </thead>
               <tbody>
@@ -572,6 +575,20 @@ function MunicipalTaxesPanel({
                     <td className="w-[120px] px-3 py-3 align-top whitespace-nowrap">
                       <span className={cn("inline-block rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap", MUNICIPAL_TAX_META[item.status_class].tone)} title={getMunicipalTaxClassificationLabel(item)}>{getMunicipalTaxClassificationLabel(item)}</span>
                     </td>
+                    {hasServerApi() && (
+                      <td className="w-[80px] px-3 py-3 align-top">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 gap-1 text-xs"
+                          disabled={!item.guia_pdf_path}
+                          onClick={() => item.guia_pdf_path && downloadServerFileByPath(item.guia_pdf_path, `guia-${item.company_name}-${item.ano ?? ""}-${item.numero_documento ?? ""}.pdf`.replace(/\s+/g, "-"))}
+                        >
+                          <Download className="h-3.5 w-3.5" /> PDF
+                        </Button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

@@ -88,6 +88,7 @@ PROXIES_FILE = PROXY_DIR / "proxies.txt"
 CHROME_EXE = (DATA_DIR / "Chrome" / "chrome.exe").resolve()
 # Perfil obrigatório: só data/chrome_cdp_profile do robô (nunca AppData/Playwright).
 CHROME_PROFILE_DIR = _get_chrome_profile_dir()
+CHROME_PROFILE_BACKUP_DIR = (DATA_DIR / "chrome_cdp_profile_backup").resolve()
 CHROME_LOG_PATH = (DATA_DIR / "chrome_start.log").resolve()
 
 
@@ -155,12 +156,14 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 GOIANIA_PORTAL_CPF = os.getenv("GOIANIA_PORTAL_CPF", "")
 GOIANIA_PORTAL_PASSWORD = os.getenv("GOIANIA_PORTAL_PASSWORD", "")
-SERVER_API_URL = (os.getenv("FOLDER_STRUCTURE_API_URL") or os.getenv("SERVER_API_URL") or "").strip()
+# URL do server-api (dashboard); base_path e estrutura de pastas (segment_path) vêm daqui.
+SERVER_API_URL = (os.getenv("SERVER_API_URL") or "").strip()
 # Não usado para o Chrome do robô; o robô usa apenas CHROME_PROFILE_DIR (data/chrome_cdp_profile).
 PLAYWRIGHT_USER_DATA_DIR = os.getenv("PLAYWRIGHT_USER_DATA_DIR", str(BASE_DIR / ".playwright-profile"))
 
 ROBOT_TECHNICAL_ID = "goiania_taxas_impostos"
 ROBOT_DISPLAY_NAME_DEFAULT = "Taxas e Impostos Goiania"
+# Fallback só para registro do robô na tabela; o caminho para salvar PDFs vem do dashboard (api/robot-config).
 ROBOT_SEGMENT_PATH_DEFAULT = "PARALEGAL/TAXAS-IMPOSTOS"
 LOGIN_URL = "https://www10.goiania.go.gov.br/Internet/Login.aspx?OriginalURL="
 INTERNET_HOME_URL = "https://www10.goiania.go.gov.br/Internet/"
@@ -169,6 +172,7 @@ INTRANET_LOGIN_URL = "https://servicos.goiania.go.gov.br/Intranet/Login.aspx"
 LOGIN_NAVIGATION_TIMEOUT_MS = 25000
 PORTAL_TRIBUTOS_URL_PART = "PortalTributos/ConsultaTributos"
 DEBITOS_URL_PART = "MostraDebitos"
+URLEMISSAO_DUAM = "http://www11.goiania.go.gov.br/sistemas/scarr/asp/scarr32010s2.asp"
 HEARTBEAT_INTERVAL_MS = 30000
 JOB_POLL_INTERVAL_MS = 10000
 DISPLAY_CONFIG_INTERVAL_MS = 10000
@@ -187,6 +191,15 @@ def normalize_name(value: str | None) -> str:
     for token in [" LTDA", " EIRELI", " ME", " EPP", " S A", " SA", " SERVICOS", " SERVIÇOS"]:
         base = base.replace(token, " ")
     return " ".join(base.split())
+
+
+def sanitize_company_folder(name: str | None) -> str:
+    """Nome da pasta da empresa no disco (BASE_PATH/EMPRESAS/{isso})."""
+    s = (name or "").strip()
+    s = re.sub(r'[<>:"/\\|?*]', "_", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    s = s.rstrip(" .")
+    return s or "Empresa"
 
 
 def normalize_location_name(value: str | None) -> str:
@@ -765,6 +778,72 @@ class RobotBackend:
             )
         return len(stored_rows)
 
+    def update_debt_guia_pdf_path(
+        self,
+        company_id: str,
+        tributo: str,
+        numero_documento: str | None,
+        data_vencimento: str | None,
+        guia_pdf_path: str,
+        parcela: str | None = None,
+        ano: int | None = None,
+    ) -> bool:
+        """Atualiza o caminho do PDF da guia; se o match exato falhar, tenta por ano/parcela/vencimento."""
+        q = (
+            self.supabase.table("municipal_tax_debts")
+            .update({"guia_pdf_path": guia_pdf_path, "updated_at": utc_now_iso()})
+            .eq("company_id", company_id)
+            .eq("tributo", tributo or "")
+        )
+        if numero_documento is not None:
+            q = q.eq("numero_documento", numero_documento)
+        if data_vencimento is not None:
+            q = q.eq("data_vencimento", data_vencimento)
+        q.execute()
+        exact_rows = (
+            self.supabase.table("municipal_tax_debts")
+            .select("id")
+            .eq("company_id", company_id)
+            .eq("tributo", tributo or "")
+            .eq("guia_pdf_path", guia_pdf_path)
+            .execute()
+        ).data or []
+        if exact_rows:
+            return True
+
+        candidate_rows = (
+            self.supabase.table("municipal_tax_debts")
+            .select("id,detalhes,ano,numero_documento,data_vencimento,tributo")
+            .eq("company_id", company_id)
+            .eq("tributo", tributo or "")
+            .execute()
+        ).data or []
+
+        parcela_norm = str(parcela or "").strip()
+        ano_norm = str(ano or "").strip()
+        venc_norm = str(data_vencimento or "").strip()
+        numero_norm = " ".join((numero_documento or "").upper().split())
+
+        for row in candidate_rows:
+            row_parcela = str(((row.get("detalhes") or {}).get("parcela")) or "").strip()
+            row_ano = str(row.get("ano") or "").strip()
+            row_venc = str(row.get("data_vencimento") or "").strip()
+            row_numero = " ".join((str(row.get("numero_documento") or "")).upper().split())
+            if parcela_norm and row_parcela != parcela_norm:
+                continue
+            if ano_norm and row_ano != ano_norm:
+                continue
+            if venc_norm and row_venc != venc_norm:
+                continue
+            if numero_norm and row_numero and row_numero != numero_norm and not row_numero.endswith(parcela_norm):
+                continue
+            self.supabase.table("municipal_tax_debts").update(
+                {"guia_pdf_path": guia_pdf_path, "updated_at": utc_now_iso()}
+            ).eq("id", row["id"]).execute()
+            return True
+
+        return False
+
     def claim_execution_request(self, log_callback: Callable[[str], None] | None = None) -> dict[str, Any] | None:
         if not self.ensure_robot_registration():
             return None
@@ -841,8 +920,8 @@ class RobotBackend:
             pass
 
     async def ensure_browser(self) -> None:
-        if self.page:
-            return
+        await self._ensure_browser_resilient()
+        return
         chrome_exe = self._resolve_chrome_exe()
         if not chrome_exe.exists():
             raise FileNotFoundError(f"Chrome nao encontrado em: {chrome_exe}")
@@ -896,6 +975,7 @@ class RobotBackend:
             "--disable-dev-shm-usage",
             "--no-sandbox",
             "--disable-gpu",
+            "--disable-popup-blocking",
             "--start-maximized",
             "--ignore-certificate-errors",
         ]
@@ -931,6 +1011,128 @@ class RobotBackend:
         self.page.set_default_timeout(90000)
         self.context.set_default_navigation_timeout(90000)
 
+    async def _ensure_browser_resilient(self) -> None:
+        if self.page:
+            return
+        chrome_exe = self._resolve_chrome_exe()
+        if not chrome_exe.exists():
+            raise FileNotFoundError(f"Chrome nao encontrado em: {chrome_exe}")
+
+        profile_dir = _get_chrome_profile_dir()
+        backup_dir = CHROME_PROFILE_BACKUP_DIR
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        if not self._is_profile_healthy(profile_dir) and self._is_profile_healthy(backup_dir):
+            self._restore_profile_from_backup(profile_dir, backup_dir)
+
+        last_error: Exception | None = None
+        for attempt in range(2):
+            self._kill_automation_chrome()
+            for _ in range(25):
+                try:
+                    with socket.create_connection(("127.0.0.1", CDP_PORT), timeout=0.3):
+                        pass
+                except OSError:
+                    break
+                try:
+                    await asyncio.sleep(0.4)
+                except Exception:
+                    pass
+            self._cleanup_profile_runtime_files(profile_dir)
+
+            proxy_url = self.get_current_proxy()
+            if proxy_url is None and not self._proxy_list and self._use_proxy_rotation:
+                self._start_mitmdump_if_needed()
+                proxy_url = self.get_current_proxy()
+            if self._proxy_list and self._use_proxy_rotation:
+                max_attempts = len(self._proxy_list)
+                for _ in range(max_attempts):
+                    if not proxy_url:
+                        break
+                    if _is_proxy_reachable(proxy_url):
+                        break
+                    self._log("Proxy inacessivel, tentando proximo...")
+                    self.use_next_proxy()
+                    proxy_url = self.get_current_proxy()
+                if proxy_url and not _is_proxy_reachable(proxy_url):
+                    proxy_url = None
+                    self._log("Nenhum proxy respondeu; iniciando sem proxy.")
+
+            chrome_cmd = [
+                str(chrome_exe),
+                f"--remote-debugging-port={CDP_PORT}",
+                f"--user-data-dir={profile_dir}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-popup-blocking",
+                "--start-maximized",
+                "--ignore-certificate-errors",
+            ]
+            if proxy_url:
+                chrome_cmd.append(f"--proxy-server={proxy_url}")
+            CHROME_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(CHROME_LOG_PATH, "w", encoding="utf-8", errors="replace") as chrome_log:
+                chrome_log.write(
+                    "=== Chrome bootstrap (perfil exclusivo do robo / modo resiliente) ===\n"
+                    f"EXE: {chrome_exe}\n"
+                    f"PROFILE_DIR: {profile_dir}\n"
+                    f"PROFILE_BACKUP_DIR: {backup_dir}\n"
+                    f"CDP_PORT: {CDP_PORT}\n"
+                    f"PROXY: {proxy_url or 'nenhum'}\n"
+                    f"TENTATIVA: {attempt + 1}\n"
+                    f"CMD: {' '.join(chrome_cmd)}\n\n"
+                )
+                self.chrome_proc = subprocess.Popen(
+                    chrome_cmd,
+                    stdout=chrome_log,
+                    stderr=subprocess.STDOUT,
+                    cwd=str(chrome_exe.parent),
+                    shell=False,
+                )
+
+            try:
+                await self._wait_for_cdp()
+                self.playwright = await async_playwright().start()
+                self.browser = await self.playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{CDP_PORT}")
+                self.context = self.browser.contexts[0] if self.browser.contexts else await self.browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 1440, "height": 960},
+                )
+                self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
+                self.portal_home_page = self.page
+                self.page.set_default_timeout(90000)
+                self.context.set_default_navigation_timeout(90000)
+                self._snapshot_profile_backup(profile_dir, backup_dir)
+                return
+            except Exception as exc:
+                last_error = exc
+                self._log(f"Aviso: falha ao abrir Chrome com o perfil principal: {exc}")
+                try:
+                    if self.browser:
+                        await self.browser.close()
+                except Exception:
+                    pass
+                self.browser = None
+                self.context = None
+                self.page = None
+                if self.playwright:
+                    try:
+                        await self.playwright.stop()
+                    except Exception:
+                        pass
+                self.playwright = None
+                self._kill_automation_chrome()
+                self.chrome_proc = None
+                if attempt == 0 and self._restore_profile_from_backup(profile_dir, backup_dir):
+                    continue
+                break
+        if last_error:
+            raise last_error
+
     async def close(self) -> None:
         """Desconecta Playwright e fecha o navegador Chrome por completo (incluindo processo)."""
         try:
@@ -956,6 +1158,10 @@ class RobotBackend:
             self.page = None
             self.playwright = None
             self._stop_mitmdump()
+            try:
+                self._snapshot_profile_backup(_get_chrome_profile_dir(), CHROME_PROFILE_BACKUP_DIR)
+            except Exception:
+                pass
             try:
                 await asyncio.sleep(1.0)
             except Exception:
@@ -1041,6 +1247,98 @@ class RobotBackend:
             pass
         return CHROME_EXE
 
+    def _cleanup_profile_runtime_files(self, profile_dir: Path) -> None:
+        runtime_entries = [
+            "DevToolsActivePort",
+            "SingletonCookie",
+            "SingletonLock",
+            "SingletonSocket",
+            "lockfile",
+            "chrome_debug.log",
+        ]
+        for name in runtime_entries:
+            try:
+                target = profile_dir / name
+                if target.exists():
+                    target.unlink()
+            except Exception:
+                pass
+
+    def _is_profile_healthy(self, profile_dir: Path) -> bool:
+        required = [
+            profile_dir / "Local State",
+            profile_dir / "Default" / "Preferences",
+            profile_dir / "Default" / "Secure Preferences",
+        ]
+        return all(path.exists() for path in required)
+
+    def _copy_profile_tree(self, source: Path, target: Path) -> None:
+        ignore_names = {
+            "Cache",
+            "Code Cache",
+            "GPUCache",
+            "GrShaderCache",
+            "GraphiteDawnCache",
+            "DawnGraphiteCache",
+            "DawnWebGPUCache",
+            "ShaderCache",
+            "Crashpad",
+            "BrowserMetrics",
+            "BrowserMetrics-spare.pma",
+            "DevToolsActivePort",
+            "SingletonCookie",
+            "SingletonLock",
+            "SingletonSocket",
+            "lockfile",
+            "chrome_debug.log",
+            "LOCK",
+            "Cookies",
+            "Cookies-journal",
+            "Network Persistent State",
+            "Session Storage",
+            "Sessions",
+            "Extension State",
+            "Local Storage",
+            "Service Worker",
+            "shared_proto_db",
+            "Site Characteristics Database",
+            "Sync Data",
+            "Safe Browsing Network",
+        }
+
+        def _ignore(_dir: str, names: list[str]) -> set[str]:
+            return {name for name in names if name in ignore_names}
+
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(source, target, ignore=_ignore)
+
+    def _restore_profile_from_backup(self, profile_dir: Path, backup_dir: Path) -> bool:
+        if not self._is_profile_healthy(backup_dir):
+            return False
+        try:
+            broken_dir = profile_dir.with_name(f"{profile_dir.name}_broken_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            if profile_dir.exists():
+                try:
+                    profile_dir.replace(broken_dir)
+                except Exception:
+                    shutil.rmtree(profile_dir, ignore_errors=True)
+            self._copy_profile_tree(backup_dir, profile_dir)
+            self._cleanup_profile_runtime_files(profile_dir)
+            self._log("Perfil Chrome restaurado a partir do backup estavel.")
+            return True
+        except Exception as exc:
+            self._log(f"Aviso: falha ao restaurar backup do perfil Chrome: {exc}")
+            return False
+
+    def _snapshot_profile_backup(self, profile_dir: Path, backup_dir: Path) -> None:
+        if not self._is_profile_healthy(profile_dir):
+            return
+        try:
+            self._copy_profile_tree(profile_dir, backup_dir)
+        except Exception as exc:
+            self._log(f"Aviso: falha ao atualizar backup do perfil Chrome: {exc}")
+
     async def _wait_for_cdp(self, timeout_seconds: int = 60) -> None:
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         while asyncio.get_running_loop().time() < deadline:
@@ -1101,7 +1399,7 @@ class RobotBackend:
             pass
 
     async def ensure_login(self, log: Callable[[str], None] | None = None, selected_login_cpf: str | None = None) -> None:
-        await self.ensure_browser()
+        await self._ensure_browser_resilient()
         assert self.page is not None
         login_cpf, login_password = self.get_dashboard_portal_credentials(selected_login_cpf)
 
@@ -1274,6 +1572,9 @@ class RobotBackend:
         status_cb("EXECUTANDO", "Consultando débitos municipais")
         debts = await self.extract_debts(frame, company, stop_cb, log=log)
         log(f"{company.name}: {len(debts)} débito(s) capturado(s) e enviados ao Supabase.")
+        if debts:
+            status_cb("EXECUTANDO", "Baixando PDFs das guias (um por débito)")
+            await self._download_guia_pdfs_batch(frame, company, debts, log, status_cb, stop_cb)
         await self._close_debts_modal_and_return_home(frame, log)
         return debts
 
@@ -1761,6 +2062,549 @@ class RobotBackend:
                 log(f"Erro ao substituir débitos no Supabase: {e}")
             raise
         return debts
+
+    async def _download_guia_pdfs(
+        self,
+        frame: Frame,
+        company: CompanyItem,
+        debts: list[DebtRow],
+        log: Callable[[str], None] | None,
+        status_cb: Callable[[str, str], None],
+        stop_cb: callable,
+    ) -> None:
+        """Seleciona cada débito na tabela, captura a Chave do payload da requisição (request) e salva PDF em base_path/segment_path/empresa/."""
+        assert self.page is not None
+        # base_path e segment_path (estrutura de pastas) vêm do dashboard via API; sem "EMPRESAS" fixo.
+        api_cfg = get_robot_api_config() or {}
+        if not api_cfg and not SERVER_API_URL and log:
+            log("SERVER_API_URL não definido; não foi possível obter caminho base e estrutura de pastas do dashboard.")
+        base_path = (api_cfg.get("base_path") or "").strip() if api_cfg else ""
+        if not base_path:
+            base_path = (os.getenv("BASE_PATH") or "").strip()
+        if not base_path:
+            if log:
+                log("Caminho base não definido no dashboard (Admin) nem em BASE_PATH; PDFs das guias não serão salvos.")
+            return
+        segment_path = (api_cfg.get("segment_path") or "").strip() if api_cfg else ""
+        if not segment_path:
+            if log:
+                log("Estrutura de pastas (Departamento) do robô não definida no dashboard; defina em Admin > Robôs. PDFs das guias não serão salvos.")
+            return
+        company_folder = sanitize_company_folder(company.name)
+        # Base na VM = EMPRESAS; estrutura do robô = segment_path (ex.: PARALEGAL/TAXAS-IMPOSTOS). Caminho = base_path/empresa/segment_path.
+        rel_dir = f"{company_folder}/{segment_path.strip().replace(chr(92), '/')}".replace("\\", "/")
+        full_dir = Path(base_path) / rel_dir.replace("/", os.sep)
+        full_dir.mkdir(parents=True, exist_ok=True)
+
+        chave_queue: asyncio.Queue[str] = asyncio.Queue()
+        current_target_identity: dict[str, str] | None = None
+
+        def _item_matches_target(item: dict[str, Any], target: dict[str, str] | None) -> bool:
+            if not target:
+                return False
+            dados = item.get("DadosDebito") or {}
+            rubrica = str(dados.get("Rubrica") or "").strip()
+            ano = str(dados.get("Ano") or "").strip()
+            parcela = str(dados.get("Parcela") or "").strip()
+            vencimento = str(dados.get("Vencimento") or "").strip()
+            return (
+                rubrica == target["rubrica"]
+                and ano == target["ano"]
+                and parcela == target["parcela"]
+                and vencimento == target["vencimento"]
+            )
+
+        def _build_target_identity(debt: DebtRow) -> dict[str, str]:
+            rubrica_match = re.match(r"\s*(\d+)", debt.tributo or "")
+            parcela = str((debt.detalhes or {}).get("parcela") or "").strip()
+            return {
+                "rubrica": (rubrica_match.group(1) if rubrica_match else "").strip(),
+                "ano": str(debt.ano or "").strip(),
+                "parcela": parcela,
+                "vencimento": str(debt.data_vencimento or "").strip(),
+            }
+
+        def _parse_chave_from_payload(data: dict) -> None:
+            """Extrai a Chave apenas da nova requisicao do debito atualmente selecionado."""
+            variables = (data.get("screenData") or {}).get("variables") or data.get("variables") or data.get("data") or {}
+            if not isinstance(variables, dict):
+                return
+            lista = variables.get("ListaDebitosPaginada")
+            if not isinstance(lista, dict):
+                lista = data.get("ListaDebitosPaginada")
+            items = (lista.get("List") or []) if isinstance(lista, dict) else []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                chave_item = str(item.get("Chave") or "").strip()
+                is_selected = item.get("IsSelecionado")
+                if not chave_item or not (is_selected is True or is_selected == "true"):
+                    continue
+                if not _item_matches_target(item, current_target_identity):
+                    continue
+                chave_queue.put_nowait(chave_item)
+                return
+
+        def on_request(request):
+            """Ao marcar o débito, o front envia POST com o estado; a Chave vem no payload da REQUEST."""
+            try:
+                if "DataActionGetParametrosPortal" not in (request.url or ""):
+                    return
+                if request.method != "POST":
+                    return
+                post_data = request.post_data
+                if not post_data:
+                    return
+                data = json.loads(post_data if isinstance(post_data, str) else post_data.decode("utf-8", errors="replace"))
+                _parse_chave_from_payload(data)
+            except Exception:
+                pass
+
+        def on_response(response):
+            """Alguns fluxos devolvem a Chave na resposta; captura também."""
+            try:
+                if "screenservices" not in (response.url or ""):
+                    return
+                body = response.body()
+                if not body:
+                    return
+                data = json.loads(body.decode("utf-8", errors="replace"))
+                _parse_chave_from_payload(data)
+            except Exception:
+                pass
+
+        try:
+            context = self.page.context
+            context.on("request", on_request)
+        except Exception:
+            if log:
+                log("Não foi possível registrar listener para capturar Chave.")
+            return
+
+        checkboxes = await frame.locator("table input[type=checkbox]").all()
+        n = min(len(debts), len(checkboxes))
+        if n == 0:
+            if log:
+                log("Nenhuma linha com checkbox encontrada para gerar PDFs das guias.")
+            return
+
+        # Só processar débitos com valor diferente de zero (débito com valor zero não tem guia para pegar).
+        indices_com_valor = [
+            i for i in range(n)
+            if (debts[i].valor is not None and float(debts[i].valor) != 0)
+        ]
+        total_guias = len(indices_com_valor)
+        if not indices_com_valor:
+            if log:
+                log("Nenhum débito com valor > 0 para gerar guia PDF.")
+            return
+
+        selected_checkbox_index: int | None = None
+
+        for idx, i in enumerate(indices_com_valor):
+            stop_cb()
+            status_cb("EXECUTANDO", f"Guia PDF {idx + 1}/{total_guias}: selecionando e baixando")
+            debt = debts[i]
+            chave: str | None = None
+            current_target_identity = _build_target_identity(debt)
+            try:
+                if selected_checkbox_index is not None and selected_checkbox_index != i:
+                    previous_checkbox = checkboxes[selected_checkbox_index]
+                    try:
+                        if await previous_checkbox.is_checked():
+                            await previous_checkbox.click(timeout=8000)
+                            for _ in range(10):
+                                if not await previous_checkbox.is_checked():
+                                    break
+                                await asyncio.sleep(0.2)
+                    except Exception as deselect_error:
+                        if log:
+                            log(
+                                f"Debito {selected_checkbox_index + 1}: erro ao desmarcar antes de selecionar o proximo: {deselect_error}"
+                            )
+                # Esvaziar a fila antes do clique para pegar so a Chave da nova requisicao deste debito.
+                while not chave_queue.empty():
+                    try:
+                        chave_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                await checkboxes[i].click(timeout=8000)
+                await asyncio.sleep(0.6)
+                chave = await asyncio.wait_for(chave_queue.get(), timeout=20.0)
+                if await checkboxes[i].is_checked():
+                    selected_checkbox_index = i
+                else:
+                    selected_checkbox_index = None
+            except asyncio.TimeoutError:
+                if log:
+                    log(f"Débito {i + 1}: Chave não capturada (nova requisição); pulando PDF.")
+                continue
+            except Exception as e:
+                if log:
+                    log(f"Débito {i + 1}: erro ao selecionar/capturar: {e}")
+                continue
+
+            if not chave:
+                if log:
+                    log(f"Debito {i + 1}: Chave nao encontrada na nova requisicao; pulando PDF.")
+                continue
+            ano = debt.ano or 0
+            parcela = (debt.detalhes or {}).get("parcela") or ""
+            safe_parcela = re.sub(r"[^\w\-]", "_", str(parcela))[:20]
+            filename = f"guia_{ano}_{safe_parcela}_{idx}.pdf"
+            pdf_path = full_dir / filename
+            rel_path = f"{rel_dir}/{filename}"
+
+            try:
+                guia_page = await context.new_page()
+                await guia_page.goto(f"{URLEMISSAO_DUAM}?chave={chave}", wait_until="domcontentloaded", timeout=15000)
+                await guia_page.wait_for_load_state("networkidle", timeout=10000)
+                await guia_page.pdf(path=str(pdf_path), format="A4")
+                await guia_page.close()
+                self.update_debt_guia_pdf_path(
+                    company.id,
+                    debt.tributo,
+                    debt.numero_documento,
+                    debt.data_vencimento,
+                    rel_path,
+                )
+                if log:
+                    log(f"Guia PDF salva: {rel_path}")
+            except Exception as e:
+                if log:
+                    log(f"Erro ao gerar PDF da guia {i + 1}: {e}")
+                try:
+                    await guia_page.close()
+                except Exception:
+                    pass
+
+        if log:
+            log(f"{company.name}: PDFs das guias salvos em {rel_dir}")
+
+    async def _download_guia_pdfs_batch(
+        self,
+        frame: Frame,
+        company: CompanyItem,
+        debts: list[DebtRow],
+        log: Callable[[str], None] | None,
+        status_cb: Callable[[str, str], None],
+        stop_cb: callable,
+    ) -> None:
+        """Seleciona os debitos com valor > 0, emite as guias e salva cada popup como PDF."""
+        assert self.page is not None
+        api_cfg = get_robot_api_config() or {}
+        if not api_cfg and not SERVER_API_URL and log:
+            log("SERVER_API_URL nÃ£o definido; nÃ£o foi possÃ­vel obter caminho base e estrutura de pastas do dashboard.")
+        base_path = (api_cfg.get("base_path") or "").strip() if api_cfg else ""
+        if not base_path:
+            base_path = (os.getenv("BASE_PATH") or "").strip()
+        if not base_path:
+            if log:
+                log("Caminho base nÃ£o definido no dashboard (Admin) nem em BASE_PATH; PDFs das guias nÃ£o serÃ£o salvos.")
+            return
+        segment_path = (api_cfg.get("segment_path") or "").strip() if api_cfg else ""
+        if not segment_path:
+            if log:
+                log("Estrutura de pastas (Departamento) do robÃ´ nÃ£o definida no dashboard; defina em Admin > RobÃ´s. PDFs das guias nÃ£o serÃ£o salvos.")
+            return
+
+        company_folder = sanitize_company_folder(company.name)
+        rel_dir = f"{company_folder}/{segment_path.strip().replace(chr(92), '/')}".replace("\\", "/")
+        full_dir = Path(base_path) / rel_dir.replace("/", os.sep)
+        full_dir.mkdir(parents=True, exist_ok=True)
+
+        context = self.page.context
+        current_debts = list(debts)
+        checkboxes = await frame.locator("table input[type=checkbox]").all()
+        n = min(len(current_debts), len(checkboxes))
+        if n == 0:
+            if log:
+                log("Nenhuma linha com checkbox encontrada para gerar PDFs das guias.")
+            return
+
+        indices_com_valor = [
+            i for i in range(n)
+            if current_debts[i].valor is not None and float(current_debts[i].valor) != 0
+        ]
+        if not indices_com_valor:
+            if log:
+                log("Nenhum dÃ©bito com valor > 0 para gerar guia PDF.")
+            return
+
+        selected_debts = [current_debts[i] for i in indices_com_valor]
+
+        def _normalize_text(value: str | None) -> str:
+            return " ".join((value or "").upper().split())
+
+        def _strip_rubrica_code(value: str | None) -> str:
+            return " ".join(re.sub(r"^\s*\d+\s*-\s*", "", value or "").split())
+
+        def _safe_filename_part(value: str | None, fallback: str) -> str:
+            text = re.sub(r'[<>:"/\\|?*]', "_", (value or "").strip())
+            text = re.sub(r"\s+", " ", text).strip(" .")
+            return text or fallback
+
+        async def _wait_loading_to_finish(timeout_seconds: float = 60.0) -> None:
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            next_log_at = asyncio.get_running_loop().time() + 10.0
+            while asyncio.get_running_loop().time() < deadline:
+                stop_cb()
+                body = await frame.locator("body").inner_text()
+                if "Obtendo detalhes do débito" not in body and "Obtendo detalhes dos débitos" not in body:
+                    return
+                if asyncio.get_running_loop().time() >= next_log_at:
+                    if log:
+                        log("Ainda carregando os detalhes dos débitos; aguardando mais 10 segundos.")
+                    next_log_at += 10.0
+                await asyncio.sleep(0.3)
+            raise TimeoutError("A mensagem de carregamento dos débitos não desapareceu a tempo.")
+
+        def _same_debt(left: DebtRow, right: DebtRow) -> bool:
+            return (
+                _normalize_text(left.tributo) == _normalize_text(right.tributo)
+                and str(left.ano or "").strip() == str(right.ano or "").strip()
+                and str((left.detalhes or {}).get("parcela") or "").strip()
+                == str((right.detalhes or {}).get("parcela") or "").strip()
+                and str(left.data_vencimento or "").strip() == str(right.data_vencimento or "").strip()
+            )
+
+        def _find_debt_index(target: DebtRow, pool: list[DebtRow]) -> int | None:
+            for idx, candidate in enumerate(pool):
+                if _same_debt(target, candidate):
+                    return idx
+            return None
+
+        async def _recover_from_loading_stall() -> None:
+            nonlocal frame, checkboxes, current_debts, n
+            if log:
+                log("Carregamento passou de 1 minuto. Fechando o modal e reabrindo Taxas e Impostos para continuar.")
+            await self._close_debts_modal_and_return_home(frame, log)
+            frame = await self.open_duam(company)
+            try:
+                await self.try_click_recaptcha()
+                await self.wait_recaptcha_manual(stop_cb)
+            except RecaptchaTimeoutError:
+                await self._close_debts_modal_and_return_home(frame, log)
+                raise
+            current_debts = await self.extract_debts(frame, company, stop_cb, log=log)
+            checkboxes = await frame.locator("table input[type=checkbox]").all()
+            n = min(len(current_debts), len(checkboxes))
+            if n == 0:
+                raise RuntimeError("A tabela de débitos não voltou após reabrir Taxas e Impostos.")
+
+        async def _wait_checkbox_state(
+            checkbox: Any,
+            expected_checked: bool,
+            timeout_seconds: float = 10.0,
+        ) -> bool:
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            while asyncio.get_running_loop().time() < deadline:
+                stop_cb()
+                try:
+                    if await checkbox.is_checked() == expected_checked:
+                        return True
+                except Exception:
+                    pass
+                await asyncio.sleep(0.2)
+            return False
+
+        async def _ensure_checkbox_checked(checkbox: Any) -> None:
+            for attempt in range(3):
+                stop_cb()
+                try:
+                    if await checkbox.is_checked():
+                        await _wait_loading_to_finish()
+                        if await _wait_checkbox_state(checkbox, True, timeout_seconds=2.0):
+                            return
+                    await checkbox.click(timeout=8000, force=True)
+                    await _wait_loading_to_finish()
+                    if await _wait_checkbox_state(checkbox, True, timeout_seconds=3.0):
+                        return
+                except TimeoutError:
+                    await _recover_from_loading_stall()
+                    raise RuntimeError("recover-and-retry")
+                except Exception:
+                    if attempt == 2:
+                        raise
+                await asyncio.sleep(0.3)
+            raise RuntimeError("O débito não permaneceu marcado após as tentativas de seleção.")
+
+        async def _is_confirmation_modal_visible() -> bool:
+            try:
+                return await frame.locator("text=/Confirme as guias a serem emitidas/i").count() > 0
+            except Exception:
+                return False
+
+        async def _close_confirmation_modal_if_open() -> None:
+            try:
+                close_button = frame.get_by_role("button", name="X").first
+                if await close_button.count() and await close_button.is_visible():
+                    await close_button.click(timeout=5000)
+                    await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
+        async def _collect_new_popup_pages(existing_pages: list[Page], expected_min: int) -> list[Page]:
+            deadline = asyncio.get_running_loop().time() + 20.0
+            known_ids = {id(pg) for pg in existing_pages}
+            stable_since: float | None = None
+            latest: list[Page] = []
+            while asyncio.get_running_loop().time() < deadline:
+                stop_cb()
+                latest = [pg for pg in context.pages if id(pg) not in known_ids and not pg.is_closed()]
+                if len(latest) >= expected_min:
+                    if stable_since is None:
+                        stable_since = asyncio.get_running_loop().time()
+                    elif asyncio.get_running_loop().time() - stable_since >= 2.0:
+                        return latest
+                else:
+                    stable_since = None
+                await asyncio.sleep(0.5)
+            return latest
+
+        async def _extract_guia_metadata(guia_page: Page) -> dict[str, str | None]:
+            await guia_page.wait_for_load_state("domcontentloaded", timeout=15000)
+            try:
+                await guia_page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            body = await guia_page.locator("body").inner_text()
+            especificacao_match = re.search(r"ESPECIFICACAO:\s*(.+)", body)
+            tributo_match = re.search(r"TRIBUTO\s+(.+?)\s+REFERENCIA", body, re.S)
+            ano_match = re.search(r"\bANO\s*:\s*(\d{4})\b", body)
+            parcela_match = re.search(r"\bPARCELA\s*:\s*(\d+)\b", body)
+            vencimento_match = re.search(r"VENCIMENTO\s+(\d{2}/\d{2}/\d{4})", body)
+            return {
+                "descricao": _strip_rubrica_code(
+                    (especificacao_match.group(1) if especificacao_match else "")
+                    or (tributo_match.group(1) if tributo_match else "")
+                ),
+                "ano": ano_match.group(1) if ano_match else None,
+                "parcela": parcela_match.group(1) if parcela_match else None,
+                "vencimento": parse_date(vencimento_match.group(1)) if vencimento_match else None,
+            }
+
+        def _match_debt_to_guia(metadata: dict[str, str | None], remaining: list[DebtRow]) -> DebtRow | None:
+            descricao = _normalize_text(metadata.get("descricao"))
+            ano = str(metadata.get("ano") or "").strip()
+            parcela = str(metadata.get("parcela") or "").strip()
+            vencimento = str(metadata.get("vencimento") or "").strip()
+            for candidate in remaining:
+                candidate_parcela = str((candidate.detalhes or {}).get("parcela") or "").strip()
+                if (
+                    _normalize_text(_strip_rubrica_code(candidate.tributo)) == descricao
+                    and str(candidate.ano or "").strip() == ano
+                    and candidate_parcela == parcela
+                    and str(candidate.data_vencimento or "").strip() == vencimento
+                ):
+                    return candidate
+            for candidate in remaining:
+                if (
+                    _normalize_text(_strip_rubrica_code(candidate.tributo)) == descricao
+                    and str(candidate.data_vencimento or "").strip() == vencimento
+                ):
+                    return candidate
+            return remaining[0] if remaining else None
+
+        for checkbox in checkboxes:
+            try:
+                if await checkbox.is_checked():
+                    await checkbox.click(timeout=8000, force=True)
+                    await asyncio.sleep(0.2)
+            except Exception:
+                continue
+
+        idx = 0
+        while idx < len(selected_debts):
+            target_debt = selected_debts[idx]
+            stop_cb()
+            status_cb("EXECUTANDO", f"Marcando debito {idx + 1}/{len(selected_debts)}")
+            attempts_for_debt = 0
+            while True:
+                attempts_for_debt += 1
+                debt_index = _find_debt_index(target_debt, current_debts[:n])
+                if debt_index is None:
+                    await _recover_from_loading_stall()
+                    debt_index = _find_debt_index(target_debt, current_debts[:n])
+                if debt_index is None:
+                    raise RuntimeError(
+                        f"Nao foi possivel reencontrar o debito {target_debt.tributo} apos reabrir Taxas e Impostos."
+                    )
+                try:
+                    await _ensure_checkbox_checked(checkboxes[debt_index])
+                    idx += 1
+                    break
+                except RuntimeError as exc:
+                    if str(exc) == "recover-and-retry" and attempts_for_debt < 5:
+                        idx = 0
+                        continue
+                    if log:
+                        log(f"Debito {debt_index + 1}: erro ao marcar antes da emissao das guias: {exc}")
+                    raise
+
+        try:
+            await _wait_loading_to_finish()
+        except TimeoutError:
+            await _recover_from_loading_stall()
+
+        existing_pages = [pg for pg in context.pages if not pg.is_closed()]
+        gerar_guia_button = frame.get_by_role("button", name=re.compile("Gerar Guia", re.I)).first
+        await gerar_guia_button.click(timeout=8000)
+        await asyncio.sleep(1.0)
+
+        if await _is_confirmation_modal_visible():
+            emitir_guias_button = frame.get_by_role("button", name=re.compile("Emitir Guias?", re.I)).first
+            await emitir_guias_button.click(timeout=8000)
+
+        expected_popups = 1 if len(selected_debts) == 1 else len(selected_debts)
+        popup_pages = await _collect_new_popup_pages(existing_pages, expected_min=expected_popups)
+        if not popup_pages:
+            if log:
+                log("Nenhuma guia foi aberta em nova aba. Verifique se o navegador bloqueou pop-ups.")
+            await _close_confirmation_modal_if_open()
+            return
+
+        remaining_debts = list(selected_debts)
+        for popup_index, guia_page in enumerate(popup_pages, start=1):
+            try:
+                metadata = await _extract_guia_metadata(guia_page)
+                matched_debt = _match_debt_to_guia(metadata, remaining_debts)
+                if matched_debt and matched_debt in remaining_debts:
+                    remaining_debts.remove(matched_debt)
+                debt_for_file = matched_debt or selected_debts[min(popup_index - 1, len(selected_debts) - 1)]
+                rubrica_nome = _strip_rubrica_code(debt_for_file.tributo)
+                data_nome = str(debt_for_file.data_vencimento or metadata.get("vencimento") or f"guia_{popup_index}")
+                filename = f"{_safe_filename_part(rubrica_nome, 'guia')}_{_safe_filename_part(data_nome, 'sem-data')}.pdf"
+                pdf_path = full_dir / filename
+                rel_path = f"{rel_dir}/{filename}"
+                await guia_page.pdf(path=str(pdf_path), format="A4")
+                updated = self.update_debt_guia_pdf_path(
+                    company.id,
+                    debt_for_file.tributo,
+                    debt_for_file.numero_documento,
+                    debt_for_file.data_vencimento,
+                    rel_path,
+                    parcela=str((debt_for_file.detalhes or {}).get("parcela") or ""),
+                    ano=debt_for_file.ano,
+                )
+                if log:
+                    if updated:
+                        log(f"Guia PDF salva: {rel_path}")
+                    else:
+                        log(f"Guia PDF salva, mas o caminho nao encontrou match no Supabase: {rel_path}")
+            except Exception as exc:
+                if log:
+                    log(f"Erro ao gerar PDF da guia {popup_index}: {exc}")
+            finally:
+                try:
+                    await guia_page.close()
+                except Exception:
+                    pass
+
+        await _close_confirmation_modal_if_open()
+
+        if log:
+            log(f"{company.name}: PDFs das guias salvos em {rel_dir}")
 
 
 class RobotWorker(QThread):
