@@ -129,7 +129,7 @@ function StandardInputGrid({ title, subtitle, months, values, onChange, footerTe
         <table className="min-w-[420px] w-full text-xs">
           <thead>
             <tr className="border-b border-border bg-muted/40">
-              <th className="px-3 py-3 text-left font-medium text-muted-foreground">Mes</th>
+              <th className="px-3 py-3 text-left font-medium text-muted-foreground">Mês</th>
               <th className="px-3 py-3 text-left font-medium text-muted-foreground">{valueLabel}</th>
             </tr>
           </thead>
@@ -475,22 +475,23 @@ export default function InteligenciaTributariaTopicPage() {
       <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2">
       <StandardInputGrid
         title="Receitas dos 12 meses anteriores"
-        subtitle="Informe apenas o faturamento total de cada m?s. O RBT12 n?o precisa de separa??o por anexo; ele serve como base hist?rica de faixa."
+        subtitle="Informe apenas o faturamento total de cada mês. O RBT12 não precisa de separação por anexo; ele serve como base histórica de faixa."
         months={months}
         values={historicalRevenueMap}
         onChange={(referenceMonth, value) => updateHistoricalRevenue(referenceMonth, value)}
-        valueLabel="Total do m?s"
-        footerText="O hist?rico acima forma apenas o RBT12 da empresa. A defini??o do anexo da tributa??o fica na RPA do m?s, na grade de apura??o atual."
+        valueLabel="Total do mês"
+        footerText="O histórico acima forma apenas o RBT12 da empresa. A definição do anexo da tributação fica na RPA do mês, na grade de apuração atual."
       />
 
       <StandardInputGrid
         title="Folha total dos 12 meses anteriores"
-          subtitle="Informe o valor mensal da folha. O sistema calcula automaticamente CPP patronal de 20% e FGTS de 8% para formar a FS12."
-          months={months}
-          values={payrollMap}
-          onChange={(referenceMonth, value) => setPayrollMap((current) => ({ ...current, [referenceMonth]: value }))}
-          footerText="A folha acima compõe a FS12 da empresa. O sistema usa essa base para calcular automaticamente CPP patronal de 20% e FGTS de 8% no Fator R."
-        />
+        subtitle="Informe o valor mensal da folha. O sistema calcula automaticamente CPP patronal de 20% e FGTS de 8% para formar a FS12."
+        months={months}
+        values={payrollMap}
+        onChange={(referenceMonth, value) => setPayrollMap((current) => ({ ...current, [referenceMonth]: value }))}
+        valueLabel="Valor"
+        footerText="A folha acima compõe a FS12 da empresa. O sistema usa essa base para calcular automaticamente CPP patronal de 20% e FGTS de 8% no Fator R."
+      />
       </div>
         <GlassCard className="p-5">
           <div>
