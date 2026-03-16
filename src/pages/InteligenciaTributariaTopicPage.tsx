@@ -65,38 +65,95 @@ function buildCurrentAllocationMap(
   ) as Record<SimpleNationalAnnexCode, string>
 }
 
-function InputGrid({ title, subtitle, months, values, onChange }: {
+function InputGrid({ title, subtitle, months, values, onChange, footerText }: {
   title: string
   subtitle: string
   months: PeriodMonth[]
   values: Record<string, string>
   onChange: (referenceMonth: string, value: string) => void
+  footerText?: string
 }) {
   return (
-    <GlassCard className="overflow-hidden">
+    <GlassCard className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-border p-4">
         <h3 className="text-sm font-semibold font-display">{title}</h3>
         <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+      <div className="flex-1 overflow-x-auto p-4">
+          <table className="min-w-[420px] w-full text-xs">
           <thead>
             <tr className="border-b border-border bg-muted/40">
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Mês</th>
-              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Valor</th>
+              <th className="px-3 py-3 text-left font-medium text-muted-foreground">Valor</th>
             </tr>
           </thead>
           <tbody>
             {months.map((month) => (
               <tr key={month.referenceMonth} className="border-b border-border last:border-0">
-                <td className="w-[26%] px-4 py-3 font-medium whitespace-nowrap">{formatMonthLabel(month.referenceMonth)}</td>
-                <td className="px-4 py-2.5">
+                <td className="w-[28%] px-3 py-3 font-medium whitespace-nowrap">{formatMonthLabel(month.referenceMonth)}</td>
+                <td className="px-3 py-3">
                   <Input value={values[month.referenceMonth] ?? ""} onChange={(event) => onChange(month.referenceMonth, event.target.value)} inputMode="decimal" placeholder="R$ 0,00" />
                 </td>
               </tr>
             ))}
           </tbody>
+          </table>
+        </div>
+      {footerText ? (
+        <div className="px-4 pb-4">
+          <div className="rounded-2xl border border-dashed border-border bg-background/40 p-3 text-xs text-muted-foreground">
+            {footerText}
+          </div>
+        </div>
+      ) : null}
+    </GlassCard>
+  )
+}
+
+function StandardInputGrid({ title, subtitle, months, values, onChange, footerText, valueLabel }: {
+  title: string
+  subtitle: string
+  months: PeriodMonth[]
+  values: Record<string, string>
+  onChange: (referenceMonth: string, value: string) => void
+  footerText?: string
+  valueLabel: string
+}) {
+  return (
+    <GlassCard className="flex h-full flex-col overflow-hidden">
+      <div className="border-b border-border p-4">
+        <h3 className="text-sm font-semibold font-display">{title}</h3>
+        <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+      </div>
+      <div className="flex-1 overflow-x-auto p-4">
+        <table className="min-w-[420px] w-full text-xs">
+          <thead>
+            <tr className="border-b border-border bg-muted/40">
+              <th className="px-3 py-3 text-left font-medium text-muted-foreground">Mes</th>
+              <th className="px-3 py-3 text-left font-medium text-muted-foreground">{valueLabel}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {months.map((month) => (
+              <tr key={month.referenceMonth} className="border-b border-border last:border-0">
+                <td className="w-[28%] px-3 py-3 font-medium whitespace-nowrap">{formatMonthLabel(month.referenceMonth)}</td>
+                <td className="px-3 py-3">
+                  <Input
+                    value={values[month.referenceMonth] ?? ""}
+                    onChange={(event) => onChange(month.referenceMonth, event.target.value)}
+                    inputMode="decimal"
+                    placeholder="R$ 0,00"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
         </table>
+        {footerText ? (
+          <div className="mt-3 rounded-2xl border border-dashed border-border bg-background/40 p-3 text-xs text-muted-foreground">
+            {footerText}
+          </div>
+        ) : null}
       </div>
     </GlassCard>
   )
@@ -415,55 +472,24 @@ export default function InteligenciaTributariaTopicPage() {
 
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2">
+      <StandardInputGrid
+        title="Receitas dos 12 meses anteriores"
+        subtitle="Informe apenas o faturamento total de cada m?s. O RBT12 n?o precisa de separa??o por anexo; ele serve como base hist?rica de faixa."
+        months={months}
+        values={historicalRevenueMap}
+        onChange={(referenceMonth, value) => updateHistoricalRevenue(referenceMonth, value)}
+        valueLabel="Total do m?s"
+        footerText="O hist?rico acima forma apenas o RBT12 da empresa. A defini??o do anexo da tributa??o fica na RPA do m?s, na grade de apura??o atual."
+      />
 
-      <GlassCard className="overflow-hidden">
-        <div className="border-b border-border p-4">
-          <div>
-            <h3 className="text-sm font-semibold font-display">Receitas dos 12 meses anteriores</h3>
-            <p className="mt-1 text-xs text-muted-foreground">Informe apenas o faturamento total de cada mês. O RBT12 não precisa de separação por anexo; ele serve como base histórica de faixa.</p>
-          </div>
-        </div>
-        <div className="overflow-x-auto p-4">
-          <table className="min-w-[420px] w-full text-xs">
-            <thead>
-              <tr className="border-b border-border bg-muted/40">
-                <th className="px-3 py-3 text-left font-medium text-muted-foreground">Mês</th>
-                <th className="px-3 py-3 text-left font-medium text-muted-foreground">Total do mês</th>
-              </tr>
-            </thead>
-            <tbody>
-              {months.map((month) => {
-                const total = parseCurrencyInput(historicalRevenueMap[month.referenceMonth] ?? "")
-
-                return (
-                  <tr key={month.referenceMonth} className="border-b border-border last:border-0">
-                    <td className="px-3 py-3 font-medium">{formatMonthLabel(month.referenceMonth)}</td>
-                    <td className="px-3 py-3">
-                      <Input
-                        value={historicalRevenueMap[month.referenceMonth] ?? ""}
-                        onChange={(event) => updateHistoricalRevenue(month.referenceMonth, event.target.value)}
-                        inputMode="decimal"
-                        placeholder="R$ 0,00"
-                      />
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-          <div className="mt-3 rounded-2xl border border-dashed border-border bg-background/40 p-3 text-xs text-muted-foreground">
-            O histórico acima forma apenas o RBT12 da empresa. A definição do anexo da tributação fica na RPA do mês, na grade de apuração atual.
-          </div>
-        </div>
-      </GlassCard>
-
-        <InputGrid
-          title="Folha total dos 12 meses anteriores"
+      <StandardInputGrid
+        title="Folha total dos 12 meses anteriores"
           subtitle="Informe o valor mensal da folha. O sistema calcula automaticamente CPP patronal de 20% e FGTS de 8% para formar a FS12."
           months={months}
           values={payrollMap}
           onChange={(referenceMonth, value) => setPayrollMap((current) => ({ ...current, [referenceMonth]: value }))}
+          footerText="A folha acima compõe a FS12 da empresa. O sistema usa essa base para calcular automaticamente CPP patronal de 20% e FGTS de 8% no Fator R."
         />
       </div>
         <GlassCard className="p-5">
@@ -520,7 +546,7 @@ export default function InteligenciaTributariaTopicPage() {
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Tributo</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Partilha</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Alíquota aplicada</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Valor</th>
+                <th className="px-3 py-3 text-left font-medium text-muted-foreground">Valor</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">% da guia</th>
               </tr>
             </thead>
@@ -703,7 +729,7 @@ export default function InteligenciaTributariaTopicPage() {
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Tributo</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Partilha</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Alíquota efetiva</th>
-                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Valor</th>
+                    <th className="px-3 py-3 text-left font-medium text-muted-foreground">Valor</th>
                   </tr>
                 </thead>
                 <tbody>
