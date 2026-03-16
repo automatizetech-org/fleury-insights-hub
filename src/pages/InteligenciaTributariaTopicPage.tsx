@@ -126,34 +126,36 @@ function StandardInputGrid({ title, subtitle, months, values, onChange, footerTe
         <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
       </div>
       <div className="flex-1 overflow-x-auto p-4">
-        <table className="min-w-[420px] w-full text-xs">
-          <thead>
-            <tr className="border-b border-border bg-muted/40">
-              <th className="px-3 py-3 text-left font-medium text-muted-foreground">Mês</th>
-              <th className="px-3 py-3 text-left font-medium text-muted-foreground">{valueLabel}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {months.map((month) => (
-              <tr key={month.referenceMonth} className="border-b border-border last:border-0">
-                <td className="w-[28%] px-3 py-3 font-medium whitespace-nowrap">{formatMonthLabel(month.referenceMonth)}</td>
-                <td className="px-3 py-3">
-                  <Input
-                    value={values[month.referenceMonth] ?? ""}
-                    onChange={(event) => onChange(month.referenceMonth, event.target.value)}
-                    inputMode="decimal"
-                    placeholder="R$ 0,00"
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {footerText ? (
-          <div className="mt-3 rounded-2xl border border-dashed border-border bg-background/40 p-3 text-xs text-muted-foreground">
-            {footerText}
+        <div className="mx-auto w-full max-w-[760px]">
+          <div className="min-w-[420px] overflow-hidden rounded-2xl border border-border bg-muted/20">
+            <div className="grid grid-cols-[180px_minmax(0,1fr)] border-b border-border bg-muted/40 text-xs text-muted-foreground">
+              <div className="px-6 py-3 text-center font-medium">Mês</div>
+              <div className="px-6 py-3 text-center font-medium">{valueLabel}</div>
+            </div>
+            <div className="divide-y divide-border">
+              {months.map((month) => (
+                <div key={month.referenceMonth} className="grid grid-cols-[180px_minmax(0,1fr)] items-center">
+                  <div className="px-6 py-3 text-center text-sm font-medium whitespace-nowrap">
+                    {formatMonthLabel(month.referenceMonth)}
+                  </div>
+                  <div className="px-6 py-3">
+                    <Input
+                      value={values[month.referenceMonth] ?? ""}
+                      onChange={(event) => onChange(month.referenceMonth, event.target.value)}
+                      inputMode="decimal"
+                      placeholder="R$ 0,00"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-        ) : null}
+          {footerText ? (
+            <div className="mt-3 rounded-2xl border border-dashed border-border bg-background/40 p-3 text-xs text-muted-foreground">
+              {footerText}
+            </div>
+          ) : null}
+        </div>
       </div>
     </GlassCard>
   )
