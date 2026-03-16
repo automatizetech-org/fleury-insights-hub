@@ -154,7 +154,7 @@ export default function DocumentosPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar empresa ou CNPJ..."
-                className="rounded-xl border border-border bg-background pl-10 pr-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary/50 w-full min-w-0 touch-manipulation"
+                className="rounded-xl border border-border bg-background pl-10 pr-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary-icon w-full min-w-0 touch-manipulation"
               />
             </div>
             <input
@@ -164,7 +164,7 @@ export default function DocumentosPage() {
                 setDateFrom(e.target.value);
                 setCurrentPage(1);
               }}
-              className="rounded-xl border border-border bg-background px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary/50 touch-manipulation"
+              className="rounded-xl border border-border bg-background px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary-icon touch-manipulation"
               title="Data inicial"
             />
             <input
@@ -174,7 +174,7 @@ export default function DocumentosPage() {
                 setDateTo(e.target.value);
                 setCurrentPage(1);
               }}
-              className="rounded-xl border border-border bg-background px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary/50 touch-manipulation"
+              className="rounded-xl border border-border bg-background px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary-icon touch-manipulation"
               title="Data final"
             />
             <button
@@ -219,7 +219,7 @@ export default function DocumentosPage() {
                     <td className="px-3 sm:px-4 py-3 font-medium">{doc.empresa}</td>
                     <td className="px-3 sm:px-4 py-3 text-muted-foreground">{doc.cnpj ?? "—"}</td>
                     <td className="px-3 sm:px-4 py-3">
-                      <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">{doc.type}</span>
+                      <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary-icon">{doc.type}</span>
                     </td>
                     <td className="px-3 sm:px-4 py-3">{doc.periodo}</td>
                     <td className="px-3 sm:px-4 py-3">
@@ -232,7 +232,7 @@ export default function DocumentosPage() {
                         <button
                           type="button"
                           onClick={() => handleDownload(doc.id, doc.chave, doc.file_path)}
-                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium bg-primary/10 text-primary-icon hover:bg-primary/20 transition-colors"
                         >
                           <Download className="h-3 w-3" /> {getDownloadLabel(doc.file_path)}
                         </button>

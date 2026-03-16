@@ -636,7 +636,7 @@ export function AlteracaoVisaoGeralTab() {
 
         {/* Documentos para enviar no WhatsApp (após a mensagem) */}
         <section className="space-y-4">
-          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">* Documentos para enviar no WhatsApp *</h3>
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary-icon/30 pb-2">* Documentos para enviar no WhatsApp *</h3>
           <div className="space-y-2">
             <Label>Anexar documentos (serão enviados após a mensagem do formulário)</Label>
             <input
@@ -664,13 +664,13 @@ export function AlteracaoVisaoGeralTab() {
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click(); } }}
               className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 transition-colors cursor-pointer min-h-[120px] ${
                 uploadDragOver
-                  ? "border-primary bg-primary/10"
-                  : "border-border hover:border-primary/50 hover:bg-muted/30"
+                  ? "border-primary-icon bg-primary/10"
+                  : "border-border hover:border-primary-icon/50 hover:bg-muted/30"
               }`}
             >
               <Upload className="h-10 w-10 text-muted-foreground" />
               <p className="text-sm text-muted-foreground text-center">
-                Arraste os arquivos aqui ou <span className="text-primary font-medium">clique para abrir o explorador</span>
+                Arraste os arquivos aqui ou <span className="text-primary-icon font-medium">clique para abrir o explorador</span>
               </p>
               <p className="text-xs text-muted-foreground">PDF, DOC, XLS, imagens (PNG, JPG)</p>
             </div>
@@ -698,7 +698,7 @@ export function AlteracaoVisaoGeralTab() {
 
         {/* Tipo de formulário */}
         <section className="space-y-4">
-          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">Tipo de formulário</h3>
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary-icon/30 pb-2">Tipo de formulário</h3>
           <div className="max-w-xs">
             <Select value={form.tipo_formulario || undefined} onValueChange={(v) => update("tipo_formulario", v)}>
               <SelectTrigger>
@@ -715,7 +715,7 @@ export function AlteracaoVisaoGeralTab() {
 
         {/* 1) Identificação da Empresa */}
         <section className="space-y-4">
-          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">* 1. Identificação da Empresa *</h3>
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary-icon/30 pb-2">* 1. Identificação da Empresa *</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Razão Social</Label>
@@ -765,7 +765,7 @@ export function AlteracaoVisaoGeralTab() {
 
         {/* 2) Inscrições e Enquadramento */}
         <section className="space-y-4">
-          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">* 2. Inscrições e Enquadramento *</h3>
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary-icon/30 pb-2">* 2. Inscrições e Enquadramento *</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Inscrição Estadual</Label>
@@ -816,7 +816,7 @@ export function AlteracaoVisaoGeralTab() {
 
         {/* 3) Dados Societários e Contato */}
         <section className="space-y-4">
-          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">* 3. Dados Societários e Contato *</h3>
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary-icon/30 pb-2">* 3. Dados Societários e Contato *</h3>
           <div className="space-y-4">
             {form.socios.map((socio, idx) => (
               <div key={idx} className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 rounded-lg border border-border/60 bg-muted/20">
@@ -907,7 +907,7 @@ export function AlteracaoVisaoGeralTab() {
 
         {/* 4) Kits de obrigações */}
         <section className="space-y-4">
-          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">* 4. Kits de obrigações *</h3>
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary-icon/30 pb-2">* 4. Kits de obrigações *</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Possui Pró-labore</Label>
@@ -1066,7 +1066,7 @@ export function AlteracaoVisaoGeralTab() {
 
         {/* 5) Honorários */}
         <section className="space-y-4">
-          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">* 5. Honorários *</h3>
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary-icon/30 pb-2">* 5. Honorários *</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Valor do Honorário Mensal (R$)</Label>
@@ -1102,7 +1102,7 @@ export function AlteracaoVisaoGeralTab() {
 
         {/* Observação */}
         <section className="space-y-4">
-          <h3 className="text-sm font-semibold font-display border-b-2 border-primary/30 pb-2">* Observação *</h3>
+          <h3 className="text-sm font-semibold font-display border-b-2 border-primary-icon/30 pb-2">* Observação *</h3>
           <div className="space-y-2">
             <Label>Observação (texto livre)</Label>
             <Textarea

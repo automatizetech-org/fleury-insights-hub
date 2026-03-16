@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom"
 import { Lock, Loader2, AlertCircle } from "lucide-react"
 import { supabase } from "@/services/supabaseClient"
 import { getProfile } from "@/services/profilesService"
-import logoUrl from "@/assets/images/logo.png"
+import { useBranding, getBrandDisplayName } from "@/contexts/BrandingContext"
 
 const SUPABASE_URL = import.meta.env.SUPABASE_URL ?? ""
 const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
@@ -11,6 +11,9 @@ const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
 export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { logoUrl, branding } = useBranding()
+  const brandName = getBrandDisplayName(branding?.client_name)
+  const loginSubtitle = brandName ? `${brandName} • Dashboard Web` : "Dashboard Web"
   const from = (location.state as { from?: string } | null)?.from
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
@@ -81,25 +84,22 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] flex items-center justify-center relative overflow-hidden p-4">
-      <div className="absolute inset-0 bg-gradient-to-br from-red-50 via-white to-blue-50 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_35%,rgba(220,38,38,0.12),transparent_55%),radial-gradient(circle_at_85%_70%,rgba(37,99,235,0.14),transparent_55%),radial-gradient(circle_at_50%_15%,rgba(37,99,235,0.10),transparent_60%)]" />
-        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik0zNiAzNGMwIDMuMzE0LTIuNjg2IDYtNiA2cy02LTIuNjg2LTYtNiAyLjY4Ni02IDYtNiA2IDIuNjg2IDYgNnoiIGZpbGw9InJnYmEoNTksMTMwLDI0NiwwLjAzKSIvPjwvZz48L3N2Zz4=')] opacity-40 dark:opacity-20" />
-      </div>
+    <div className="min-h-[100dvh] flex items-center justify-center relative overflow-hidden p-4 bg-background">
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5" aria-hidden />
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-72 h-72 bg-red-500/10 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse delay-1000" />
-        <div className="absolute top-1/2 right-1/3 w-64 h-64 bg-blue-400/10 rounded-full blur-3xl animate-pulse delay-2000" />
+        <div className="absolute top-1/4 left-1/4 w-72 h-72 bg-primary/10 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl animate-pulse delay-1000" />
+        <div className="absolute top-1/2 right-1/3 w-64 h-64 bg-accent/10 rounded-full blur-3xl animate-pulse delay-2000" />
       </div>
 
-      <div className="relative w-full max-w-md bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-2xl md:rounded-3xl shadow-2xl border border-white/20 dark:border-slate-800/50 p-6 md:p-8 animate-in slide-in-from-bottom-4">
+      <div className="relative w-full max-w-md bg-card/90 backdrop-blur-xl rounded-2xl md:rounded-3xl shadow-2xl border border-border p-6 md:p-8 animate-in slide-in-from-bottom-4">
         <div className="flex flex-col sm:flex-row items-center gap-2 md:gap-3 mb-6 md:mb-8 min-w-0">
-          <div className="h-12 w-12 md:h-14 md:w-14 rounded-xl md:rounded-2xl overflow-hidden ring-2 ring-[#2563EB]/20 zoom-in-anim animate-in flex-shrink-0 flex items-center justify-center bg-white/80 dark:bg-slate-800/80">
+          <div className="h-12 w-12 md:h-14 md:w-14 rounded-xl md:rounded-2xl overflow-hidden ring-2 ring-primary-icon/20 zoom-in-anim animate-in flex-shrink-0 flex items-center justify-center bg-card/80">
             <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
           </div>
           <div className="text-center sm:text-left min-w-0">
-            <div className="text-xs md:text-sm text-gray-500 dark:text-gray-400 font-medium">Fleury • Dashboard Web</div>
-            <h1 className="text-xl md:text-2xl font-extrabold text-gray-900 dark:text-white truncate">Login</h1>
+            <div className="text-xs md:text-sm text-muted-foreground font-medium">{loginSubtitle}</div>
+            <h1 className="text-xl md:text-2xl font-extrabold text-foreground truncate">Login</h1>
           </div>
         </div>
 
@@ -113,7 +113,7 @@ export default function LoginPage() {
               placeholder="Nome de usuário"
               autoFocus
               autoComplete="username"
-              className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-gray-200 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2563EB]/50 focus:border-[#2563EB] transition-all text-base touch-manipulation"
+              className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-border bg-background/50 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary-icon transition-all text-base touch-manipulation"
               disabled={loading}
             />
             <input
@@ -123,7 +123,7 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Senha"
               autoComplete="current-password"
-              className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-gray-200 dark:border-slate-700 dark:bg-slate-800/50 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2563EB]/50 focus:border-[#2563EB] transition-all text-base touch-manipulation"
+              className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-border bg-background/50 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary-icon transition-all text-base touch-manipulation"
               disabled={loading}
             />
           </div>
@@ -138,7 +138,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 md:py-3.5 px-4 bg-gradient-to-r from-[#2563EB] to-blue-600 hover:from-[#1E40AF] hover:to-blue-700 text-white font-semibold rounded-lg md:rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-[#2563EB]/25 hover:shadow-[#2563EB]/40 transform hover:scale-[1.02] active:scale-[0.98] touch-manipulation text-base"
+            className="w-full py-3 md:py-3.5 px-4 bg-primary hover:opacity-90 text-primary-foreground font-semibold rounded-lg md:rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-primary/25 transform hover:scale-[1.02] active:scale-[0.98] touch-manipulation text-base"
           >
             {loading ? (
               <>

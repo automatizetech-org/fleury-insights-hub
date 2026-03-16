@@ -556,7 +556,7 @@ export function AdminScheduler({
   return (
     <GlassCard className="overflow-hidden">
       <div className="p-4 border-b border-border flex items-center gap-2">
-        <CalendarClock className="h-4 w-4 text-primary" />
+        <CalendarClock className="h-4 w-4 text-primary-icon" />
         <h3 className="text-sm font-semibold font-display">Agendador — Executar robôs</h3>
       </div>
       <div className="p-4 space-y-4">
@@ -573,7 +573,7 @@ export function AdminScheduler({
                 Aguardando — rotina ativa. Execução na data/hora configurada e depois a cada 24h.
               </div>
             )}
-            <div className="rounded-md bg-primary/10 border border-primary/30 px-3 py-2 text-xs text-primary">
+            <div className="rounded-md bg-primary/10 border border-primary-icon/30 px-3 py-2 text-xs text-primary-icon">
               Próxima execução: {displayNextRunAt ? format(displayNextRunAt, "dd/MM/yyyy") : (activeRule.run_at_date ? format(new Date(activeRule.run_at_date), "dd/MM/yyyy") : "—")} às {String(activeRule.run_at_time).slice(0, 5)}. Repete a cada 24h.
             </div>
           </>
@@ -581,13 +581,13 @@ export function AdminScheduler({
 
         {/* Contador: estável com ref para não sumir no refetch; oculto durante execução */}
         {displayNextRunAt && !isExecutingNow && (
-          <div className="rounded-lg border border-primary/30 bg-primary/5 overflow-hidden">
+          <div className="rounded-lg border border-primary-icon/30 bg-primary/5 overflow-hidden">
             <div className="px-3 pt-3 pb-1">
-              <p className="text-[10px] uppercase tracking-wider text-primary/80 font-medium">
+              <p className="text-[10px] uppercase tracking-wider text-primary-icon/80 font-medium">
                 Próxima execução em
               </p>
               <p
-                className="font-mono text-xl tabular-nums text-primary mt-0.5"
+                className="font-mono text-xl tabular-nums text-primary-icon mt-0.5"
                 style={{ fontVariantNumeric: "tabular-nums" }}
               >
                 {formatCountdown(countdownMs)}

@@ -31,6 +31,7 @@ import { AdminRobotsList } from "@/components/admin/AdminRobotsList"
 import { AdminScheduler } from "@/components/admin/AdminScheduler"
 import { AdminFileRetention } from "@/components/admin/AdminFileRetention"
 import { AdminBasePath } from "@/components/admin/AdminBasePath"
+import { AdminBrandingBlock } from "@/components/admin/branding"
 import { getRobots } from "@/services/robotsService"
 import { PANEL_KEYS, PANEL_LABELS } from "@/lib/panelAccess"
 import { getPfxInfo } from "@/lib/validatePfxPassword"
@@ -505,7 +506,7 @@ export default function AdminPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <GlassCard className="p-5 flex items-center gap-4">
-          <div className="rounded-lg bg-primary/10 p-3"><Users className="h-5 w-5 text-primary" /></div>
+          <div className="rounded-lg bg-primary/10 p-3"><Users className="h-5 w-5 text-primary-icon" /></div>
           <div>
             <p className="text-2xl font-bold font-display">{profilesLoading ? "—" : adminUsers.length}</p>
             <p className="text-xs text-muted-foreground">Usuários</p>
@@ -551,7 +552,7 @@ export default function AdminPage() {
                     return (
                     <div key={user.id} className="px-4 py-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
                       <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">
+                        <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary-icon">
                           {initials}
                         </div>
                         <div>
@@ -595,7 +596,7 @@ export default function AdminPage() {
                             </Button>
                           )
                         )}
-                        <span className={`rounded px-2 py-0.5 text-[10px] font-medium ${user.role === "super_admin" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200" : "bg-primary/10 text-primary"}`}>
+                        <span className={`rounded px-2 py-0.5 text-[10px] font-medium ${user.role === "super_admin" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200" : "bg-primary/10 text-primary-icon"}`}>
                           {user.role}
                         </span>
                       </div>
@@ -654,6 +655,8 @@ export default function AdminPage() {
 
       <AdminFolderStructure isSuperAdmin={!!isSuperAdmin} />
 
+      {isSuperAdmin && <AdminBrandingBlock />}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <AdminRobotsList isSuperAdmin={!!isSuperAdmin} robots={robotsForPaths} />
         <AdminScheduler isSuperAdmin={!!isSuperAdmin} robots={robotsForPaths} />
@@ -710,7 +713,7 @@ export default function AdminPage() {
           {editSaving && (
             <div className="absolute inset-0 z-50 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur-sm">
               <div className="flex flex-col items-center gap-3">
-                <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                <Loader2 className="h-10 w-10 animate-spin text-primary-icon" />
                 <p className="text-sm font-medium">Salvando empresa e enviando certificado ao Supabase...</p>
               </div>
             </div>

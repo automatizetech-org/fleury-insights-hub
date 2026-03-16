@@ -1,12 +1,12 @@
 {
-  "name": "Dashboard - Fleury",
-  "short_name": "Dashboard - Fleury",
+  "name": "Dashboard",
+  "short_name": "Dashboard",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0F172C",
   "theme_color": "#0F172C",
-  "description": "Dashboard Fleury - Gestão e acompanhamento",
+  "description": "Dashboard - Gestão e acompanhamento",
   "icons": [
     {
       "src": "/icons/app-icon-192.png",

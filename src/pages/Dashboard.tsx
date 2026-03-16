@@ -17,10 +17,13 @@ import { MiniChart, DonutChart } from "@/components/dashboard/Charts";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
+import { useBranding, getAnalyticsTitle } from "@/contexts/BrandingContext";
 import { getDashboardOverview, getRecentFiscalDocuments } from "@/services/dashboardService";
 
 export default function Dashboard() {
   const { selectedCompanyIds } = useSelectedCompanyIds();
+  const { branding } = useBranding();
+  const analyticsTitle = getAnalyticsTitle(branding?.client_name);
   const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
 
   const { data: overview, isLoading: overviewLoading } = useQuery({
@@ -54,9 +57,9 @@ export default function Dashboard() {
           <div className="min-w-0">
             <div className="mb-1 flex flex-wrap items-center gap-2 sm:gap-3">
               <h1 className="min-w-0 truncate text-xl font-bold font-display text-gradient-animated sm:text-2xl md:text-3xl">
-                Fleury Analytics
+                {analyticsTitle}
               </h1>
-              <span className="flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-semibold text-primary">
+              <span className="flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-semibold text-primary-icon">
                 <Sparkles className="h-3 w-3 shrink-0" /> Visão executiva consolidada
               </span>
             </div>
@@ -101,7 +104,7 @@ export default function Dashboard() {
               <h3 className="text-sm font-semibold font-display">Quantidade de notas fiscais</h3>
               <p className="text-xs text-muted-foreground">Volume mensal de documentos por mês</p>
             </div>
-            <BarChart3 className="h-4 w-4 text-primary" />
+            <BarChart3 className="h-4 w-4 text-primary-icon" />
           </div>
           <MiniChart data={overview?.documentsPerMonth ?? []} type="bar" height={240} valueLabel="Notas" />
         </GlassCard>
@@ -145,7 +148,7 @@ export default function Dashboard() {
         <GlassCard className="p-5">
           <div className="mb-3 flex items-center gap-3">
             <div className="rounded-full bg-primary/10 p-3">
-              <FileText className="h-5 w-5 text-primary" />
+              <FileText className="h-5 w-5 text-primary-icon" />
             </div>
             <div>
               <p className="text-sm font-semibold">Fiscal</p>
@@ -281,7 +284,7 @@ export default function Dashboard() {
         <GlassCard className="p-5">
           <div className="mb-3 flex items-center gap-3">
             <div className="rounded-full bg-primary/10 p-3">
-              <Users className="h-5 w-5 text-primary" />
+              <Users className="h-5 w-5 text-primary-icon" />
             </div>
             <div>
               <p className="text-sm font-semibold">Dados por empresa (Supabase)</p>

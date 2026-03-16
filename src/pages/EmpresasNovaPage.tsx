@@ -352,7 +352,7 @@ export default function EmpresasNovaPage() {
                 aria-checked={nfsRobotEnabled}
                 onClick={() => setNfsRobotEnabled((v) => !v)}
                 className={cn(
-                  "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
+                  "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
                   nfsRobotEnabled ? "bg-primary" : "bg-muted"
                 )}
               >

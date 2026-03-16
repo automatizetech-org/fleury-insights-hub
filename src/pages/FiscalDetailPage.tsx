@@ -70,7 +70,7 @@ function ServiceCodesRankingTable({
                           </span>
                         )}
                         {isSilver && (
-                          <span className="inline-flex items-center gap-1 font-semibold text-slate-500 dark:text-slate-400">
+                          <span className="inline-flex items-center gap-1 font-semibold text-muted-foreground">
                             <Medal className="h-3.5 w-3.5 shrink-0" />
                             2º
                           </span>
@@ -938,7 +938,7 @@ export default function FiscalDetailPage() {
                           <button
                             type="button"
                             onClick={() => handleDownload(doc.id, doc.chave, doc.file_path)}
-                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-primary/10 text-primary-icon hover:bg-primary/20 transition-colors"
                           >
                             <Download className="h-3.5 w-3.5" /> {getDownloadLabel(doc.file_path)}
                           </button>

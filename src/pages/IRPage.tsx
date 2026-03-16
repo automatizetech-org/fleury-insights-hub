@@ -1064,7 +1064,7 @@ export default function IRPage() {
                         <Link2 className="mr-2 h-4 w-4" />Copiar link PIX
                       </Button>
                     </div>
-                    {chargeClient.payment_link ? <a className="text-sm text-primary underline underline-offset-4 break-all" href={chargeClient.payment_link} target="_blank" rel="noreferrer">{chargeClient.payment_link}</a> : null}
+                    {chargeClient.payment_link ? <a className="text-sm text-primary-icon underline underline-offset-4 break-all hover:text-primary-icon" href={chargeClient.payment_link} target="_blank" rel="noreferrer">{chargeClient.payment_link}</a> : null}
                   </>
                 ) : (
                   <>

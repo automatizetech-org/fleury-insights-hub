@@ -53,7 +53,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div
       className={cn(
-        "grid w-full max-w-full min-w-0 h-dvh overflow-x-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-500",
+        "grid w-full max-w-full min-w-0 h-dvh overflow-x-hidden bg-background transition-colors duration-500",
         "grid-cols-1 md:transition-[grid-template-columns] md:duration-300 md:ease-in-out",
         sidebarOpen ? "md:grid-cols-[16rem_1fr]" : "md:grid-cols-[0_1fr]"
       )}
@@ -69,11 +69,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
       </div>
 
       <main className="min-w-0 w-full max-w-full flex flex-col overflow-x-hidden relative min-h-0 h-dvh md:h-auto">
-        <header className="flex-shrink-0 w-full flex flex-col border-b border-gray-200 dark:border-slate-700/80 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm min-w-0 pt-[env(safe-area-inset-top)]">
+        <header className="flex-shrink-0 w-full flex flex-col border-b border-border bg-card/90 backdrop-blur-sm min-w-0 pt-[env(safe-area-inset-top)]">
           <div className="h-14 min-h-[56px] flex items-center justify-between gap-2 pl-14 pr-3 sm:pl-4 sm:pr-4 md:pl-4 md:pr-6">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
-            className="hidden md:flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 dark:text-slate-400 hover:text-[#2563EB] hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors shrink-0"
+            className="hidden md:flex items-center justify-center w-9 h-9 rounded-lg text-muted-foreground hover:text-primary-icon hover:bg-muted transition-colors shrink-0"
             aria-label={sidebarOpen ? "Recolher painel lateral" : "Exibir painel lateral"}
           >
             {sidebarOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
@@ -89,14 +89,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <div className="flex items-center gap-1 sm:gap-2 min-w-0 justify-end ml-auto">
             <button
               onClick={() => setDark(!dark)}
-              className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors shrink-0 touch-manipulation"
+              className="flex items-center justify-center w-9 h-9 rounded-lg text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 hover:bg-muted transition-colors shrink-0 touch-manipulation"
               aria-label="Alternar tema"
             >
               {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
             <button
               onClick={handleSignOut}
-              className="flex items-center justify-center h-9 px-3 sm:px-4 rounded-lg text-sm font-medium text-gray-600 dark:text-slate-300 hover:text-[#2563EB] hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors shrink-0 touch-manipulation"
+              className="flex items-center justify-center h-9 px-3 sm:px-4 rounded-lg text-sm font-medium text-foreground hover:text-primary-icon hover:bg-muted transition-colors shrink-0 touch-manipulation"
             >
               Sair
             </button>

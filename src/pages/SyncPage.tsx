@@ -63,7 +63,7 @@ export default function SyncPage() {
                 <tr key={evt.id} className="border-b border-border hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3 font-mono">{evt.id}</td>
                   <td className="px-4 py-3">
-                    <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary uppercase">{evt.tipo}</span>
+                    <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary-icon uppercase">{evt.tipo}</span>
                   </td>
                   <td className="px-4 py-3">{evt.payload}</td>
                   <td className="px-4 py-3"><StatusBadge status={evt.status} /></td>

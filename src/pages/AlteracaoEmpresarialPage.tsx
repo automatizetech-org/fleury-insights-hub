@@ -34,7 +34,7 @@ export default function AlteracaoEmpresarialPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Link to="/alteracao-empresarial">
-          <GlassCard className="p-6 cursor-pointer h-full border-primary/20 hover:border-primary/40 transition-colors">
+          <GlassCard className="p-6 cursor-pointer h-full border-primary-icon/20 hover:border-primary-icon/40 transition-colors">
             <h3 className="text-sm font-semibold font-display">Visão Geral</h3>
             <p className="text-xs text-muted-foreground mt-2">Formulário de alteração empresarial e envio por WhatsApp</p>
             <p className="text-2xl font-bold font-display mt-3">—</p>
@@ -42,7 +42,7 @@ export default function AlteracaoEmpresarialPage() {
           </GlassCard>
         </Link>
         <Link to="/alteracao-empresarial/contratos">
-          <GlassCard className="p-6 cursor-pointer h-full border-primary/20 hover:border-primary/40 transition-colors">
+          <GlassCard className="p-6 cursor-pointer h-full border-primary-icon/20 hover:border-primary-icon/40 transition-colors">
             <h3 className="text-sm font-semibold font-display">Contratos</h3>
             <p className="text-xs text-muted-foreground mt-2">Contratos de honorários e documentos</p>
             <p className="text-2xl font-bold font-display mt-3">—</p>

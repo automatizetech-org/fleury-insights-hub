@@ -31,6 +31,7 @@ export default {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          icon: "hsl(var(--primary-icon, var(--primary)))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",

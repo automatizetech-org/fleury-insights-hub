@@ -87,7 +87,7 @@ function FolderTreeItem({
             )}
             <span className="text-sm font-medium truncate">{node.name}</span>
             {node.date_rule && (
-              <span className="text-[10px] bg-primary/15 text-primary rounded px-1.5 py-0.5 shrink-0">
+              <span className="text-[10px] bg-primary/15 text-primary-icon rounded px-1.5 py-0.5 shrink-0">
                 {node.date_rule === "year" ? "Ano" : node.date_rule === "year_month" ? "Ano/Mês" : "Ano/Mês/Dia"}
               </span>
             )}

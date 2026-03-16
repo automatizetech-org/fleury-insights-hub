@@ -84,6 +84,11 @@ export type Database = {
         Insert: { key: string; value?: string; updated_at?: string }
         Update: { key?: string; value?: string; updated_at?: string }
       }
+      client_branding_settings: {
+        Row: { id: string; client_id: string; client_name: string | null; primary_color: string | null; secondary_color: string | null; tertiary_color: string | null; logo_url: string | null; favicon_url: string | null; use_custom_palette: boolean; use_custom_logo: boolean; use_custom_favicon: boolean; created_at: string; updated_at: string }
+        Insert: { id?: string; client_id?: string; client_name?: string | null; primary_color?: string | null; secondary_color?: string | null; tertiary_color?: string | null; logo_url?: string | null; favicon_url?: string | null; use_custom_palette?: boolean; use_custom_logo?: boolean; use_custom_favicon?: boolean; created_at?: string; updated_at?: string }
+        Update: { id?: string; client_id?: string; client_name?: string | null; primary_color?: string | null; secondary_color?: string | null; tertiary_color?: string | null; logo_url?: string | null; favicon_url?: string | null; use_custom_palette?: boolean; use_custom_logo?: boolean; use_custom_favicon?: boolean; created_at?: string; updated_at?: string }
+      }
       municipal_tax_debts: {
         Row: { id: string; company_id: string; ano: number | null; tributo: string; numero_documento: string | null; data_vencimento: string | null; valor: number; situacao: string | null; portal_inscricao: string | null; portal_cai: string | null; detalhes: Json; fetched_at: string; created_at: string; updated_at: string; guia_pdf_path: string | null }
         Insert: { id?: string; company_id: string; ano?: number | null; tributo: string; numero_documento?: string | null; data_vencimento?: string | null; valor?: number; situacao?: string | null; portal_inscricao?: string | null; portal_cai?: string | null; detalhes?: Json; fetched_at?: string; created_at?: string; updated_at?: string; guia_pdf_path?: string | null }
@@ -95,9 +100,96 @@ export type Database = {
         Update: { id?: string; robot_technical_id?: string; company_id?: string | null; company_name?: string | null; status?: "pending" | "running" | "completed" | "failed"; started_at?: string | null; finished_at?: string | null; debts_found?: number; error_message?: string | null; metadata?: Json; created_at?: string; updated_at?: string }
       }
       ir_clients: {
-        Row: { id: string; nome: string; cpf_cnpj: string; responsavel_ir: string | null; vencimento: string | null; valor_servico: number; status_pagamento: "PIX" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "PERMUTA" | "A PAGAR"; status_declaracao: "Concluido" | "Pendente"; observacoes: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; nome: string; cpf_cnpj: string; responsavel_ir?: string | null; vencimento?: string | null; valor_servico?: number; status_pagamento?: "PIX" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "PERMUTA" | "A PAGAR"; status_declaracao?: "Concluido" | "Pendente"; observacoes?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; nome?: string; cpf_cnpj?: string; responsavel_ir?: string | null; vencimento?: string | null; valor_servico?: number; status_pagamento?: "PIX" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "PERMUTA" | "A PAGAR"; status_declaracao?: "Concluido" | "Pendente"; observacoes?: string | null; created_at?: string; updated_at?: string }
+        Row: {
+          id: string
+          nome: string
+          cpf_cnpj: string
+          responsavel_ir: string | null
+          vencimento: string | null
+          valor_servico: number
+          status_pagamento: "PIX" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "PERMUTA" | "A PAGAR"
+          status_declaracao: "Concluido" | "Pendente"
+          observacoes: string | null
+          created_at: string
+          updated_at: string
+          payment_charge_type: "PIX" | "BOLETO" | "BOLETO_HIBRIDO" | null
+          payment_charge_status: "none" | "pending" | "paid" | "failed" | "cancelled"
+          payment_charge_id: string | null
+          payment_charge_correlation_id: string | null
+          payment_provider: string | null
+          payment_link: string | null
+          payment_pix_copy_paste: string | null
+          payment_pix_qr_code: string | null
+          payment_boleto_pdf_base64: string | null
+          payment_boleto_barcode: string | null
+          payment_boleto_digitable_line: string | null
+          payment_paid_at: string | null
+          payment_payer_name: string | null
+          payment_payer_tax_id: string | null
+          payment_generated_at: string | null
+          payment_last_webhook_at: string | null
+          payment_metadata: Json
+        }
+        Insert: {
+          id?: string
+          nome: string
+          cpf_cnpj: string
+          responsavel_ir?: string | null
+          vencimento?: string | null
+          valor_servico?: number
+          status_pagamento?: "PIX" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "PERMUTA" | "A PAGAR"
+          status_declaracao?: "Concluido" | "Pendente"
+          observacoes?: string | null
+          created_at?: string
+          updated_at?: string
+          payment_charge_type?: "PIX" | "BOLETO" | "BOLETO_HIBRIDO" | null
+          payment_charge_status?: "none" | "pending" | "paid" | "failed" | "cancelled"
+          payment_charge_id?: string | null
+          payment_charge_correlation_id?: string | null
+          payment_provider?: string | null
+          payment_link?: string | null
+          payment_pix_copy_paste?: string | null
+          payment_pix_qr_code?: string | null
+          payment_boleto_pdf_base64?: string | null
+          payment_boleto_barcode?: string | null
+          payment_boleto_digitable_line?: string | null
+          payment_paid_at?: string | null
+          payment_payer_name?: string | null
+          payment_payer_tax_id?: string | null
+          payment_generated_at?: string | null
+          payment_last_webhook_at?: string | null
+          payment_metadata?: Json
+        }
+        Update: {
+          id?: string
+          nome?: string
+          cpf_cnpj?: string
+          responsavel_ir?: string | null
+          vencimento?: string | null
+          valor_servico?: number
+          status_pagamento?: "PIX" | "DINHEIRO" | "TRANSFERÊNCIA POUPANÇA" | "PERMUTA" | "A PAGAR"
+          status_declaracao?: "Concluido" | "Pendente"
+          observacoes?: string | null
+          created_at?: string
+          updated_at?: string
+          payment_charge_type?: "PIX" | "BOLETO" | "BOLETO_HIBRIDO" | null
+          payment_charge_status?: "none" | "pending" | "paid" | "failed" | "cancelled"
+          payment_charge_id?: string | null
+          payment_charge_correlation_id?: string | null
+          payment_provider?: string | null
+          payment_link?: string | null
+          payment_pix_copy_paste?: string | null
+          payment_pix_qr_code?: string | null
+          payment_boleto_pdf_base64?: string | null
+          payment_boleto_barcode?: string | null
+          payment_boleto_digitable_line?: string | null
+          payment_paid_at?: string | null
+          payment_payer_name?: string | null
+          payment_payer_tax_id?: string | null
+          payment_generated_at?: string | null
+          payment_last_webhook_at?: string | null
+          payment_metadata?: Json
+        }
       }
       ir_settings: {
         Row: { id: string; singleton: boolean; payment_due_date: string | null; created_at: string; updated_at: string }
@@ -138,6 +230,11 @@ export type Database = {
         Row: { id: string; period_id: string; company_id: string; rule_version_code: string; result_payload: Json; memory_payload: Json; created_at: string; updated_at: string }
         Insert: { id?: string; period_id: string; company_id: string; rule_version_code: string; result_payload?: Json; memory_payload?: Json; created_at?: string; updated_at?: string }
         Update: { id?: string; period_id?: string; company_id?: string; rule_version_code?: string; result_payload?: Json; memory_payload?: Json; created_at?: string; updated_at?: string }
+      }
+      nfs_stats: {
+        Row: { id: string; company_id: string; period: string; qty_emitidas: number; qty_recebidas: number; valor_emitidas: number; valor_recebidas: number; service_codes: Json; service_codes_emitidas: Json; service_codes_recebidas: Json; created_at: string; updated_at: string }
+        Insert: { id?: string; company_id: string; period: string; qty_emitidas?: number; qty_recebidas?: number; valor_emitidas?: number; valor_recebidas?: number; service_codes?: Json; service_codes_emitidas?: Json; service_codes_recebidas?: Json; created_at?: string; updated_at?: string }
+        Update: { id?: string; company_id?: string; period?: string; qty_emitidas?: number; qty_recebidas?: number; valor_emitidas?: number; valor_recebidas?: number; service_codes?: Json; service_codes_emitidas?: Json; service_codes_recebidas?: Json; created_at?: string; updated_at?: string }
       }
     }
     Views: { [_ in never]: never }

@@ -39,7 +39,7 @@ export default function ContabilPage() {
         <Link to="/contabil/balancete">
           <GlassCard className="p-6 cursor-pointer h-full">
             <h3 className="text-sm font-semibold font-display flex items-center gap-2">
-              <FileText className="h-4 w-4 text-primary" /> Balancete
+              <FileText className="h-4 w-4 text-primary-icon" /> Balancete
             </h3>
             <p className="text-xs text-muted-foreground mt-2">Demonstração contábil por período</p>
             <p className="text-2xl font-bold font-display mt-3">—</p>
@@ -49,7 +49,7 @@ export default function ContabilPage() {
         <Link to="/contabil/dre">
           <GlassCard className="p-6 cursor-pointer h-full">
             <h3 className="text-sm font-semibold font-display flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-primary" /> DRE
+              <TrendingUp className="h-4 w-4 text-primary-icon" /> DRE
             </h3>
             <p className="text-xs text-muted-foreground mt-2">Demonstração do resultado do exercício</p>
             <p className="text-2xl font-bold font-display mt-3">—</p>

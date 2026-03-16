@@ -27,6 +27,7 @@ import { DataPagination } from "@/components/common/DataPagination"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useCompanies } from "@/hooks/useCompanies"
+import { useBrandingOptional } from "@/contexts/BrandingContext"
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies"
 import {
   QUALIFICACAO_DISPLAY,
@@ -297,11 +298,13 @@ function MunicipalTaxesPanel({
   setFilters,
   items,
   isLoading,
+  chartPrimaryColor = "#2563EB",
 }: {
   filters: MunicipalTaxTableFiltersState
   setFilters: Dispatch<SetStateAction<MunicipalTaxTableFiltersState>>
   items: MunicipalTaxDebtView[]
   isLoading: boolean
+  chartPrimaryColor?: string
 }) {
   const summary = useMemo(() => getMunicipalTaxSummary(items), [items])
   const [downloadingZip, setDownloadingZip] = useState(false)
@@ -426,7 +429,7 @@ function MunicipalTaxesPanel({
             <h3 className="text-sm font-semibold font-display">Classificacao automatica</h3>
             <p className="mt-1 text-xs text-muted-foreground">Percentual de debitos vencidos, a vencer e regulares.</p>
           </div>
-          <ChartContainer className="h-[280px] w-full" config={{ total: { label: "Debitos", color: "#2563EB" } }}>
+          <ChartContainer className="h-[280px] w-full" config={{ total: { label: "Debitos", color: chartPrimaryColor } }}>
             <PieChart>
               <Pie data={statusChartData} dataKey="total" nameKey="name" innerRadius={64} outerRadius={92} paddingAngle={3}>
                 {statusChartData.map((entry) => <Cell key={entry.key} fill={entry.fill} />)}
@@ -506,13 +509,13 @@ function MunicipalTaxesPanel({
             <h3 className="text-sm font-semibold font-display">Distribuicao por empresa</h3>
             <p className="mt-1 text-xs text-muted-foreground">Top empresas com maior valor em debitos municipais.</p>
           </div>
-          <ChartContainer className="h-[280px] w-full" config={{ total: { label: "Valor", color: "#2563EB" } }}>
+          <ChartContainer className="h-[280px] w-full" config={{ total: { label: "Valor", color: chartPrimaryColor } }}>
             <BarChart data={companyChartData} layout="vertical" margin={{ left: 24, right: 16, top: 8, bottom: 8 }}>
               <CartesianGrid horizontal={false} />
               <XAxis type="number" tickFormatter={(value) => formatCurrencyBRL(Number(value))} />
               <YAxis type="category" dataKey="name" width={140} tickLine={false} axisLine={false} />
               <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatCurrencyBRL(Number(value))} />} />
-              <Bar dataKey="total" fill="#2563EB" radius={[0, 10, 10, 0]} />
+              <Bar dataKey="total" fill={chartPrimaryColor} radius={[0, 10, 10, 0]} />
             </BarChart>
           </ChartContainer>
         </GlassCard>
@@ -682,6 +685,8 @@ export default function ParalegalPage() {
     periodTo: "",
   })
 
+  const branding = useBrandingOptional()?.branding
+  const chartPrimaryColor = (branding?.use_custom_palette && branding?.primary_color) ? branding.primary_color : "#2563EB"
   const { selectedCompanyIds } = useSelectedCompanyIds()
   const { data: companies = [] } = useCompanies()
   const { data: certificateItems = [], isLoading } = useQuery({
@@ -764,7 +769,7 @@ export default function ParalegalPage() {
             <h3 className="text-sm font-semibold font-display">Status dos certificados</h3>
             <p className="mt-1 text-xs text-muted-foreground">Dados reais vindos das empresas cadastradas.</p>
           </div>
-          <ChartContainer className="h-[280px] w-full" config={{ total: { label: "Empresas", color: "#2563EB" } }}>
+          <ChartContainer className="h-[280px] w-full" config={{ total: { label: "Empresas", color: chartPrimaryColor } }}>
             <BarChart data={certificateBarData}>
               <CartesianGrid vertical={false} />
               <XAxis dataKey="name" tickLine={false} axisLine={false} />
@@ -804,7 +809,7 @@ export default function ParalegalPage() {
                 { value: "vencido", label: "Vencidos" },
                 { value: "sem_certificado", label: "Sem certificado" },
               ] as Array<{ value: CertificateFilter; label: string }>).map((option) => (
-                <button key={option.value} type="button" onClick={() => setFilter(option.value)} className={cn("rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30", filter === option.value ? "border-primary bg-primary text-primary-foreground shadow-sm" : "border-border bg-background/60 text-muted-foreground hover:bg-background hover:text-foreground")}>
+                <button key={option.value} type="button" onClick={() => setFilter(option.value)} className={cn("rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring", filter === option.value ? "border-primary bg-primary text-primary-foreground shadow-sm" : "border-border bg-background/60 text-muted-foreground hover:bg-background hover:text-foreground")}>
                   {option.label}
                 </button>
               ))}
@@ -871,7 +876,7 @@ export default function ParalegalPage() {
             <div className="mt-4">
               <GlassCard className="p-6">
                 <h3 className="mb-4 text-sm font-semibold font-display">Status dos certificados</h3>
-                <ChartContainer className="h-[260px] w-full" config={{ total: { label: "Empresas", color: "#2563EB" } }}>
+                <ChartContainer className="h-[260px] w-full" config={{ total: { label: "Empresas", color: chartPrimaryColor } }}>
                   <BarChart data={certificateBarData}>
                     <CartesianGrid vertical={false} />
                     <XAxis dataKey="name" tickLine={false} axisLine={false} />
@@ -897,7 +902,7 @@ export default function ParalegalPage() {
             <div className="mt-4">
               <GlassCard className="p-6">
                 <h3 className="mb-4 text-sm font-semibold font-display">Classificacao dos debitos municipais</h3>
-                <ChartContainer className="h-[260px] w-full" config={{ total: { label: "Debitos", color: "#2563EB" } }}>
+                <ChartContainer className="h-[260px] w-full" config={{ total: { label: "Debitos", color: chartPrimaryColor } }}>
                   {overviewTaxPieData.length === 0 ? (
                     <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">Nenhum debito nos filtros atuais.</div>
                   ) : (
@@ -922,7 +927,7 @@ export default function ParalegalPage() {
       )}
       {topic === "certificados" && certificatesPanel}
       {topic === "tarefas" && <TasksPanel />}
-      {topic === "taxas-impostos" && <MunicipalTaxesPanel filters={municipalFilters} setFilters={setMunicipalFilters} items={municipalDebts} isLoading={municipalDebtsLoading} />}
+      {topic === "taxas-impostos" && <MunicipalTaxesPanel filters={municipalFilters} setFilters={setMunicipalFilters} items={municipalDebts} isLoading={municipalDebtsLoading} chartPrimaryColor={chartPrimaryColor} />}
     </div>
   )
 }

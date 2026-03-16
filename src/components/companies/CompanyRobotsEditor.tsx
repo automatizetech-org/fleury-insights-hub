@@ -171,7 +171,7 @@ export function CompanyRobotsEditor({
               }}
               disabled={disabled || (!config.enabled && !canEnableSelectedRobot)}
               className={cn(
-                "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50",
+                "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:opacity-50",
                 config.enabled ? "bg-primary" : "bg-muted"
               )}
               title={!config.enabled && !canEnableSelectedRobot ? enableRequirementMessage ?? undefined : undefined}

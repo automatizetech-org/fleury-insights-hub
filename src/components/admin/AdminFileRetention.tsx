@@ -83,7 +83,7 @@ export function AdminFileRetention({ isSuperAdmin }: { isSuperAdmin: boolean }) 
   return (
     <GlassCard className="overflow-hidden">
       <div className="p-4 border-b border-border flex items-center gap-2">
-        <HardDrive className="h-4 w-4 text-primary" />
+        <HardDrive className="h-4 w-4 text-primary-icon" />
         <h3 className="text-sm font-semibold font-display">Retenção de arquivos</h3>
       </div>
       <div className="p-4 space-y-4">

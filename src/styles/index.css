@@ -5,12 +5,6 @@
 @tailwind utilities;
 
 :root {
-  --primary-blue: #2563EB;
-  --primary-blue-dark: #1E40AF;
-  --primary-blue-light: #3B82F6;
-  --secondary-purple: #7C3AED;
-  --secondary-purple-dark: #6D28D9;
-
   --background: 210 20% 98%;
   --foreground: 222 47% 11%;
   --card: 0 0% 100%;
@@ -19,6 +13,7 @@
   --popover-foreground: 222 47% 11%;
   --primary: 221 83% 53%;
   --primary-foreground: 210 40% 98%;
+  --primary-icon: 221 83% 53%;
   --secondary: 210 40% 96%;
   --secondary-foreground: 222 47% 11%;
   --muted: 210 40% 96%;
@@ -57,11 +52,11 @@
   --chart-8: 173 58% 39%;
 
   /* Recharts */
-  --ap-chart-grid: rgba(17, 24, 39, 0.16);
-  --ap-chart-axis: rgba(17, 24, 39, 0.65);
-  --ap-tooltip-bg: rgba(255, 255, 255, 0.96);
-  --ap-tooltip-border: rgba(37, 99, 235, 0.22);
-  --ap-tooltip-text: #111827;
+  --ap-chart-grid: hsl(var(--foreground) / 0.12);
+  --ap-chart-axis: hsl(var(--foreground) / 0.65);
+  --ap-tooltip-bg: hsl(var(--card));
+  --ap-tooltip-border: hsl(var(--primary) / 0.22);
+  --ap-tooltip-text: hsl(var(--foreground));
 }
 
 .dark {
@@ -73,6 +68,7 @@
   --popover-foreground: 210 40% 96%;
   --primary: 221 83% 53%;
   --primary-foreground: 210 40% 98%;
+  --primary-icon: 221 83% 53%;
   --secondary: 217 33% 17%;
   --secondary-foreground: 210 40% 96%;
   --muted: 217 33% 17%;
@@ -94,31 +90,41 @@
   --sidebar-border: 217 33% 14%;
   --sidebar-ring: 221 83% 53%;
 
-  --ap-chart-grid: rgba(226, 232, 240, 0.18);
-  --ap-chart-axis: rgba(226, 232, 240, 0.72);
-  --ap-tooltip-bg: rgba(255, 255, 255, 0.98);
-  --ap-tooltip-border: rgba(15, 23, 42, 0.12);
-  --ap-tooltip-text: #111827;
+  --ap-chart-grid: hsl(var(--foreground) / 0.18);
+  --ap-chart-axis: hsl(var(--foreground) / 0.72);
+  --ap-tooltip-bg: hsl(var(--card));
+  --ap-tooltip-border: hsl(var(--border));
+  --ap-tooltip-text: hsl(var(--foreground));
 }
 
-/* Calendário nativo legível no tema escuro */
-.dark input[type="date"],
-.dark input[type="datetime-local"],
-.dark input[type="time"] {
-  color-scheme: dark;
+/* Inputs e ícones (calendário, etc.) usam cor do tema para contraste em fundo claro ou escuro */
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"] {
+  color: hsl(var(--foreground));
 }
 
 input[type="date"]::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 input[type="time"]::-webkit-calendar-picker-indicator {
   cursor: pointer;
+  opacity: 0.7;
+  filter: none;
 }
 
+/* Modo escuro: ícone do calendário claro para fundo escuro */
 .dark input[type="date"]::-webkit-calendar-picker-indicator,
 .dark input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 .dark input[type="time"]::-webkit-calendar-picker-indicator {
+  color-scheme: dark;
   filter: brightness(0) invert(1) contrast(1.15);
   opacity: 1;
+}
+
+.dark input[type="date"],
+.dark input[type="datetime-local"],
+.dark input[type="time"] {
+  color-scheme: dark;
 }
 
 .dark input[type="date"]::-webkit-calendar-picker-indicator:hover,
@@ -131,6 +137,11 @@ input[type="time"]::-webkit-calendar-picker-indicator {
 @layer base {
   * {
     @apply border-border;
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    color: hsl(var(--foreground));
   }
   html, body, #root {
     width: 100%;
@@ -170,9 +181,8 @@ input[type="time"]::-webkit-calendar-picker-indicator {
     0 10px 30px rgba(0, 0, 0, 0.12),
     0 0 0 1px rgba(255, 255, 255, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  @apply bg-gradient-to-br from-white via-white to-gray-50 dark:from-slate-800 dark:via-slate-800 dark:to-slate-900;
-  @apply border border-gray-200/50 dark:border-slate-700;
-  @apply text-foreground;
+  background-color: hsl(var(--card));
+  @apply border border-border text-foreground;
   transition: background-color 0.5s cubic-bezier(0.4, 0, 0.2, 1),
               border-color 0.5s cubic-bezier(0.4, 0, 0.2, 1),
               color 0.5s cubic-bezier(0.4, 0, 0.2, 1),
@@ -287,7 +297,7 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   inset: 0;
   border-radius: 16px;
   padding: 2px;
-  background: linear-gradient(135deg, #2563EB, #7C3AED, #10B981);
+  background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)), hsl(var(--chart-3)));
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask-composite: exclude;
@@ -326,21 +336,16 @@ input[type="time"]::-webkit-calendar-picker-indicator {
 .backdrop-3d {
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  background: rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-}
-
-.dark .backdrop-3d {
-  background: rgba(30, 41, 59, 0.9);
-  border-color: rgba(71, 85, 105, 0.5);
+  background: hsl(var(--card) / 0.9);
+  border: 1px solid hsl(var(--border) / 0.8);
 }
 
 /* ========== Sidebar Brand (WK exact) ========== */
 .wk-sidebar-brand {
   padding: 10px 12px;
   border-radius: 18px;
-  background: linear-gradient(135deg, rgba(37,99,235,0.14), rgba(245,158,11,0.12));
-  border: 1px solid rgba(229,231,235,0.55);
+  background: linear-gradient(135deg, hsl(var(--primary) / 0.14), hsl(var(--accent) / 0.12));
+  border: 1px solid hsl(var(--border));
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.65);
 }
 
@@ -348,7 +353,7 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   font-size: 1.1rem;
   font-weight: 800;
   letter-spacing: 0.01em;
-  color: #000;
+  color: hsl(var(--foreground));
   background: none;
   -webkit-background-clip: unset;
   background-clip: unset;
@@ -358,7 +363,7 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   margin-top: 4px;
   font-size: 0.78rem;
   font-weight: 600;
-  color: rgba(17, 24, 39, 0.55);
+  color: hsl(var(--muted-foreground));
 }
 
 /* ========== 3D Animations (WK exact) ========== */
@@ -391,9 +396,9 @@ input[type="time"]::-webkit-calendar-picker-indicator {
 .text-gradient-animated {
   background: linear-gradient(
     90deg,
-    #2563EB,
-    #F59E0B,
-    #2563EB
+    hsl(var(--primary)),
+    hsl(var(--accent)),
+    hsl(var(--primary))
   );
   background-size: 200% auto;
   -webkit-background-clip: text;
@@ -409,7 +414,7 @@ input[type="time"]::-webkit-calendar-picker-indicator {
 
 .hover-lift:hover {
   transform: translateY(-4px);
-  box-shadow: 0 12px 40px rgba(37, 99, 235, 0.12);
+  box-shadow: 0 12px 40px hsl(var(--primary) / 0.12);
 }
 
 /* ========== Chart 3D (WK exact) ========== */

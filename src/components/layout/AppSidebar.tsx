@@ -26,7 +26,7 @@ import { useState, useEffect } from "react";
 import { useCompanies } from "@/hooks/useCompanies";
 import { useProfile } from "@/hooks/useProfile";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
-import logoUrl from "@/assets/images/logo.png";
+import { useBranding, getSidebarTitle } from "@/contexts/BrandingContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Command,
@@ -143,6 +143,8 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
   const { data: companies = [] } = useCompanies();
   const { selectedCompanyIds, setSelectedCompanyIds } = useSelectedCompanyIds();
   const { isSuperAdmin, profile } = useProfile();
+  const { logoUrl, branding } = useBranding();
+  const sidebarTitle = getSidebarTitle(branding?.client_name);
 
   const visibleNavItems = navItems.filter((item) => {
     if (item.path === "/admin") return isSuperAdmin;
@@ -168,15 +170,15 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
 
   const sidebarContent = (
     <>
-      <div className="absolute inset-0 bg-gradient-to-br from-[#2563EB]/5 via-transparent to-[#7C3AED]/5 dark:from-[#2563EB]/10 dark:to-[#7C3AED]/10 pointer-events-none transition-opacity duration-500" />
-      <div className="relative p-6 md:p-4 md:pt-6 border-b border-gray-200 dark:border-slate-700 bg-gradient-to-r from-[#2563EB]/10 via-[#2563EB]/5 to-transparent dark:from-[#2563EB]/20 dark:via-[#2563EB]/10 z-10 transition-colors duration-500 flex-shrink-0">
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5 dark:from-primary/10 dark:to-accent/10 pointer-events-none transition-opacity duration-500" />
+      <div className="relative p-6 md:p-4 md:pt-6 border-b border-border bg-gradient-to-r from-primary/10 via-primary/5 to-transparent z-10 transition-colors duration-500 flex-shrink-0">
         <div className="flex flex-col items-center gap-5 md:gap-3">
-          <div className="relative wk-sidebar-brand flex items-center justify-center w-20 h-20 md:w-14 md:h-14 rounded-2xl md:rounded-xl overflow-hidden bg-white/90 dark:bg-slate-800/90 shadow-lg shrink-0">
+          <div className="relative wk-sidebar-brand flex items-center justify-center w-20 h-20 md:w-14 md:h-14 rounded-2xl md:rounded-xl overflow-hidden bg-card shadow-lg shrink-0">
             <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
           </div>
           <div className="text-center w-full min-w-0">
-            <h2 className="wk-sidebar-title dark:text-white font-bold tracking-tight text-lg md:text-sm truncate">Dashboard Fleury</h2>
-            <p className="wk-sidebar-subtitle dark:text-slate-400 text-sm md:text-xs mt-1">Selecione uma área</p>
+            <h2 className="wk-sidebar-title font-bold tracking-tight text-lg md:text-sm truncate text-foreground">{sidebarTitle}</h2>
+            <p className="wk-sidebar-subtitle text-muted-foreground text-sm md:text-xs mt-1">Selecione uma área</p>
             <div className="mt-4 md:mt-2 flex items-center gap-2 w-full min-w-0">
               <Popover>
                 <PopoverTrigger asChild>
@@ -184,7 +186,7 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
                     variant="outline"
                     role="combobox"
                     className={cn(
-                      "flex-1 min-w-0 h-12 md:h-8 justify-between rounded-xl md:rounded-md border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-foreground text-base md:text-xs font-normal hover:bg-gray-50 dark:hover:bg-slate-700/50 truncate",
+                      "flex-1 min-w-0 h-12 md:h-8 justify-between rounded-xl md:rounded-md border border-border bg-card text-foreground text-base md:text-xs font-normal hover:bg-muted/50 truncate",
                       selectedCompanyIds.length === 0 && "text-muted-foreground"
                     )}
                   >
@@ -243,7 +245,7 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
               </Popover>
               <Link
                 to="/empresas/nova"
-                className="flex-shrink-0 p-2.5 md:p-1.5 rounded-xl md:rounded-md bg-[#2563EB] text-white hover:bg-[#1E40AF] transition-colors min-w-[48px] min-h-[48px] md:min-w-[36px] md:min-h-[36px] flex items-center justify-center touch-manipulation"
+                className="flex-shrink-0 p-2.5 md:p-1.5 rounded-xl md:rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-colors min-w-[48px] min-h-[48px] md:min-w-[36px] md:min-h-[36px] flex items-center justify-center touch-manipulation"
                 title="Cadastrar nova empresa"
               >
                 <Plus className="h-5 w-5 md:h-3.5 md:w-3.5" />
@@ -262,31 +264,31 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
                   className={cn(
                     "w-full text-left p-3 sm:p-4 rounded-xl transition-all duration-300 card-3d relative min-w-0",
                     isParentActive(item)
-                      ? "bg-gradient-to-r from-[#2563EB] via-[#2563EB] to-[#1E40AF] text-white shadow-3d sm:transform sm:scale-105"
-                      : "bg-white/80 dark:bg-slate-700/80 backdrop-blur-sm text-foreground hover:bg-gradient-to-r hover:from-[#2563EB]/20 hover:via-[#2563EB]/10 hover:to-transparent dark:hover:from-[#2563EB]/30 dark:hover:via-[#2563EB]/20 hover:shadow-3d-hover border border-gray-200/50 dark:border-slate-600"
+                      ? "bg-primary text-primary-foreground shadow-3d sm:transform sm:scale-105"
+                      : "bg-card/80 backdrop-blur-sm text-sidebar-foreground hover:bg-sidebar-accent hover:shadow-3d-hover border border-border"
                   )}
                   style={{ transformStyle: "preserve-3d" }}
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <item.icon size={18} className="shrink-0" />
+                    <item.icon size={18} className="shrink-0 text-inherit" />
                     <span className="font-medium truncate">{item.name}</span>
                     <span className="ml-auto shrink-0">
                       {expandedItems.includes(item.path) ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                     </span>
                   </div>
                   {item.description && (
-                    <p className={cn("text-xs sm:text-sm mt-1 truncate", isParentActive(item) ? "text-white/80" : "text-muted-foreground")}>{item.description}</p>
+                    <p className={cn("text-xs sm:text-sm mt-1 truncate", isParentActive(item) ? "text-primary-foreground/80" : "text-muted-foreground")}>{item.description}</p>
                   )}
                 </button>
                 {expandedItems.includes(item.path) && (
-                  <div className="ml-3 sm:ml-4 mt-1 space-y-0.5 border-l-2 border-[#2563EB]/20 pl-3">
+                  <div className="ml-3 sm:ml-4 mt-1 space-y-0.5 border-l-2 border-primary-icon/20 pl-3">
                     {item.children.map((child) => (
                       <Link
                         key={child.path}
                         to={child.path}
                         className={cn(
                           "flex items-center rounded-lg px-3 py-2 text-xs font-medium transition-all duration-200 truncate min-w-0",
-                          isActive(child.path) ? "bg-[#2563EB]/10 text-[#2563EB] font-semibold" : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                          isActive(child.path) ? "bg-primary/10 text-foreground font-semibold" : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
                         )}
                       >
                         {child.name}
@@ -301,17 +303,17 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
                 className={cn(
                   "w-full text-left p-3 sm:p-4 rounded-xl transition-all duration-300 card-3d relative block min-w-0",
                   isActive(item.path)
-                    ? "bg-gradient-to-r from-[#2563EB] via-[#2563EB] to-[#1E40AF] text-white shadow-3d sm:transform sm:scale-105"
-                    : "bg-white/80 dark:bg-slate-700/80 backdrop-blur-sm text-foreground hover:bg-gradient-to-r hover:from-[#2563EB]/20 hover:via-[#2563EB]/10 hover:to-transparent dark:hover:from-[#2563EB]/30 dark:hover:via-[#2563EB]/20 hover:shadow-3d-hover border border-gray-200/50 dark:border-slate-600"
+                    ? "bg-primary text-primary-foreground shadow-3d sm:transform sm:scale-105"
+                    : "bg-card/80 backdrop-blur-sm text-sidebar-foreground hover:bg-sidebar-accent hover:shadow-3d-hover border border-border"
                 )}
                 style={{ transformStyle: "preserve-3d" }}
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <item.icon size={18} className="shrink-0" />
+                  <item.icon size={18} className="shrink-0 text-inherit" />
                   <span className="font-medium truncate">{item.name}</span>
                 </div>
                 {item.description && (
-                  <p className={cn("text-xs sm:text-sm mt-1 truncate", isActive(item.path) ? "text-white/80" : "text-muted-foreground")}>{item.description}</p>
+                  <p className={cn("text-xs sm:text-sm mt-1 truncate", isActive(item.path) ? "text-primary-foreground/80" : "text-muted-foreground")}>{item.description}</p>
                 )}
               </Link>
             )}
@@ -325,7 +327,7 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
     <>
       <button
         onClick={() => setMobileOpen(true)}
-        className="fixed z-50 md:hidden p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-200 dark:border-slate-700 hover:bg-[#2563EB]/10 dark:hover:bg-[#2563EB]/20 transition-all touch-manipulation active:scale-95 sm:top-4 sm:left-4"
+        className="fixed z-50 md:hidden p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center bg-card rounded-xl shadow-lg border border-border hover:bg-primary/10 transition-all touch-manipulation active:scale-95 sm:top-4 sm:left-4"
         style={{
           top: "max(6px, calc(6px + env(safe-area-inset-top, 0px)))",
           left: "max(12px, calc(12px + env(safe-area-inset-left, 0px)))",
@@ -344,7 +346,7 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
       />
       <aside
         className={cn(
-          "hidden md:flex md:w-full md:flex-shrink-0 md:h-dvh bg-gradient-to-b from-white via-white to-gray-50 dark:from-slate-800 dark:via-slate-800 dark:to-slate-900 border-r border-gray-200 dark:border-slate-700 flex-col shadow-3d relative overflow-hidden transition-colors duration-500 sticky top-0 z-40 transition-transform duration-300 ease-in-out",
+          "hidden md:flex md:w-full md:flex-shrink-0 md:h-dvh bg-sidebar border-r border-sidebar-border flex-col shadow-3d relative overflow-hidden transition-colors duration-500 sticky top-0 z-40 transition-transform duration-300 ease-in-out",
           open ? "translate-x-0" : "-translate-x-full"
         )}
         aria-hidden={!open}
@@ -353,7 +355,7 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
         {!open && onToggle && (
           <button
             onClick={onToggle}
-            className="absolute top-4 right-0 translate-x-full rounded-r-lg bg-white dark:bg-slate-800 border border-l-0 border-gray-200 dark:border-slate-700 p-2 shadow-md hover:bg-[#2563EB]/10 dark:hover:bg-[#2563EB]/20 transition-colors"
+            className="absolute top-4 right-0 translate-x-full rounded-r-lg bg-card border border-l-0 border-border p-2 shadow-md hover:bg-primary/10 transition-colors"
             aria-label="Exibir painel lateral"
           >
             <PanelLeft className="h-4 w-4 text-foreground" />
@@ -362,7 +364,7 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
       </aside>
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-[min(18rem,85vw)] max-w-[18rem] bg-gradient-to-b from-white via-white to-gray-50 dark:from-slate-800 dark:via-slate-800 dark:to-slate-900 border-r border-gray-200 dark:border-slate-700 flex flex-col shadow-3d overflow-hidden md:hidden transform-gpu transition-transform duration-300 ease-out safe-area-inset-left"
+          "fixed inset-y-0 left-0 z-50 w-[min(18rem,85vw)] max-w-[18rem] bg-sidebar border-r border-sidebar-border flex flex-col shadow-3d overflow-hidden md:hidden transform-gpu transition-transform duration-300 ease-out safe-area-inset-left"
         )}
         style={{ transform: mobileOpen ? "translateX(0)" : "translateX(-100%)" }}
         aria-hidden={!mobileOpen}

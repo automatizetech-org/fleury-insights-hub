@@ -41,7 +41,7 @@ export function StatsCard({ title, value, change, changeType = "neutral", icon: 
           )}
         </div>
         <div className="rounded-lg bg-primary/10 p-2.5 sm:p-3 group-hover:bg-accent/20 transition-colors duration-300 shrink-0">
-          <Icon className="h-4 w-4 sm:h-5 sm:w-5 text-primary group-hover:text-accent transition-colors duration-300" />
+          <Icon className="h-4 w-4 sm:h-5 sm:w-5 text-primary-icon group-hover:text-accent transition-colors duration-300" />
         </div>
       </div>
     </div>

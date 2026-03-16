@@ -97,7 +97,7 @@ function DepartmentTreeItem({
             ) : (
               <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             )}
-            <span className={`text-xs truncate ${isSelected ? "font-semibold text-primary" : ""}`}>{node.name}</span>
+            <span className={`text-xs truncate ${isSelected ? "font-semibold text-primary-icon" : ""}`}>{node.name}</span>
           </button>
         </CollapsibleTrigger>
         <Button
@@ -238,7 +238,7 @@ export function AdminRobotsList({
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="rounded-lg bg-primary/10 p-2 shrink-0">
-                    <Bot className="h-4 w-4 text-primary" />
+                    <Bot className="h-4 w-4 text-primary-icon" />
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{r.display_name}</p>
@@ -318,7 +318,7 @@ export function AdminRobotsList({
                 )}
               </div>
               {segmentPath && (
-                <p className="text-xs text-primary font-medium">Selecionado: {segmentPath}</p>
+                <p className="text-xs text-primary-icon font-medium">Selecionado: {segmentPath}</p>
               )}
             </div>
             <div className="space-y-2">
