@@ -159,6 +159,12 @@ def kill_automation_chrome(profile_dir: Path, chrome_exe: Path) -> None:
     run_powershell(script, timeout_ms=20000)
 
 
+def reset_profile_dir(profile_dir: Path) -> None:
+    if profile_dir.exists():
+        shutil.rmtree(profile_dir, ignore_errors=True)
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+
 def wait_for_cdp_port(port: int, timeout_seconds: int = 40) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
@@ -172,7 +178,7 @@ def wait_for_cdp_port(port: int, timeout_seconds: int = 40) -> None:
 
 def start_playwright_browser(cdp_port: int):
     kill_automation_chrome(PROFILE_DIR, CHROME_EXE)
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    reset_profile_dir(PROFILE_DIR)
     chrome_cmd = [
         str(CHROME_EXE),
         f"--remote-debugging-port={cdp_port}",
