@@ -484,7 +484,12 @@ def select_certificate_dialog(cert_subject: str) -> None:
                 Start-Sleep -Milliseconds 180
 
                 $wsh = New-Object -ComObject WScript.Shell
-                for ($step = 0; $step -lt 30; $step++) {{
+
+                # Normaliza a navegacao para o topo da lista antes de procurar o alvo.
+                $wsh.SendKeys('{{HOME}}')
+                Start-Sleep -Milliseconds 220
+
+                for ($step = 0; $step -lt 40; $step++) {{
                     $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
                     if ($focused) {{
                         $focusedName = [string]$focused.Current.Name
@@ -496,8 +501,10 @@ def select_certificate_dialog(cert_subject: str) -> None:
                             throw ('O seletor permaneceu aberto apos confirmar o certificado: ' + $focusedName)
                         }}
                     }}
-                    $wsh.SendKeys('{{DOWN}}')
-                    Start-Sleep -Milliseconds 180
+                    if ($step -lt 39) {{
+                        $wsh.SendKeys('{{DOWN}}')
+                        Start-Sleep -Milliseconds 180
+                    }}
                 }}
 
                 throw 'Nao foi possivel alcancar o certificado alvo navegando pela lista nativa.'
