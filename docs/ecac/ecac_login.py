@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import re
 import shutil
 import socket
@@ -15,13 +16,51 @@ from tkinter import filedialog, messagebox, ttk
 from playwright.sync_api import sync_playwright
 
 
-BASE_DIR = Path(__file__).resolve().parent
-CHROME_DIR = BASE_DIR / "Chrome"
-CHROME_EXE = CHROME_DIR / "chrome.exe"
-PROFILE_DIR = BASE_DIR / "chrome_profile"
+def get_runtime_dirs() -> tuple[Path, Path]:
+    if getattr(sys, "frozen", False):
+        app_dir = Path(sys.executable).resolve().parent
+        resource_dir = Path(getattr(sys, "_MEIPASS", app_dir / "_internal")).resolve()
+        return app_dir, resource_dir
+    source_dir = Path(__file__).resolve().parent
+    return source_dir, source_dir
+
+
+BASE_DIR, RESOURCE_DIR = get_runtime_dirs()
+PROFILE_DIR = (RESOURCE_DIR if getattr(sys, "frozen", False) else BASE_DIR) / "chrome_profile"
 CERTIFICATES_PATH = BASE_DIR / "certificates.json"
 DEFAULT_CDP_PORT = 9333
 DEFAULT_TIMEOUT_MS = 90000
+
+
+def get_chrome_candidates() -> list[Path]:
+    candidates = [
+        RESOURCE_DIR / "Chrome" / "chrome.exe",
+        RESOURCE_DIR / "_internal" / "Chrome" / "chrome.exe",
+        BASE_DIR / "_internal" / "Chrome" / "chrome.exe",
+        BASE_DIR / "Chrome" / "chrome.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+    ]
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = str(candidate.resolve(strict=False)).lower()
+        if normalized not in seen:
+            seen.add(normalized)
+            unique.append(candidate)
+    return unique
+
+
+def resolve_chrome_exe() -> Path:
+    for candidate in get_chrome_candidates():
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        "Chrome nao encontrado. Caminhos verificados: "
+        + " | ".join(str(candidate) for candidate in get_chrome_candidates())
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,21 +76,52 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_powershell(script: str, timeout_ms: int = 60000) -> str:
+    # No Windows (principalmente em .exe), o PowerShell pode abrir uma janela que atrapalha.
+    # Rodamos com WindowStyle Hidden e também sem criar console.
+    creationflags = 0
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+    except Exception:
+        creationflags = 0
+
     result = subprocess.run(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            script,
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="ignore",
-        check=True,
+        check=False,
         timeout=max(1, timeout_ms // 1000),
+        creationflags=creationflags,
     )
-    return result.stdout.strip()
+
+    out = (result.stdout or "").strip()
+    err = (result.stderr or "").strip()
+    if result.returncode != 0:
+        # Evita estourar a tela com o script inteiro (subprocess.CalledProcessError imprime o comando).
+        tail_err = err[-1500:] if err else ""
+        tail_out = out[-1500:] if out else ""
+        msg = f"PowerShell retornou codigo {result.returncode}."
+        if tail_err:
+            msg += f"\nErro:\n{tail_err}"
+        elif tail_out:
+            msg += f"\nSaida:\n{tail_out}"
+        raise RuntimeError(msg)
+
+    return out
 
 
 def ensure_dependencies() -> None:
-    if not CHROME_EXE.exists():
-        raise FileNotFoundError(f"Chrome nao encontrado em: {CHROME_EXE}")
     if shutil.which("powershell") is None:
         raise RuntimeError("PowerShell nao encontrado no PATH.")
 
@@ -165,9 +235,13 @@ def reset_profile_dir(profile_dir: Path) -> None:
     profile_dir.mkdir(parents=True, exist_ok=True)
 
 
-def wait_for_cdp_port(port: int, timeout_seconds: int = 40) -> None:
+def wait_for_cdp_port(port: int, chrome_proc: subprocess.Popen | None = None, timeout_seconds: int = 40) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
+        if chrome_proc is not None:
+            return_code = chrome_proc.poll()
+            if return_code is not None:
+                raise RuntimeError(f"Chrome externo encerrou antes do CDP subir. Codigo de saida: {return_code}.")
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.5):
                 return
@@ -177,38 +251,63 @@ def wait_for_cdp_port(port: int, timeout_seconds: int = 40) -> None:
 
 
 def start_playwright_browser(cdp_port: int):
-    kill_automation_chrome(PROFILE_DIR, CHROME_EXE)
-    reset_profile_dir(PROFILE_DIR)
-    chrome_cmd = [
-        str(CHROME_EXE),
-        f"--remote-debugging-port={cdp_port}",
-        f"--user-data-dir={PROFILE_DIR}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-blink-features=AutomationControlled",
-        "--disable-features=IsolateOrigins,site-per-process",
-        "--disable-dev-shm-usage",
-        "--no-sandbox",
-        "--disable-gpu",
-        "--disable-popup-blocking",
-        "--start-maximized",
-        "--ignore-certificate-errors",
-    ]
-    chrome_proc = subprocess.Popen(
-        chrome_cmd,
-        cwd=str(CHROME_DIR),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    wait_for_cdp_port(cdp_port)
+    """
+    No .exe, iniciar Chrome externo via CDP tende a falhar silenciosamente (Chrome fecha antes do CDP subir).
+    Para alinhar com o bot de Certidoes, usamos launch_persistent_context (Playwright gerencia o processo)
+    e deixamos fallback para Chrome/Edge do sistema (quando disponivel).
+
+    Observacao: nao criamos/gerenciamos pasta de browsers do Playwright aqui; o objetivo e nao gerar
+    a pasta "ms-playwright" ao lado do executavel.
+    """
+    profile_dir = PROFILE_DIR
+    try:
+        profile_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    exe: str | None = None
+    try:
+        exe = str(resolve_chrome_exe())
+    except Exception:
+        exe = None
 
     playwright = sync_playwright().start()
-    browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
-    context = browser.contexts[0] if browser.contexts else browser.new_context(
-        ignore_https_errors=True,
-    )
-    page = context.pages[0] if context.pages else context.new_page()
-    return playwright, browser, context, page, chrome_proc
+    try:
+        kwargs: dict = {
+            "headless": False,
+            "ignore_https_errors": True,
+            "args": [
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-popup-blocking",
+                "--start-maximized",
+                "--ignore-certificate-errors",
+            ],
+        }
+        if exe:
+            kwargs["executable_path"] = exe
+        context = playwright.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir),
+            **kwargs,
+        )
+        browser = context.browser if hasattr(context, "browser") else None
+        page = context.pages[0] if context.pages else context.new_page()
+        return playwright, browser, context, page, None
+    except Exception as exc:
+        try:
+            playwright.stop()
+        except Exception:
+            pass
+        hint = (
+            "Falha ao iniciar o navegador via Playwright. "
+            "Se estiver rodando via .exe, verifique se existe Chrome/Edge instalado."
+        )
+        raise RuntimeError(f"{hint}\nDetalhe: {exc}") from exc
 
 
 def select_certificate_dialog(cert_subject: str) -> None:
@@ -448,14 +547,37 @@ def select_certificate_dialog(cert_subject: str) -> None:
             return $false
         }}
 
+        function Find-ChromeWindow($root) {{
+            # Evita depender de um titulo exato (muda por idioma, por site, por perfil, por Edge, etc.)
+            $wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+            $preferred = @()
+            for ($i = 0; $i -lt $wins.Count; $i++) {{
+                $w = $wins.Item($i)
+                $name = [string]$w.Current.Name
+                if (-not $name) {{ continue }}
+                $lname = $name.ToLower()
+                if ($lname.Contains('gov.br') -and ($lname.Contains('chrome') -or $lname.Contains('edge'))) {{
+                    $preferred += $w
+                }}
+            }}
+            if ($preferred.Count -gt 0) {{ return $preferred[0] }}
+
+            for ($i = 0; $i -lt $wins.Count; $i++) {{
+                $w = $wins.Item($i)
+                $name = [string]$w.Current.Name
+                if (-not $name) {{ continue }}
+                $lname = $name.ToLower()
+                if ($lname.Contains('google chrome') -or $lname.Contains('chrome') -or $lname.Contains('microsoft edge') -or $lname.Contains('edge')) {{
+                    return $w
+                }}
+            }}
+            return $null
+        }}
+
         function Fallback-GlobalSelection() {{
-            $chromeCond = New-Object System.Windows.Automation.PropertyCondition(
-                [System.Windows.Automation.AutomationElement]::NameProperty,
-                'gov.br - Acesse sua conta - Google Chrome'
-            )
-            $chromeWindow = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $chromeCond)
+            $chromeWindow = Find-ChromeWindow $root
             if (-not $chromeWindow) {{
-                throw 'Janela principal do Chrome nao encontrada para o fallback do certificado.'
+                throw 'Nao encontrei uma janela do Chrome/Edge para focar. Deixe o navegador visivel e tente novamente.'
             }}
 
             $chromeHandle = [IntPtr]$chromeWindow.Current.NativeWindowHandle
