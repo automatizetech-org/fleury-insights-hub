@@ -135,6 +135,9 @@ def build_selector_candidates(cert_subject: str) -> list[str]:
         normalized = item.replace("CN=", "").strip()
         if normalized and normalized not in candidates:
             candidates.append(normalized)
+        company_only = normalized.split(":")[0].strip()
+        if company_only and company_only not in candidates:
+            candidates.append(company_only)
 
     return candidates
 
@@ -209,20 +212,25 @@ def select_certificate_dialog(cert_subject: str) -> None:
         f"""
         Add-Type -AssemblyName UIAutomationClient
         Add-Type -AssemblyName UIAutomationTypes
-        Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public class Win32Focus {{
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
-  [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
-}}
-'@
+        Add-Type @"
+        using System;
+        using System.Runtime.InteropServices;
+        public struct POINT {{
+          public int X;
+          public int Y;
+        }}
+        public class NativeCertUi {{
+          [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+          [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+          [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+          [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
+          [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+          [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+        }}
+        "@
 
         $targets = {powershell_targets}
         $dialogTitle = 'Selecione um certificado'
-        $chromeTitle = 'gov.br - Acesse sua conta - Google Chrome'
         $deadline = (Get-Date).AddSeconds(35)
         $root = [System.Windows.Automation.AutomationElement]::RootElement
         $dialog = $null
@@ -240,73 +248,267 @@ public class Win32Focus {{
             throw 'Janela de selecao de certificado nao apareceu.'
         }}
 
-        $handle = [IntPtr]$dialog.Current.NativeWindowHandle
-        [Win32Focus]::ShowWindow($handle, 5) | Out-Null
-        [Win32Focus]::SetForegroundWindow($handle) | Out-Null
-        Start-Sleep -Milliseconds 250
-
-        $ws = New-Object -ComObject WScript.Shell
-        $mouseDown = 0x0002
-        $mouseUp = 0x0004
-
-        function Click-Point([int]$x, [int]$y) {{
-            [Win32Focus]::SetCursorPos($x, $y) | Out-Null
-            Start-Sleep -Milliseconds 80
-            [Win32Focus]::mouse_event($mouseDown, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 50
-            [Win32Focus]::mouse_event($mouseUp, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 120
-        }}
-
-        $chromeCond = New-Object System.Windows.Automation.PropertyCondition(
-            [System.Windows.Automation.AutomationElement]::NameProperty,
-            $chromeTitle
-        )
-        $chromeWin = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $chromeCond)
-        if (-not $chromeWin) {{
-            throw 'Janela principal do Chrome nao encontrada.'
-        }}
-        $chromeHandle = [IntPtr]$chromeWin.Current.NativeWindowHandle
-        [Win32Focus]::ShowWindow($chromeHandle, 5) | Out-Null
-        [Win32Focus]::SetForegroundWindow($chromeHandle) | Out-Null
-        Start-Sleep -Milliseconds 200
-        $chromeRect = $chromeWin.Current.BoundingRectangle
-        $clickX = [int]($chromeRect.Left + ($chromeRect.Width * 0.48))
-        $clickY = [int]($chromeRect.Top + ($chromeRect.Height * 0.31))
-
-        for ($try = 0; $try -lt 4; $try++) {{
-            Click-Point $clickX $clickY
-            $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
-            if ($focused -and $focused.Current.ControlType.ProgrammaticName -eq 'ControlType.DataItem') {{
-                break
-            }}
-            Start-Sleep -Milliseconds 180
-        }}
-
-        for ($i = 0; $i -lt 120; $i++) {{
-            $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
-            $focusName = ''
-            if ($focused) {{
-                $focusName = [string]$focused.Current.Name
-            }}
-            $matched = $false
+        function Matches-Target([string]$name, $targets) {{
+            if (-not $name) {{ return $false }}
             foreach ($target in $targets) {{
                 if (-not $target) {{ continue }}
-                if ($focusName -eq $target -or $target.Contains($focusName) -or $focusName.Contains($target)) {{
-                    $matched = $true
-                    break
+                if ($name -eq $target -or $target.Contains($name) -or $name.Contains($target)) {{
+                    return $true
                 }}
             }}
-            if ($matched) {{
-                $ws.SendKeys('~')
-                exit 0
-            }}
-
-            $ws.SendKeys('{{DOWN}}')
-            Start-Sleep -Milliseconds 160
+            return $false
         }}
 
-        throw 'Nao foi possivel selecionar o certificado alvo na janela nativa.'
+        function Get-CertificateGrid($dialog) {{
+            $elements = $dialog.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition
+            )
+            foreach ($element in $elements) {{
+                $controlType = $element.Current.ControlType.ProgrammaticName
+                if ($controlType -eq 'ControlType.DataGrid') {{
+                    return $element
+                }}
+            }}
+            return $null
+        }}
+
+        function Get-RowData($gridPattern, [int]$rowIndex) {{
+            $values = @()
+            $firstCell = $null
+            for ($column = 0; $column -lt $gridPattern.Current.ColumnCount; $column++) {{
+                try {{
+                    $cell = $gridPattern.GetItem($rowIndex, $column)
+                    if (-not $firstCell) {{ $firstCell = $cell }}
+                    $values += ([string]$cell.Current.Name)
+                }} catch {{
+                    $values += ''
+                }}
+            }}
+            return [PSCustomObject]@{{
+                FirstCell = $firstCell
+                Values = $values
+                Text = ($values -join ' | ')
+            }}
+        }}
+
+        function Get-OkButton($dialog) {{
+            $okCondition = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::NameProperty,
+                'OK'
+            )
+            $button = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $okCondition)
+            if ($button) {{
+                return $button
+            }}
+            $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+            for ($i = 0; $i -lt $windows.Count; $i++) {{
+                $window = $windows.Item($i)
+                if ([string]$window.Current.Name -eq $dialogTitle) {{
+                    $button = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $okCondition)
+                    if ($button) {{
+                        return $button
+                    }}
+                }}
+            }}
+            return $null
+        }}
+
+        function Try-InvokeElement($element) {{
+            if (-not $element) {{ return $false }}
+            foreach ($pattern in $element.GetSupportedPatterns()) {{
+                try {{
+                    $programmatic = [string]$pattern.ProgrammaticName
+                    if ($programmatic -eq 'ScrollItemPatternIdentifiers.Pattern') {{
+                        $scrollItem = $element.GetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern)
+                        $scrollItem.ScrollIntoView()
+                    }}
+                    if ($programmatic -eq 'SelectionItemPatternIdentifiers.Pattern') {{
+                        $selectionItem = $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+                        $selectionItem.Select()
+                        return $true
+                    }}
+                    if ($programmatic -eq 'InvokePatternIdentifiers.Pattern') {{
+                        $invoke = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+                        $invoke.Invoke()
+                        return $true
+                    }}
+                    if ($programmatic -eq 'LegacyIAccessiblePatternIdentifiers.Pattern') {{
+                        $legacy = $element.GetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern)
+                        $legacy.DoDefaultAction()
+                        return $true
+                    }}
+                }} catch {{}}
+            }}
+            try {{
+                $element.SetFocus()
+                return $true
+            }} catch {{
+                return $false
+            }}
+        }}
+
+        function Try-ClickOk($button) {{
+            if (-not $button) {{ return $false }}
+            foreach ($pattern in $button.GetSupportedPatterns()) {{
+                try {{
+                    $programmatic = [string]$pattern.ProgrammaticName
+                    if ($programmatic -eq 'InvokePatternIdentifiers.Pattern') {{
+                        $invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+                        $invoke.Invoke()
+                        return $true
+                    }}
+                    if ($programmatic -eq 'LegacyIAccessiblePatternIdentifiers.Pattern') {{
+                        $legacy = $button.GetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern)
+                        $legacy.DoDefaultAction()
+                        return $true
+                    }}
+                }} catch {{}}
+            }}
+            return $false
+        }}
+
+        function Wait-DialogClosed() {{
+            $closeDeadline = (Get-Date).AddSeconds(8)
+            while ((Get-Date) -lt $closeDeadline) {{
+                $condition = New-Object System.Windows.Automation.PropertyCondition(
+                    [System.Windows.Automation.AutomationElement]::NameProperty,
+                    $dialogTitle
+                )
+                $stillOpen = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+                if (-not $stillOpen) {{
+                    return $true
+                }}
+                Start-Sleep -Milliseconds 150
+            }}
+            return $false
+        }}
+
+        function Get-FocusedCertificateName() {{
+            try {{
+                $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+                if ($focused) {{
+                    return [string]$focused.Current.Name
+                }}
+            }} catch {{}}
+            return ''
+        }}
+
+        function Try-DirectUiAutomation($dialog) {{
+            $grid = Get-CertificateGrid $dialog
+            if (-not $grid) {{
+                return $false
+            }}
+
+            $okButton = Get-OkButton $dialog
+            if (-not $okButton) {{
+                return $false
+            }}
+
+            try {{
+                $gridPattern = $grid.GetCurrentPattern([System.Windows.Automation.GridPattern]::Pattern)
+            }} catch {{
+                return $false
+            }}
+
+            $matchedRow = $null
+            for ($row = 0; $row -lt $gridPattern.Current.RowCount; $row++) {{
+                try {{
+                    $rowData = Get-RowData $gridPattern $row
+                    if (Matches-Target $rowData.Text $targets) {{
+                        $matchedRow = $rowData
+                        break
+                    }}
+                }} catch {{}}
+            }}
+
+            if (-not $matchedRow -or -not $matchedRow.FirstCell) {{
+                return $false
+            }}
+
+            if (-not (Try-InvokeElement $matchedRow.FirstCell)) {{
+                return $false
+            }}
+            Start-Sleep -Milliseconds 250
+
+            $focusedName = Get-FocusedCertificateName
+            if (-not (Matches-Target $focusedName $targets)) {{
+                return $false
+            }}
+
+            if (Wait-DialogClosed) {{
+                return $true
+            }}
+            return $false
+        }}
+
+        function Fallback-GlobalSelection() {{
+            $chromeCond = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::NameProperty,
+                'gov.br - Acesse sua conta - Google Chrome'
+            )
+            $chromeWindow = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $chromeCond)
+            if (-not $chromeWindow) {{
+                throw 'Janela principal do Chrome nao encontrada para o fallback do certificado.'
+            }}
+
+            $chromeHandle = [IntPtr]$chromeWindow.Current.NativeWindowHandle
+            if ($chromeHandle -eq [IntPtr]::Zero) {{
+                throw 'A janela principal do Chrome nao possui handle valido.'
+            }}
+
+            $previousWindow = [NativeCertUi]::GetForegroundWindow()
+            $previousCursor = New-Object POINT
+            [NativeCertUi]::GetCursorPos([ref]$previousCursor) | Out-Null
+
+            try {{
+                [NativeCertUi]::ShowWindow($chromeHandle, 5) | Out-Null
+                [NativeCertUi]::SetForegroundWindow($chromeHandle) | Out-Null
+                Start-Sleep -Milliseconds 150
+
+                $rect = $chromeWindow.Current.BoundingRectangle
+                $clickX = [int]($rect.Left + ($rect.Width * 0.48))
+                $clickY = [int]($rect.Top + ($rect.Height * 0.31))
+
+                [NativeCertUi]::SetCursorPos($clickX, $clickY) | Out-Null
+                Start-Sleep -Milliseconds 80
+                [NativeCertUi]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 40
+                [NativeCertUi]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 180
+
+                $wsh = New-Object -ComObject WScript.Shell
+                for ($step = 0; $step -lt 30; $step++) {{
+                    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+                    if ($focused) {{
+                        $focusedName = [string]$focused.Current.Name
+                        if (Matches-Target $focusedName $targets) {{
+                            $wsh.SendKeys('~')
+                            if (Wait-DialogClosed) {{
+                                return $true
+                            }}
+                            throw ('O seletor permaneceu aberto apos confirmar o certificado: ' + $focusedName)
+                        }}
+                    }}
+                    $wsh.SendKeys('{{DOWN}}')
+                    Start-Sleep -Milliseconds 180
+                }}
+
+                throw 'Nao foi possivel alcancar o certificado alvo navegando pela lista nativa.'
+            }} finally {{
+                [NativeCertUi]::SetCursorPos($previousCursor.X, $previousCursor.Y) | Out-Null
+                if ($previousWindow -ne [IntPtr]::Zero) {{
+                    [NativeCertUi]::SetForegroundWindow($previousWindow) | Out-Null
+                }}
+            }}
+        }}
+
+        if (Fallback-GlobalSelection) {{
+            exit 0
+        }}
+
+        exit 0
+
         """
     )
     run_powershell(script, timeout_ms=45000)
@@ -338,13 +540,123 @@ def wait_for_certificate_dialog(timeout_seconds: int = 10) -> bool:
     return run_powershell(script, timeout_ms=(timeout_seconds + 5) * 1000).strip() == "FOUND"
 
 
+def authenticated_page_matches(candidate_page, cert_subject: str) -> bool:
+    try:
+        current_url = candidate_page.url
+        body_text = candidate_page.locator("body").inner_text(timeout=5000)
+    except Exception:
+        return False
+
+    if "/ecac/" not in current_url and "Titular (Acesso GOV.BR por Certificado):" not in body_text:
+        return False
+
+    for candidate in build_selector_candidates(cert_subject):
+        short_name = candidate.split(",")[0].replace("CN=", "").strip()
+        if short_name and short_name in body_text:
+            return True
+    return False
+
+
+def click_access_gov_br(page, timeout_ms: int) -> None:
+    access_button = page.get_by_role("button", name="Acesso Gov BR")
+    deadline = time.time() + (timeout_ms / 1000)
+    last_error: Exception | None = None
+
+    while time.time() < deadline:
+        try:
+            access_button.wait_for(state="visible", timeout=5000)
+        except Exception as exc:
+            last_error = exc
+            try:
+                page.reload(wait_until="domcontentloaded")
+            except Exception:
+                pass
+            time.sleep(0.5)
+            continue
+
+        previous_url = page.url
+        clicked = False
+        for mode in ("normal", "forced", "dom", "js"):
+            try:
+                if mode == "normal":
+                    access_button.click(timeout=5000)
+                elif mode == "forced":
+                    access_button.click(timeout=5000, force=True)
+                elif mode == "dom":
+                    access_button.dispatch_event("click")
+                else:
+                    page.evaluate(
+                        """
+                        () => {
+                          const candidates = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'));
+                          const target = candidates.find((element) => (element.innerText || element.value || '').includes('Acesso Gov BR'));
+                          if (!target) {
+                            throw new Error('Botao Acesso Gov BR nao encontrado no DOM.');
+                          }
+                          target.click();
+                        }
+                        """
+                    )
+                clicked = True
+            except Exception as exc:
+                last_error = exc
+                continue
+
+            navigation_deadline = time.time() + 8
+            while time.time() < navigation_deadline:
+                current_url = page.url
+                if "sso.acesso.gov.br" in current_url or current_url != previous_url:
+                    return
+                try:
+                    body_text = page.locator("body").inner_text(timeout=1000)
+                    if "Seu certificado digital" in body_text or "Identifique-se no gov.br com:" in body_text:
+                        return
+                except Exception:
+                    pass
+                time.sleep(0.25)
+
+            if clicked:
+                break
+
+        try:
+            page.reload(wait_until="domcontentloaded")
+        except Exception:
+            pass
+        time.sleep(0.75)
+
+    if last_error:
+        raise RuntimeError(f"Falha ao acionar o botao Acesso Gov BR. Ultimo erro: {last_error}")
+    raise RuntimeError("Falha ao acionar o botao Acesso Gov BR.")
+
+
 def login_ecac(page, cert_subject: str, timeout_ms: int) -> None:
     page.set_default_timeout(timeout_ms)
     page.context.set_default_navigation_timeout(timeout_ms)
     page.goto("https://cav.receita.fazenda.gov.br/autenticacao/login", wait_until="domcontentloaded")
-    page.get_by_role("button", name="Acesso Gov BR").click()
-    cert_button = page.get_by_role("button", name="Seu certificado digital", exact=True)
-    cert_button.wait_for(timeout=timeout_ms)
+
+    for candidate_page in page.context.pages:
+        if authenticated_page_matches(candidate_page, cert_subject):
+            return
+
+    click_access_gov_br(page, timeout_ms)
+    cert_button = None
+
+    wait_deadline = time.time() + (timeout_ms / 1000)
+    while time.time() < wait_deadline:
+        for candidate_page in page.context.pages:
+            if authenticated_page_matches(candidate_page, cert_subject):
+                return
+        try:
+            possible_button = page.get_by_role("button", name="Seu certificado digital", exact=True)
+            if possible_button.is_visible(timeout=1000):
+                cert_button = possible_button
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    if cert_button is None:
+        raise RuntimeError("Nem a tela do gov.br nem o e-CAC autenticado apareceram dentro do tempo limite.")
 
     while True:
         cert_button.click(timeout=10000, no_wait_after=True)
@@ -360,18 +672,8 @@ def login_ecac(page, cert_subject: str, timeout_ms: int) -> None:
     deadline = time.time() + (timeout_ms / 1000)
     while time.time() < deadline:
         for candidate in page.context.pages:
-            try:
-                current_url = candidate.url
-                body_text = candidate.locator("body").inner_text(timeout=10000)
-                looks_like_ecac = (
-                    "/ecac/" in current_url
-                    or "Titular (Acesso GOV.BR por Certificado):" in body_text
-                    or "Sair com Segurança" in body_text
-                )
-                if looks_like_ecac and cert_subject.split(":")[0] in body_text:
-                    return
-            except Exception:
-                continue
+            if authenticated_page_matches(candidate, cert_subject):
+                return
         time.sleep(1.0)
 
     raise RuntimeError("O e-CAC nao confirmou o titular esperado dentro do tempo limite.")
