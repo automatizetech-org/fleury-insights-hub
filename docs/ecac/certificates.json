@@ -1,0 +1,8 @@
+[
+  {
+    "name": "prime",
+    "subject": "CN=PRIMEON HUB DE NEGOCIOS LTDA:27233655000166, OU=videoconferencia, OU=37743132000113, OU=RFB e-CNPJ A1, OU=Secretaria da Receita Federal do Brasil - RFB, L=JARAGUA, S=GO, O=ICP-Brasil, C=BR",
+    "issuer": "CN=AC SAFEWEB RFB v5, OU=Secretaria da Receita Federal do Brasil - RFB, O=ICP-Brasil, C=BR",
+    "thumbprint": "880DF49B1014A90DBA4F45D8FF5F7D037A8A056A"
+  }
+]
