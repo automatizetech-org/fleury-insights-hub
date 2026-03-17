@@ -38,6 +38,113 @@ function buildMonthsBetween(dateFrom: string, dateTo: string) {
   return months
 }
 
+type ServiceCodeStat = { code: string; description: string; total_value: number }
+
+function normalizeCompanyIds(companyIds: string[] | null) {
+  if (!companyIds?.length) return []
+  return [...new Set(
+    companyIds
+      .map((id) => String(id || "").trim().toLowerCase())
+      .filter(Boolean)
+  )]
+}
+
+function parseMoneyLike(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0
+  if (typeof value !== "string") return 0
+  const raw = value.trim()
+  if (!raw) return 0
+  const normalized = raw.includes(",") && raw.includes(".")
+    ? raw.replace(/\./g, "").replace(",", ".")
+    : raw.includes(",")
+      ? raw.replace(",", ".")
+      : raw
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeServiceCodes(input: unknown): ServiceCodeStat[] {
+  if (!input) return []
+
+  let list: unknown[] = []
+  if (Array.isArray(input)) {
+    list = input
+  } else if (typeof input === "string") {
+    try {
+      return normalizeServiceCodes(JSON.parse(input))
+    } catch {
+      return []
+    }
+  } else if (typeof input === "object") {
+    const record = input as Record<string, unknown>
+    if (Array.isArray(record.service_codes)) {
+      list = record.service_codes
+    } else {
+      list = Object.values(record)
+    }
+  }
+
+  return list
+    .map((item) => {
+      if (!item || typeof item !== "object") return null
+      const row = item as Record<string, unknown>
+      const code = String(
+        row.code ??
+        row.codigo ??
+        row.service_code ??
+        row.ctribnac ??
+        row.cTribNac ??
+        ""
+      ).trim()
+      const description = String(
+        row.description ??
+        row.descricao ??
+        row.label ??
+        row.name ??
+        row.xTribNac ??
+        row.xtribnac ??
+        ""
+      ).trim()
+      const totalValue = parseMoneyLike(
+        row.total_value ??
+        row.totalValue ??
+        row.valor_total ??
+        row.valor ??
+        row.value ??
+        row.amount ??
+        row.total
+      )
+      if (!code && !description) return null
+      return { code, description, total_value: totalValue }
+    })
+    .filter((item): item is ServiceCodeStat => Boolean(item))
+}
+
+function mergeServiceCodeMaps(
+  target: Map<string, ServiceCodeStat>,
+  codes: ServiceCodeStat[]
+) {
+  for (const code of codes) {
+    const key = `${code.code}|${code.description}`
+    const existing = target.get(key)
+    if (existing) {
+      existing.total_value += code.total_value
+    } else {
+      target.set(key, { ...code })
+    }
+  }
+}
+
+function mapToSortedServiceCodes(index: Map<string, ServiceCodeStat>) {
+  return [...index.values()]
+    .filter((x) => x.code || x.description)
+    .sort((a, b) => b.total_value - a.total_value)
+}
+
+function sumServiceCodes(codes: ServiceCodeStat[]) {
+  return codes.reduce((sum, item) => sum + parseMoneyLike(item.total_value), 0)
+}
+
 export async function getDashboardCounts(companyIds: string[] | null) {
   const filterByCompany = companyIds && companyIds.length > 0
   const companyFilter = filterByCompany ? companyIds : undefined
@@ -258,46 +365,41 @@ export async function getFiscalSummary(companyIds: string[] | null, period?: str
 /** Resumo NFS: totais e ranking de códigos de serviço (nfs_stats, preenchido pelo robô). period = YYYY-MM. */
 export async function getNfsStats(companyIds: string[] | null, period?: string) {
   const periodFilter = period && /^\d{4}-\d{2}$/.test(period) ? period : null
+  const normalizedCompanyIds = normalizeCompanyIds(companyIds)
   const now = new Date()
   const defPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
   const p = periodFilter || defPeriod
   let q = supabase
     .from("nfs_stats")
-    .select("qty_emitidas, qty_recebidas, valor_emitidas, valor_recebidas, service_codes")
+    .select("company_id, qty_emitidas, qty_recebidas, valor_emitidas, valor_recebidas, service_codes")
     .eq("period", p)
-  if (companyIds && companyIds.length > 0) {
-    q = q.in("company_id", companyIds)
+  if (normalizedCompanyIds.length === 1) {
+    q = q.eq("company_id", normalizedCompanyIds[0])
+  } else if (normalizedCompanyIds.length > 1) {
+    q = q.in("company_id", normalizedCompanyIds)
   }
   const { data, error } = await q
   if (error) throw error
-  const rows = data ?? []
+  const rows = (data ?? []).filter((row) => {
+    if (normalizedCompanyIds.length === 0) return true
+    return normalizedCompanyIds.includes(String(row.company_id || "").trim().toLowerCase())
+  })
   let totalQty = 0
   let valorEmitidas = 0
   let valorRecebidas = 0
-  const codeIndex = new Map<string, { code: string; description: string; total_value: number }>()
+  const codeIndex = new Map<string, ServiceCodeStat>()
   for (const r of rows) {
-    totalQty += Number(r.qty_emitidas ?? 0) + Number(r.qty_recebidas ?? 0)
-    valorEmitidas += Number(r.valor_emitidas ?? 0)
-    valorRecebidas += Number(r.valor_recebidas ?? 0)
-    const codes = (r.service_codes as { code?: string; description?: string; total_value?: number }[]) ?? []
-    for (const c of codes) {
-      const key = `${c.code ?? ""}|${c.description ?? ""}`
-      const existing = codeIndex.get(key)
-      const val = Number(c.total_value ?? 0)
-      if (existing) {
-        existing.total_value += val
-      } else {
-        codeIndex.set(key, {
-          code: String(c.code ?? ""),
-          description: String(c.description ?? ""),
-          total_value: val,
-        })
-      }
+    totalQty += parseMoneyLike(r.qty_emitidas) + parseMoneyLike(r.qty_recebidas)
+    const codes = normalizeServiceCodes(r.service_codes)
+    valorEmitidas += parseMoneyLike(r.valor_emitidas)
+    valorRecebidas += parseMoneyLike(r.valor_recebidas)
+    mergeServiceCodeMaps(codeIndex, codes)
+    const rankingTotal = sumServiceCodes(codes)
+    if (parseMoneyLike(r.valor_emitidas) === 0 && parseMoneyLike(r.valor_recebidas) === 0 && rankingTotal > 0) {
+      valorEmitidas += rankingTotal
     }
   }
-  const serviceCodesRanking = [...codeIndex.values()]
-    .filter((x) => x.code || x.description)
-    .sort((a, b) => b.total_value - a.total_value)
+  const serviceCodesRanking = mapToSortedServiceCodes(codeIndex)
   return {
     period: p,
     totalQty,
@@ -309,6 +411,7 @@ export async function getNfsStats(companyIds: string[] | null, period?: string) 
 
 /** Agrega nfs_stats para todos os meses entre dateFrom e dateTo (YYYY-MM-DD). */
 export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFrom: string, dateTo: string) {
+  const normalizedCompanyIds = normalizeCompanyIds(companyIds)
   const from = dateFrom.slice(0, 7)
   const to = dateTo.slice(0, 7)
   if (from > to) return getNfsStatsByDateRange(companyIds, dateTo, dateFrom)
@@ -330,79 +433,41 @@ export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFr
   }
   let q = supabase
     .from("nfs_stats")
-    .select("qty_emitidas, qty_recebidas, valor_emitidas, valor_recebidas, service_codes, service_codes_emitidas, service_codes_recebidas")
+    .select("company_id, qty_emitidas, qty_recebidas, valor_emitidas, valor_recebidas, service_codes, service_codes_emitidas, service_codes_recebidas")
     .in("period", months)
-  if (companyIds && companyIds.length > 0) {
-    q = q.in("company_id", companyIds)
+  if (normalizedCompanyIds.length === 1) {
+    q = q.eq("company_id", normalizedCompanyIds[0])
+  } else if (normalizedCompanyIds.length > 1) {
+    q = q.in("company_id", normalizedCompanyIds)
   }
   const { data, error } = await q
   if (error) throw error
-  const rows = data ?? []
+  const rows = (data ?? []).filter((row) => {
+    if (normalizedCompanyIds.length === 0) return true
+    return normalizedCompanyIds.includes(String(row.company_id || "").trim().toLowerCase())
+  })
   let totalQty = 0
   let valorEmitidas = 0
   let valorRecebidas = 0
-  const codeIndex = new Map<string, { code: string; description: string; total_value: number }>()
-  const codeIndexEmitidas = new Map<string, { code: string; description: string; total_value: number }>()
-  const codeIndexRecebidas = new Map<string, { code: string; description: string; total_value: number }>()
+  const codeIndex = new Map<string, ServiceCodeStat>()
+  const codeIndexEmitidas = new Map<string, ServiceCodeStat>()
+  const codeIndexRecebidas = new Map<string, ServiceCodeStat>()
   for (const r of rows) {
-    totalQty += Number(r.qty_emitidas ?? 0) + Number(r.qty_recebidas ?? 0)
-    valorEmitidas += Number(r.valor_emitidas ?? 0)
-    valorRecebidas += Number(r.valor_recebidas ?? 0)
-    const codes = (r.service_codes as { code?: string; description?: string; total_value?: number }[]) ?? []
-    for (const c of codes) {
-      const key = `${c.code ?? ""}|${c.description ?? ""}`
-      const existing = codeIndex.get(key)
-      const val = Number(c.total_value ?? 0)
-      if (existing) {
-        existing.total_value += val
-      } else {
-        codeIndex.set(key, {
-          code: String(c.code ?? ""),
-          description: String(c.description ?? ""),
-          total_value: val,
-        })
-      }
-    }
-    const codesEmitidas = (r.service_codes_emitidas as { code?: string; description?: string; total_value?: number }[] | null) ?? []
-    for (const c of codesEmitidas) {
-      const key = `${c.code ?? ""}|${c.description ?? ""}`
-      const existing = codeIndexEmitidas.get(key)
-      const val = Number(c.total_value ?? 0)
-      if (existing) {
-        existing.total_value += val
-      } else {
-        codeIndexEmitidas.set(key, {
-          code: String(c.code ?? ""),
-          description: String(c.description ?? ""),
-          total_value: val,
-        })
-      }
-    }
-    const codesRecebidas = (r.service_codes_recebidas as { code?: string; description?: string; total_value?: number }[] | null) ?? []
-    for (const c of codesRecebidas) {
-      const key = `${c.code ?? ""}|${c.description ?? ""}`
-      const existing = codeIndexRecebidas.get(key)
-      const val = Number(c.total_value ?? 0)
-      if (existing) {
-        existing.total_value += val
-      } else {
-        codeIndexRecebidas.set(key, {
-          code: String(c.code ?? ""),
-          description: String(c.description ?? ""),
-          total_value: val,
-        })
-      }
-    }
+    totalQty += parseMoneyLike(r.qty_emitidas) + parseMoneyLike(r.qty_recebidas)
+    const codes = normalizeServiceCodes(r.service_codes)
+    const codesEmitidas = normalizeServiceCodes(r.service_codes_emitidas)
+    const codesRecebidas = normalizeServiceCodes(r.service_codes_recebidas)
+    const valorEmitidasRaw = parseMoneyLike(r.valor_emitidas)
+    const valorRecebidasRaw = parseMoneyLike(r.valor_recebidas)
+    valorEmitidas += valorEmitidasRaw > 0 ? valorEmitidasRaw : sumServiceCodes(codesEmitidas)
+    valorRecebidas += valorRecebidasRaw > 0 ? valorRecebidasRaw : sumServiceCodes(codesRecebidas)
+    mergeServiceCodeMaps(codeIndex, codes)
+    mergeServiceCodeMaps(codeIndexEmitidas, codesEmitidas)
+    mergeServiceCodeMaps(codeIndexRecebidas, codesRecebidas)
   }
-  const serviceCodesRanking = [...codeIndex.values()]
-    .filter((x) => x.code || x.description)
-    .sort((a, b) => b.total_value - a.total_value)
-  const serviceCodesRankingPrestadas = [...codeIndexEmitidas.values()]
-    .filter((x) => x.code || x.description)
-    .sort((a, b) => b.total_value - a.total_value)
-  const serviceCodesRankingTomadas = [...codeIndexRecebidas.values()]
-    .filter((x) => x.code || x.description)
-    .sort((a, b) => b.total_value - a.total_value)
+  const serviceCodesRanking = mapToSortedServiceCodes(codeIndex)
+  const serviceCodesRankingPrestadas = mapToSortedServiceCodes(codeIndexEmitidas)
+  const serviceCodesRankingTomadas = mapToSortedServiceCodes(codeIndexRecebidas)
   return {
     period: months.length === 1 ? months[0] : `${months[0]} a ${months[months.length - 1]}`,
     totalQty,

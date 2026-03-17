@@ -1942,6 +1942,51 @@ class AutomationThread(QThread):
         except Exception:
             return context.new_page()
 
+    def _cleanup_profile_runtime_files(self, profile_dir: Path) -> None:
+        runtime_names = (
+            "DevToolsActivePort",
+            "SingletonCookie",
+            "SingletonLock",
+            "SingletonSocket",
+            "lockfile",
+        )
+        for name in runtime_names:
+            for target in (profile_dir / name, profile_dir / "Default" / name):
+                try:
+                    if target.exists():
+                        target.unlink()
+                except Exception:
+                    pass
+
+    def _kill_stale_chrome_processes(self, chrome_exe: str, profile_dir: Path, port: int) -> None:
+        chrome_hint = os.path.normcase(str(chrome_exe or "")).lower()
+        profile_hint = os.path.normcase(str(profile_dir.resolve())).lower()
+        ps = rf"""
+$chromeExe = '{chrome_hint}'
+$profileDir = '{profile_hint}'
+$portArg = '--remote-debugging-port={int(port)}'
+Get-CimInstance Win32_Process | Where-Object {{
+    $_.Name -match 'chrome' -and $_.CommandLine
+}} | ForEach-Object {{
+    $cmd = ($_.CommandLine | Out-String).ToLower()
+    if (($chromeExe -and $cmd.Contains($chromeExe)) -or ($profileDir -and $cmd.Contains($profileDir)) -or $cmd.Contains($portArg.ToLower())) {{
+        try {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop }} catch {{ }}
+    }}
+}}
+"""
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                timeout=8,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            pass
+
     def _start_playwright_cdp(self, max_wait: int = 60):
         self.log.emit("🌐 🚀 Preparando ambiente de automação (Playwright + Chrome)...")
 
@@ -1992,7 +2037,10 @@ class AutomationThread(QThread):
             except Exception:
                 return False
 
+        self._cleanup_profile_runtime_files(profile_dir)
         if not _cdp_ready():
+            self._kill_stale_chrome_processes(exe, profile_dir, port)
+            self._cleanup_profile_runtime_files(profile_dir)
             chrome_args = [
                 f"--remote-debugging-port={port}",
                 "--remote-debugging-address=127.0.0.1",
@@ -2070,6 +2118,11 @@ class AutomationThread(QThread):
             page = None
         if not page:
             page = ctx.new_page()
+        try:
+            page = self._ensure_single_tab(ctx)
+            page.goto("about:blank", wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            pass
 
         def minimize_if_needed(target_page=None, log_errors: bool = False):
             pg = target_page or page
@@ -3046,6 +3099,11 @@ class AutomationThread(QThread):
             try:
                 if proc and proc.poll() is None:
                     proc.kill()
+            except Exception:
+                pass
+            try:
+                profile_dir = PROFILE_DIR if isinstance(PROFILE_DIR, Path) else Path(PROFILE_DIR)
+                self._cleanup_profile_runtime_files(profile_dir)
             except Exception:
                 pass
             self._chrome_proc = None

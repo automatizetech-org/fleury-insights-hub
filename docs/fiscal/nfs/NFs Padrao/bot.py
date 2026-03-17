@@ -1707,7 +1707,6 @@ def upsert_nfs_stats(
     summary: Dict[str, Any],
 ) -> None:
     """Envia totais e ranking de códigos de serviço NFS para o Supabase (nfs_stats)."""
-    company_ids = job.get("company_ids") or []
     companies_summary = summary.get("companies") or []
     period_start_raw = job.get("period_start")
     if period_start_raw is None:
@@ -1721,17 +1720,15 @@ def upsert_nfs_stats(
     period = period_start[:7]
     if not re.match(r"^\d{4}-\d{2}$", period):
         return
-    if not company_ids:
-        return
     try:
         client = create_client(supabase_url.strip(), supabase_anon_key.strip())
     except Exception:
         raise
     rows: List[Dict[str, Any]] = []
-    for i, company_id in enumerate(company_ids):
-        if i >= len(companies_summary):
-            break
-        comp = companies_summary[i]
+    for comp in companies_summary:
+        company_id = str(comp.get("company_id") or "").strip()
+        if not company_id:
+            continue
         emitidas = comp.get("emitidas") or {}
         recebidas = comp.get("recebidas") or {}
         qty_emitidas = int(emitidas.get("downloaded") or 0)
@@ -3766,6 +3763,7 @@ class PathDialog(QDialog):
 class Company:
     name: str
     doc: str
+    company_id: str = ""
     password: str = ""
     auth_mode: str = AUTH_PASSWORD
     cert_path: Optional[Path] = None
@@ -3922,6 +3920,7 @@ class DownloadThread(QThread):
 
     def _init_company_summary(self, company: Company, folder_label: str) -> Dict[str, Any]:
         return {
+            "company_id": company.company_id,
             "name": company.name,
             "doc": format_document(company.doc),
             "folder": folder_label,
@@ -5412,6 +5411,7 @@ class MainWindow(QMainWindow):
                     Company(
                         name=name_norm,
                         doc=doc_digits,
+                        company_id=str(rec.get("id") or ""),
                         auth_mode=AUTH_CERTIFICATE,
                         cert_path=Path(cert_path_txt) if cert_path_txt else None,
                         cert_password=cert_pass,
@@ -5427,6 +5427,7 @@ class MainWindow(QMainWindow):
                     Company(
                         name=name_norm,
                         doc=doc_digits,
+                        company_id=str(rec.get("id") or ""),
                         password=password,
                         auth_mode=AUTH_PASSWORD,
                     )
@@ -5718,6 +5719,7 @@ class MainWindow(QMainWindow):
                     Company(
                         name=name_norm,
                         doc=doc_digits,
+                        company_id=str(rec.get("id") or ""),
                         auth_mode=AUTH_CERTIFICATE,
                         cert_password=cert_password,
                         cert_data=cert_data,
@@ -5733,6 +5735,7 @@ class MainWindow(QMainWindow):
                     Company(
                         name=name_norm,
                         doc=doc_digits,
+                        company_id=str(rec.get("id") or ""),
                         password=password,
                         auth_mode=AUTH_PASSWORD,
                     )
