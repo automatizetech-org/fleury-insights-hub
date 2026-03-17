@@ -16,7 +16,6 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import os from "os";
-import { randomBytes } from "crypto";
 import archiver from "archiver";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { createClient } from "@supabase/supabase-js";
@@ -238,38 +237,17 @@ app.post("/api/fiscal-documents/download-zip", async (req, res) => {
     usedNames.add(n);
     return n;
   };
-  const tempPath = path.join(os.tmpdir(), `fiscal-zip-${Date.now()}-${randomBytes(4).toString("hex")}.zip`);
-  const out = fs.createWriteStream(tempPath);
-  const archive = archiver("zip", { zlib: { level: 9 } });
-  const cleanup = () => {
-    try {
-      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-    } catch (_) {}
-  };
+  res.setHeader("Content-Type", "application/zip");
+  res.setHeader("Content-Disposition", 'attachment; filename="documentos-fiscais.zip"');
+  const archive = archiver("zip", { zlib: { level: 0 } });
   archive.on("error", (err) => {
-    cleanup();
     if (!res.headersSent) res.status(500).json({ error: err.message });
   });
-  out.on("error", (err) => {
-    cleanup();
-    if (!res.headersSent) res.status(500).json({ error: err.message });
-  });
-  archive.pipe(out);
+  archive.pipe(res);
   for (const { fullPath, name } of toAdd) {
     archive.file(fullPath, { name: makeUniqueName(name) });
   }
   archive.finalize();
-  out.on("finish", () => {
-    res.setHeader("Content-Type", "application/zip");
-    res.setHeader("Content-Disposition", 'attachment; filename="documentos-fiscais.zip"');
-    const stream = fs.createReadStream(tempPath);
-    stream.on("error", (err) => {
-      cleanup();
-      if (!res.headersSent) res.status(500).json({ error: err.message });
-    });
-    stream.pipe(res);
-    res.on("finish", () => cleanup());
-  });
 });
 
 /**

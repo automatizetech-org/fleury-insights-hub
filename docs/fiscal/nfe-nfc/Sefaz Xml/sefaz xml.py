@@ -6878,17 +6878,6 @@ def sincronizar_fiscal_documents_nfe_nfc(
                             continue
 
                         result["saved_files"] += 1
-                        existing = _supabase_retry_execute(
-                            lambda doc_type=doc_type, storage_key=storage_key: supabase_client.table("fiscal_documents")
-                            .select("id")
-                            .eq("company_id", company_id)
-                            .eq("type", doc_type)
-                            .eq("chave", storage_key)
-                            .limit(1)
-                            .execute(),
-                            log_fn=log_fn,
-                        )
-
                         payload = {
                             "company_id": company_id,
                             "type": doc_type,
@@ -6899,23 +6888,38 @@ def sincronizar_fiscal_documents_nfe_nfc(
                             "file_path": relative_file_path,
                         }
 
-                        if existing.data and len(existing.data) > 0:
-                            _supabase_retry_execute(
-                                lambda payload=payload, row_id=existing.data[0]["id"]: supabase_client.table("fiscal_documents")
-                                .update(payload)
-                                .eq("id", row_id)
-                                .execute(),
-                                log_fn=log_fn,
-                            )
+                        # Sempre substituir o que já existe: UPDATE por (company_id, file_path); se nenhuma linha afetada, INSERT
+                        upd = _supabase_retry_execute(
+                            lambda p=payload, rfpath=relative_file_path, cid=company_id: supabase_client.table("fiscal_documents")
+                            .update(p)
+                            .eq("company_id", cid)
+                            .eq("file_path", rfpath)
+                            .execute(),
+                            log_fn=log_fn,
+                        )
+                        if upd.data and len(upd.data) > 0:
                             result["updated"] += 1
                         else:
-                            _supabase_retry_execute(
-                                lambda payload=payload: supabase_client.table("fiscal_documents")
-                                .insert(payload)
-                                .execute(),
-                                log_fn=log_fn,
-                            )
-                            result["inserted"] += 1
+                            try:
+                                _supabase_retry_execute(
+                                    lambda p=payload: supabase_client.table("fiscal_documents").insert(p).execute(),
+                                    log_fn=log_fn,
+                                )
+                                result["inserted"] += 1
+                            except Exception as insert_err:
+                                err_str = str(getattr(insert_err, "message", insert_err) or insert_err)
+                                if "23505" in err_str or "duplicate key" in err_str.lower() or "company_file_path_key" in err_str:
+                                    _supabase_retry_execute(
+                                        lambda p=payload, rfpath=relative_file_path, cid=company_id: supabase_client.table("fiscal_documents")
+                                        .update(p)
+                                        .eq("company_id", cid)
+                                        .eq("file_path", rfpath)
+                                        .execute(),
+                                        log_fn=log_fn,
+                                    )
+                                    result["updated"] += 1
+                                else:
+                                    raise
                     except Exception as doc_error:
                         result["errors"] += 1
                         if log_fn:

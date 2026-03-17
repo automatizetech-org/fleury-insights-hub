@@ -125,7 +125,7 @@ export async function downloadServerFilesZip(filePaths: string[], suggestedName 
     })
   );
 
-  const zipBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+  const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
   triggerBlobDownload(zipBlob, `${suggestedName}.zip`);
 }
 
