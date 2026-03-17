@@ -1413,17 +1413,16 @@ def set_small_button_style(button: QPushButton, base: str, hover: str, pressed: 
 
 from supabase import create_client
 
-# >>> PREENCHA COM OS DADOS DO SEU PROJETO SUPABASE (APENAS ANON KEY) <<<
-LICENSE_SUPABASE_URL = "https://visiohdyiqhlfnbnmmsp.supabase.co"
-LICENSE_SUPABASE_ANON_KEY = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpc2lvaGR5aXFobGZuYm5tbXNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1NTE5MDUsImV4cCI6MjA2OTEyNzkwNX0."
-    "n8jWbIgO6MbiFbwBcbIJesEoFjW-Fa2MBJiiCYZ06IM"
-)
+LICENSE_SUPABASE_URL = (os.environ.get("LICENSE_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or "").strip()
+LICENSE_SUPABASE_ANON_KEY = (os.environ.get("LICENSE_SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_ANON_KEY") or "").strip()
 
 # cliente supabase (somente para checar licença)
 def _get_supabase_client():
     # cria o client sempre que for checar (evita objeto global fácil de mexer)
+    if not LICENSE_SUPABASE_URL or not LICENSE_SUPABASE_ANON_KEY:
+        raise RuntimeError(
+            "Supabase (licença) não configurado. Defina LICENSE_SUPABASE_URL e LICENSE_SUPABASE_ANON_KEY (ou SUPABASE_URL/SUPABASE_ANON_KEY)."
+        )
     return create_client(LICENSE_SUPABASE_URL, LICENSE_SUPABASE_ANON_KEY)
 
 # Arquivo local onde salvaremos a licença (dentro da pasta JSON já usada pelo app)

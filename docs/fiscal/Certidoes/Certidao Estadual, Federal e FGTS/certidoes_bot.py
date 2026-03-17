@@ -254,16 +254,15 @@ def button_style(base: str, hover: str, pressed: str, text_color: str = "#E8F4FF
 # =============================================================================
 from supabase import create_client
 
-# >>> Dados do projeto Supabase (igual ao bot ref) <<<
-SUPABASE_URL = "https://visiohdyiqhlfnbnmmsp.supabase.co"
-SUPABASE_ANON_KEY = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpc2lvaGR5aXFobGZuYm5tbXNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1NTE5MDUsImV4cCI6MjA2OTEyNzkwNX0."
-    "n8jWbIgO6MbiFbwBcbIJesEoFjW-Fa2MBJiiCYZ06IM"
-)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "").strip()
 
 
 def _get_supabase_client():
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise RuntimeError(
+            "Supabase não configurado. Defina as variáveis de ambiente SUPABASE_URL e SUPABASE_ANON_KEY."
+        )
     return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 

@@ -14,6 +14,8 @@ dotenv.config({ path: path.join(__dirname, ".env") });
 
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import fs from "fs";
 import os from "os";
 import archiver from "archiver";
@@ -22,6 +24,10 @@ import { createClient } from "@supabase/supabase-js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Necessário quando roda atrás de proxy (ngrok) para rate-limit e IP correto
+// (ngrok envia X-Forwarded-For)
+app.set("trust proxy", 1);
 
 // Base path: Supabase (admin) na inicialização; fallback para .env
 let BASE_PATH = (process.env.BASE_PATH || "C:\\Users\\ROBO\\Documents").trim();
@@ -58,12 +64,86 @@ function findDateRuleByPath(nodes, pathLogical) {
   return node?.date_rule ?? null;
 }
 
-app.use(cors());
+app.disable("x-powered-by");
+
+const allowedOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const corsOptions = {
+  origin: (origin, callback) => {
+    // requests sem Origin (curl/health-check) são permitidas
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.length === 0) return callback(null, false);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(null, false);
+  },
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"],
+};
+app.use(cors(corsOptions));
+
+app.use(
+  helmet({
+    // API JSON — não aplicamos CSP aqui; isso é do frontend (Vercel).
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    limit: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+  })
+);
+
+const heavyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+function requireBearer(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Token ausente" });
+  }
+  return next();
+}
+
+async function validateSupabaseJwt(req, res, next) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) {
+    return res.status(500).json({ error: "Supabase não configurado" });
+  }
+  const token = (req.headers.authorization || "").slice(7);
+  try {
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data?.user?.id) {
+      return res.status(401).json({ error: "Token inválido" });
+    }
+    req.user = data.user;
+    return next();
+  } catch (e) {
+    return res.status(401).json({ error: "Token inválido" });
+  }
+}
 
 // Não consumir o body nas rotas que o proxy repassa ao WhatsApp (senão o backend recebe body vazio e dá 408)
 const whatsappPaths = ["/send", "/status", "/groups", "/qr", "/connect", "/disconnect"];
 app.use((req, res, next) => {
-  const isWhatsApp = whatsappPaths.includes(req.path) || req.path.startsWith("/qr");
+  const p = req.path || "/";
+  const normalized = p.startsWith("/api/") ? p.slice(4) : p; // compat com túnel que expõe apenas /api/*
+  const isWhatsApp = whatsappPaths.includes(normalized) || normalized.startsWith("/qr");
   if (isWhatsApp) return next();
   const limit = process.env.BODY_LIMIT || "25mb";
   express.json({ limit })(req, res, (err) => {
@@ -82,7 +162,7 @@ app.use((req, res, next) => {
  * GET /api/files/list?path=EMPRESAS/Grupo Fleury/NFS
  * Lista arquivos (XML, PDF) de uma pasta. Path é relativo a BASE_PATH.
  */
-app.get("/api/files/list", (req, res) => {
+app.get("/api/files/list", requireBearer, validateSupabaseJwt, (req, res) => {
   const relPath = req.query.path;
   if (!relPath || typeof relPath !== "string") {
     return res.status(400).json({ error: "Query 'path' é obrigatória" });
@@ -112,7 +192,7 @@ app.get("/api/files/list", (req, res) => {
  * GET /api/files/download?path=EMPRESAS/Grupo Fleury/NFS/arquivo.xml
  * Baixa um arquivo por path direto (para testes, sem JWT).
  */
-app.get("/api/files/download", (req, res) => {
+app.get("/api/files/download", requireBearer, validateSupabaseJwt, (req, res) => {
   const inputPath = req.query.path;
   if (!inputPath || typeof inputPath !== "string") {
     return res.status(400).json({ error: "Query 'path' é obrigatória" });
@@ -191,7 +271,7 @@ app.get("/api/fiscal-documents/:id/download", async (req, res) => {
  * envia o ZIP na resposta e apaga o arquivo temporário em seguida.
  * Body: { ids: string[] }. Requer JWT.
  */
-app.post("/api/fiscal-documents/download-zip", async (req, res) => {
+app.post("/api/fiscal-documents/download-zip", requireBearer, validateSupabaseJwt, heavyLimiter, async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Token ausente" });
@@ -312,7 +392,7 @@ app.post("/api/fiscal-documents/download-zip", async (req, res) => {
  * organizando por Empresa/<categoria>/<arquivo>.
  * Body: { company_ids: string[], categories?: string[], filename_suffix?: string }
  */
-app.post("/api/hub-documents/download-zip", async (req, res) => {
+app.post("/api/hub-documents/download-zip", requireBearer, validateSupabaseJwt, heavyLimiter, async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Token ausente" });
@@ -478,7 +558,7 @@ app.post("/api/hub-documents/download-zip", async (req, res) => {
  * Body: { path, company_id, type }
  * Requer Authorization: Bearer <jwt_do_usuario> — usa só anon key; RLS valida permissão.
  */
-app.post("/api/fiscal-sync", async (req, res) => {
+app.post("/api/fiscal-sync", requireBearer, validateSupabaseJwt, heavyLimiter, async (req, res) => {
   const { path: relPath, company_id, type = "NFS" } = req.body || {};
   if (!relPath || !company_id) {
     return res.status(400).json({ error: "path e company_id são obrigatórios" });
@@ -674,7 +754,7 @@ async function runFiscalSyncAll(supabase) {
   return result;
 }
 
-app.post("/api/fiscal-sync-all", async (req, res) => {
+app.post("/api/fiscal-sync-all", requireBearer, validateSupabaseJwt, heavyLimiter, async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Token ausente. Envie Authorization: Bearer <jwt>." });
@@ -698,7 +778,7 @@ app.post("/api/fiscal-sync-all", async (req, res) => {
   }
 });
 
-app.get("/health", (req, res) => res.json({ ok: true, basePath: BASE_PATH }));
+app.get("/health", (req, res) => res.json({ ok: true }));
 
 /**
  * GET /api/folder-structure
@@ -706,7 +786,7 @@ app.get("/health", (req, res) => res.json({ ok: true, basePath: BASE_PATH }));
  * Path na VM: BASE_PATH/EMPRESAS/{nome_empresa}/{segmentos do nó}
  * Leitura pública (anon) para robôs sem JWT.
  */
-app.get("/api/folder-structure", async (req, res) => {
+app.get("/api/folder-structure", requireBearer, validateSupabaseJwt, async (req, res) => {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseKey) {
@@ -731,7 +811,7 @@ app.get("/api/folder-structure", async (req, res) => {
  * Retorna configuração para o robô na VM: base_path (global), segment_path e date_rule do robô.
  * Robôs usam isso em vez de BASE_PATH e ROBOT_SEGMENT_PATH no .env (que passam a ser opcionais).
  */
-app.get("/api/robot-config", async (req, res) => {
+app.get("/api/robot-config", requireBearer, validateSupabaseJwt, async (req, res) => {
   const technicalId = (req.query.technical_id || "").toString().trim();
   if (!technicalId) {
     return res.status(400).json({ error: "technical_id é obrigatório" });
@@ -770,17 +850,35 @@ app.get("/api/robot-config", async (req, res) => {
   }
 });
 
-// Repassa todo o restante para o backend WhatsApp (não mexe no backend; ele roda em outra porta na VM)
+// Proxy WhatsApp (somente rotas explícitas; evita expor catch-all)
 const WHATSAPP_BACKEND_URL = process.env.WHATSAPP_BACKEND_URL || "http://localhost:3010";
-app.use(
-  createProxyMiddleware({
-    target: WHATSAPP_BACKEND_URL,
-    changeOrigin: true,
-    onError: (err, req, res) => {
-      res.status(502).json({ error: "Backend WhatsApp indisponível", detail: err.message });
-    },
-  })
-);
+const whatsappProxy = createProxyMiddleware({
+  target: WHATSAPP_BACKEND_URL,
+  changeOrigin: true,
+  proxyTimeout: 60_000,
+  timeout: 60_000,
+  onError: (err, req, res) => {
+    res.status(502).json({ error: "Backend WhatsApp indisponível", detail: err.message });
+  },
+});
+const whatsappProxyViaApiPrefix = createProxyMiddleware({
+  pathFilter: ["/api/send", "/api/status", "/api/groups", "/api/qr", "/api/connect", "/api/disconnect"],
+  target: WHATSAPP_BACKEND_URL,
+  changeOrigin: true,
+  proxyTimeout: 60_000,
+  timeout: 60_000,
+  pathRewrite: (pathReq) => (pathReq.startsWith("/api/") ? pathReq.slice(4) : pathReq),
+  onError: (err, req, res) => {
+    res.status(502).json({ error: "Backend WhatsApp indisponível", detail: err.message });
+  },
+});
+app.use(["/send", "/status", "/groups", "/qr", "/connect", "/disconnect"], whatsappProxy);
+// Compat: alguns túneis/reverse-proxy só expõem /api/* para fora
+app.use(whatsappProxyViaApiPrefix);
+
+app.use((req, res) => {
+  res.status(404).json({ error: "Rota não encontrada" });
+});
 
 /** Monitoramento automático: quando novos arquivos chegam em EMPRESAS, sincroniza com Supabase. */
 function startFiscalWatcher() {

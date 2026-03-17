@@ -328,26 +328,72 @@ async function resetBrokenClient() {
 function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, {
     "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
   });
   res.end(JSON.stringify(data));
 }
 
-function cors(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+function applyCors(req, res) {
+  const allowed = (process.env.CORS_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const origin = req.headers.origin;
+  if (origin && allowed.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, ngrok-skip-browser-warning");
   res.setHeader("Access-Control-Max-Age", "86400");
 }
 
+function requireToken(req, res) {
+  const token = String(process.env.WHATSAPP_API_TOKEN || "").trim();
+  if (!token) return true; // se não configurado, não bloqueia (evita quebrar ambiente existente)
+  const auth = String(req.headers.authorization || "");
+  const ok = auth === `Bearer ${token}`;
+  if (ok) return true;
+  sendJson(res, 401, { error: "Unauthorized" });
+  return false;
+}
+
+// Rate limit simples em memória (por IP)
+const RATE_WINDOW_MS = 60_000;
+const RATE_LIMITS = {
+  "/send": 30,
+  "/connect": 10,
+  "/disconnect": 10,
+  "/qr": 120,
+  "/groups": 60,
+  "/status": 300,
+};
+const ipCounters = new Map();
+function rateLimit(req, res, pathname) {
+  const limit = RATE_LIMITS[pathname];
+  if (!limit) return true;
+  const ip = String((req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "unknown");
+  const key = `${ip}:${pathname}`;
+  const now = Date.now();
+  const prev = ipCounters.get(key) || { resetAt: now + RATE_WINDOW_MS, count: 0 };
+  if (now > prev.resetAt) {
+    prev.resetAt = now + RATE_WINDOW_MS;
+    prev.count = 0;
+  }
+  prev.count += 1;
+  ipCounters.set(key, prev);
+  if (prev.count <= limit) return true;
+  res.writeHead(429, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Too Many Requests" }));
+  return false;
+}
+
 const server = http.createServer(async (req, res) => {
-  cors(res);
+  applyCors(req, res);
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Content-Length": "0",
-      "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, ngrok-skip-browser-warning",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, ngrok-skip-browser-warning",
       "Access-Control-Max-Age": "86400",
     });
     res.end();
@@ -358,11 +404,15 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.split("?")[0];
 
   if (pathname === "/status") {
+    if (!rateLimit(req, res, pathname)) return;
+    if (!requireToken(req, res)) return;
     sendJson(res, 200, { connected: isReady });
     return;
   }
 
   if (pathname === "/qr") {
+    if (!rateLimit(req, res, pathname)) return;
+    if (!requireToken(req, res)) return;
     if (isReady) {
       sendJson(res, 200, { qr: null, connected: true });
       return;
@@ -390,7 +440,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/qr.png") {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    if (!rateLimit(req, res, "/qr")) return;
+    if (!requireToken(req, res)) return;
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
@@ -422,6 +473,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/groups") {
+    if (!rateLimit(req, res, pathname)) return;
+    if (!requireToken(req, res)) return;
     if (!isReady || !client) {
       sendJson(res, 200, { groups: [] });
       return;
@@ -453,6 +506,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/connect" && req.method === "POST") {
+    if (!rateLimit(req, res, pathname)) return;
+    if (!requireToken(req, res)) return;
     if (client && isReady) {
       sendJson(res, 200, { ok: true, alreadyConnected: true });
       return;
@@ -468,6 +523,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/disconnect" && req.method === "POST") {
+    if (!rateLimit(req, res, pathname)) return;
+    if (!requireToken(req, res)) return;
     const restartOnDisconnect = process.env.WA_RESTART_ON_DISCONNECT === "1";
     disconnectClient({ clearSession: true })
       .then(() => {
@@ -488,6 +545,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/send" && req.method === "POST") {
+    if (!rateLimit(req, res, pathname)) return;
+    if (!requireToken(req, res)) return;
     const contentLength = Math.min(
       parseInt(req.headers["content-length"], 10) || 0,
       10 * 1024 * 1024

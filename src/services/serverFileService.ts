@@ -25,7 +25,13 @@ export function hasServerApi(): boolean {
 function triggerBlobDownload(blob: Blob, filename: string) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = filename;
+  // Nunca deixar o browser interpretar "caminho" como nome do arquivo.
+  const safeName = String(filename || "")
+    .split(/[\\/]/)
+    .pop()
+    ?.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
+    .trim();
+  a.download = safeName || "arquivo";
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -38,9 +44,13 @@ async function fetchServerFileByPath(filePath: string): Promise<{ blob: Blob; fi
   if (!normalizedPath) {
     throw new Error("Caminho do arquivo não informado.");
   }
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error("Faça login para baixar o arquivo.");
+  }
   const url = new URL(`${SERVER_API_URL}/api/files/download`);
   url.searchParams.set("path", normalizedPath);
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { Authorization: `Bearer ${session.access_token}` };
   if (SERVER_API_URL.toLowerCase().includes("ngrok")) {
     headers["ngrok-skip-browser-warning"] = "true";
   }
@@ -55,10 +65,11 @@ async function fetchServerFileByPath(filePath: string): Promise<{ blob: Blob; fi
   }
   const blob = await res.blob();
   const disposition = res.headers.get("Content-Disposition");
-  const filename =
+  const rawName =
     disposition?.match(/filename="?([^";]+)"?/)?.[1]?.trim() ||
     normalizedPath.split(/[\\/]/).pop() ||
     "arquivo.pdf";
+  const filename = String(rawName).split(/[\\/]/).pop()?.trim() || "arquivo.pdf";
   return { blob, filename };
 }
 

@@ -17,6 +17,19 @@ function getHeaders(extra?: HeadersInit): HeadersInit {
   };
 }
 
+function joinUrl(base: string, path: string): string {
+  const b = base.replace(/\/$/, "");
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${b}${p}`;
+}
+
+async function fetchWithApiFallback(path: string, init: RequestInit): Promise<Response> {
+  const res = await fetch(joinUrl(BASE, path), init);
+  if (res.status !== 404) return res;
+  // Compat: quando o túnel só libera /api/*
+  return fetch(joinUrl(BASE, `/api${path.startsWith("/") ? path : `/${path}`}`), init);
+}
+
 export interface WhatsAppGroup {
   id: string;
   name: string;
@@ -29,7 +42,7 @@ export interface ConnectionStatus {
 export async function getConnectionStatus(): Promise<ConnectionStatus> {
   if (!BASE) return { connected: false };
   try {
-    const res = await fetch(`${BASE}/status`, { method: "GET", headers: getHeaders(), cache: "no-store" });
+    const res = await fetchWithApiFallback("/status", { method: "GET", headers: getHeaders(), cache: "no-store" });
     if (!res.ok) return { connected: false };
     const contentType = res.headers.get("content-type") || "";
     if (!contentType.includes("application/json")) return { connected: false };
@@ -45,7 +58,7 @@ export async function getConnectionStatus(): Promise<ConnectionStatus> {
 export async function getQrImage(): Promise<string | null> {
   if (!BASE) return null;
   try {
-    const res = await fetch(`${BASE}/qr`, { method: "GET", cache: "no-store", headers: getHeaders() });
+    const res = await fetchWithApiFallback("/qr", { method: "GET", cache: "no-store", headers: getHeaders() });
     if (!res.ok) return null;
     const data = await res.json();
     if (data?.connected) return null;
@@ -72,8 +85,8 @@ export function getQrImageUrlWithTimestamp(ts: number): string {
 export async function getGroups(forceRefresh = false): Promise<WhatsAppGroup[]> {
   if (!BASE) return [];
   try {
-    const url = forceRefresh ? `${BASE}/groups?refresh=1` : `${BASE}/groups`;
-    const res = await fetch(url, { method: "GET", headers: getHeaders() });
+    const path = forceRefresh ? "/groups?refresh=1" : "/groups";
+    const res = await fetchWithApiFallback(path, { method: "GET", headers: getHeaders() });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data?.groups) ? data.groups : [];
@@ -103,7 +116,7 @@ export async function sendToGroup(
       message,
     };
     if (attachments && attachments.length > 0) body.attachments = attachments;
-    const res = await fetch(`${BASE}/send`, {
+    const res = await fetchWithApiFallback("/send", {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body),
@@ -130,7 +143,7 @@ export async function sendToGroup(
 export async function connectWhatsApp(): Promise<{ ok: boolean; error?: string }> {
   if (!BASE) return { ok: false, error: "API não configurada" };
   try {
-    const res = await fetch(`${BASE}/connect`, { method: "POST", headers: getHeaders() });
+    const res = await fetchWithApiFallback("/connect", { method: "POST", headers: getHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: (data as { error?: string }).error ?? "Falha ao conectar" };
     return { ok: true };
@@ -143,7 +156,7 @@ export async function connectWhatsApp(): Promise<{ ok: boolean; error?: string }
 export async function disconnectWhatsApp(): Promise<{ ok: boolean; error?: string }> {
   if (!BASE) return { ok: false, error: "API não configurada" };
   try {
-    const res = await fetch(`${BASE}/disconnect`, { method: "POST", headers: getHeaders() });
+    const res = await fetchWithApiFallback("/disconnect", { method: "POST", headers: getHeaders() });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       return { ok: false, error: (data as { error?: string }).error ?? "Falha ao desconectar" };

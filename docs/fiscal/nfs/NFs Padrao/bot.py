@@ -346,12 +346,8 @@ def attach_glow(widget, color: str = "#4da3ff", strength: int = 26) -> None:
 # Licenca (Supabase + armazenamento local)
 # --------------------------------------------------------------------
 
-SUPABASE_URL = "https://visiohdyiqhlfnbnmmsp.supabase.co"
-SUPABASE_ANON_KEY = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpc2lvaGR5aXFobGZuYm5tbXNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1NTE5MDUsImV4cCI6MjA2OTEyNzkwNX0."
-    "n8jWbIgO6MbiFbwBcbIJesEoFjW-Fa2MBJiiCYZ06IM"
-)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "").strip()
 LICENSE_PATH = JSON_DIR / "license.json"
 
 AUTO_UPDATE_APP_VERSION = "1.0.0"

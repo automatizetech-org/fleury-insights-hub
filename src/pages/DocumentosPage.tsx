@@ -154,7 +154,7 @@ export default function DocumentosPage() {
   const handleDownload = async (filePath: string | null) => {
     try {
       if (!filePath) throw new Error("Arquivo indisponível.");
-      const suggestedName = filePath.split("/").pop() ?? "arquivo.pdf";
+      const suggestedName = filePath.split(/[\\/]/).pop() ?? "arquivo.pdf";
       await downloadServerFileByPath(filePath, suggestedName);
       toast.success("Download iniciado.");
     } catch (e) {
