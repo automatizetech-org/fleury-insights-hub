@@ -935,6 +935,21 @@ class RobotBackend:
             )
             rows = response.data or []
             for row in rows:
+                execution_mode = str(row.get("execution_mode") or "sequential").strip().lower()
+                execution_group_id = row.get("execution_group_id")
+                if execution_mode == "sequential" and execution_group_id:
+                    blockers = (
+                        client.table("execution_requests")
+                        .select("id, execution_order, created_at")
+                        .eq("execution_group_id", execution_group_id)
+                        .in_("status", ["pending", "running"])
+                        .order("execution_order")
+                        .order("created_at")
+                        .execute()
+                    )
+                    blocker_rows = blockers.data or []
+                    if blocker_rows and blocker_rows[0].get("id") != row.get("id"):
+                        continue
                 tech_ids = row.get("robot_technical_ids") or []
                 if "all" not in tech_ids and ROBOT_TECHNICAL_ID not in tech_ids:
                     continue

@@ -1299,10 +1299,10 @@ def fetch_robot_config_from_api() -> Optional[Dict[str, Any]]:
 _robot_api_config: Optional[Dict[str, Any]] = None
 
 
-def get_robot_api_config() -> Optional[Dict[str, Any]]:
-    """Retorna a config do robô vinda da API (cache). Carrega uma vez."""
+def get_robot_api_config(force_refresh: bool = False) -> Optional[Dict[str, Any]]:
+    """Retorna a config do robô vinda da API (cache). Permite refresh explícito."""
     global _robot_api_config
-    if _robot_api_config is None:
+    if force_refresh or _robot_api_config is None:
         _robot_api_config = fetch_robot_config_from_api()
     return _robot_api_config
 
@@ -1312,6 +1312,8 @@ def get_resolved_output_base() -> Optional[Path]:
     Pasta base para gravação: primeiro tenta base_path da API (dashboard); senão BASE_PATH do .env.
     """
     cfg = get_robot_api_config()
+    if (not cfg or not (cfg.get("base_path") or "").strip()):
+        cfg = get_robot_api_config(force_refresh=True)
     if cfg and (cfg.get("base_path") or "").strip():
         return Path((cfg["base_path"] or "").strip())
     base_env = os.environ.get("BASE_PATH", "").strip()
@@ -1325,14 +1327,17 @@ def fetch_central_folder_structure(path_logical: Optional[str] = None) -> Tuple[
     Obtém da API a estrutura de pastas e retorna (segmentos para este robô, date_rule).
     path_logical: caminho do departamento (ex. FISCAL/NFS); se None, usa config da API ou ROBOT_SEGMENT_PATH do .env.
     """
-    path_logical = path_logical or (get_robot_api_config() or {}).get("segment_path") or os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip()
+    cfg = get_robot_api_config()
+    if (not cfg or not (cfg.get("segment_path") or "").strip()):
+        cfg = get_robot_api_config(force_refresh=True)
+    path_logical = path_logical or (cfg or {}).get("segment_path") or os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip()
     if not path_logical:
         path_logical = "FISCAL/NFS"
     url_base = (os.environ.get("FOLDER_STRUCTURE_API_URL") or os.environ.get("SERVER_API_URL") or "").strip().rstrip("/")
     if not url_base:
         return (None, None)
     # Se já temos config da API com date_rule e folder_structure, podemos montar os segmentos a partir do path_logical
-    cfg = get_robot_api_config()
+    cfg = cfg or get_robot_api_config()
     if cfg and isinstance(cfg.get("folder_structure"), list) and cfg.get("date_rule") is not None:
         nodes = cfg["folder_structure"]
         parts = [p.strip() for p in path_logical.split("/") if p.strip()]
@@ -1604,11 +1609,58 @@ def complete_execution_request(
 ) -> None:
     try:
         client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        request_row = None
+        if not success:
+            try:
+                request_res = (
+                    client.table("execution_requests")
+                    .select("id, execution_mode, execution_group_id, execution_order")
+                    .eq("id", request_id)
+                    .limit(1)
+                    .execute()
+                )
+                request_rows = getattr(request_res, "data", None) or []
+                request_row = request_rows[0] if request_rows else None
+            except Exception:
+                request_row = None
         client.table("execution_requests").update({
             "status": "completed" if success else "failed",
             "completed_at": datetime.now().isoformat(),
             "error_message": error_message,
         }).eq("id", request_id).execute()
+        if not success and request_row:
+            execution_mode = str(request_row.get("execution_mode") or "sequential").strip().lower()
+            execution_group_id = request_row.get("execution_group_id")
+            execution_order = request_row.get("execution_order")
+            if execution_mode == "sequential" and execution_group_id:
+                next_jobs = (
+                    client.table("execution_requests")
+                    .select("id, execution_order")
+                    .eq("execution_group_id", execution_group_id)
+                    .eq("status", "pending")
+                    .order("execution_order")
+                    .order("created_at")
+                    .execute()
+                )
+                next_rows = getattr(next_jobs, "data", None) or []
+                cancel_message = "Cancelado porque um robô anterior da fila falhou."
+                if error_message:
+                    cancel_message = f"{cancel_message} {error_message}"
+                for pending_row in next_rows:
+                    pending_order = pending_row.get("execution_order")
+                    if execution_order is not None and pending_order is not None and pending_order <= execution_order:
+                        continue
+                    (
+                        client.table("execution_requests")
+                        .update({
+                            "status": "failed",
+                            "completed_at": datetime.now().isoformat(),
+                            "error_message": cancel_message,
+                        })
+                        .eq("id", pending_row["id"])
+                        .eq("status", "pending")
+                        .execute()
+                    )
     except Exception:
         pass
 
@@ -5639,6 +5691,7 @@ class MainWindow(QMainWindow):
             )
             return
         selected: List[Company] = []
+        skipped_companies = 0
         for rec in records:
             name_norm = normalize_company_name(rec.get("name", ""))
             doc_digits = only_digits(rec.get("doc", ""))
@@ -5651,28 +5704,46 @@ class MainWindow(QMainWindow):
                     try:
                         cert_data = base64.b64decode(rec["cert_blob_b64"])
                     except Exception:
-                        pass
+                        cert_data = None
+                if not cert_data:
+                    self._log(f"[Robô] Certificado nao configurado para {name_norm}.")
+                    skipped_companies += 1
+                    continue
+                cert_password = (rec.get("cert_password") or "").strip()
+                if not cert_password:
+                    self._log(f"[Robô] Senha do certificado nao configurada para {name_norm}.")
+                    skipped_companies += 1
+                    continue
                 selected.append(
                     Company(
                         name=name_norm,
                         doc=doc_digits,
                         auth_mode=AUTH_CERTIFICATE,
-                        cert_password=(rec.get("cert_password") or ""),
+                        cert_password=cert_password,
                         cert_data=cert_data,
                     )
                 )
             else:
+                password = (rec.get("password") or "").strip()
+                if not password:
+                    self._log(f"[Robô] Senha nao configurada para {name_norm}.")
+                    skipped_companies += 1
+                    continue
                 selected.append(
                     Company(
                         name=name_norm,
                         doc=doc_digits,
-                        password=rec.get("password", ""),
+                        password=password,
                         auth_mode=AUTH_PASSWORD,
                     )
                 )
         if not selected:
             complete_execution_request(
-                self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Nenhuma empresa valida"
+                self._robot_supabase_url,
+                self._robot_supabase_key,
+                job["id"],
+                False,
+                "Nenhuma empresa valida" if skipped_companies == 0 else "Nenhuma empresa valida; todas sem configuracao",
             )
             return
         notes_mode = (job.get("notes_mode") or self._default_notes_mode or "recebidas").strip()
@@ -5682,56 +5753,92 @@ class MainWindow(QMainWindow):
             include_emitidas, include_recebidas = True, True
         else:
             include_emitidas, include_recebidas = False, True
-        self.companies = records
-        self._reload_items()
-        self.start_date_edit.blockSignals(True)
-        self.end_date_edit.blockSignals(True)
         try:
-            self.start_date_edit.setDate(QDate(start_dt.year, start_dt.month, start_dt.day))
-            self.end_date_edit.setDate(QDate(end_dt.year, end_dt.month, end_dt.day))
-        finally:
-            self.start_date_edit.blockSignals(False)
-            self.end_date_edit.blockSignals(False)
-        if notes_mode == "emitidas":
-            self.mode_combo.setCurrentIndex(1)
-        elif notes_mode == "both":
-            self.mode_combo.setCurrentIndex(2)
-        else:
-            self.mode_combo.setCurrentIndex(0)
-        output_base = get_resolved_output_base() or self.output_base
-        if not output_base or not output_base.exists():
-            complete_execution_request(
-                self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Pasta de saida nao configurada"
+            api_cfg = get_robot_api_config(force_refresh=True) or {}
+            if api_cfg.get("segment_path"):
+                self._segment_path = str(api_cfg.get("segment_path") or "").strip() or self._segment_path
+            if api_cfg.get("notes_mode") in ("recebidas", "emitidas", "both"):
+                self._default_notes_mode = api_cfg["notes_mode"]
+            refreshed_output_base = get_resolved_output_base()
+            if refreshed_output_base:
+                self.output_base = refreshed_output_base
+            self.companies = records
+            self._reload_items()
+            self.start_date_edit.blockSignals(True)
+            self.end_date_edit.blockSignals(True)
+            try:
+                self.start_date_edit.setDate(QDate(start_dt.year, start_dt.month, start_dt.day))
+                self.end_date_edit.setDate(QDate(end_dt.year, end_dt.month, end_dt.day))
+            finally:
+                self.start_date_edit.blockSignals(False)
+                self.end_date_edit.blockSignals(False)
+            if notes_mode == "emitidas":
+                self.mode_combo.setCurrentIndex(1)
+            elif notes_mode == "both":
+                self.mode_combo.setCurrentIndex(2)
+            else:
+                self.mode_combo.setCurrentIndex(0)
+            output_base = get_resolved_output_base() or self.output_base
+            if not output_base:
+                complete_execution_request(
+                    self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Pasta de saida nao configurada"
+                )
+                self._log("[Robô] Pasta de saida nao configurada para a execucao agendada.")
+                return
+            try:
+                output_base.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                complete_execution_request(
+                    self._robot_supabase_url,
+                    self._robot_supabase_key,
+                    job["id"],
+                    False,
+                    f"Falha ao preparar pasta base: {exc}",
+                )
+                self._log(f"[Robô] Falha ao preparar pasta base vinda do dashboard: {exc}")
+                return
+            self._current_job_id = job["id"]
+            self._current_job = job
+            if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+                update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "processing")
+            self._finish_logged = False
+            self.last_summary = None
+            self.btn_start.setEnabled(False)
+            self.btn_stop.setEnabled(True)
+            central_segment_path, central_date_rule = fetch_central_folder_structure(self._segment_path)
+            headless = self.chk_headless.isChecked()
+            self.worker = DownloadThread(
+                selected,
+                headless,
+                output_base,
+                start_dt,
+                end_dt,
+                include_emitidas,
+                include_recebidas,
+                self.folder_structure,
+                central_segment_path,
+                central_date_rule,
+                segment_path_from_dashboard=self._segment_path,
             )
-            return
-        self._current_job_id = job["id"]
-        self._current_job = job
-        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
-            update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "processing")
-        self._finish_logged = False
-        self.last_summary = None
-        self.btn_start.setEnabled(False)
-        self.btn_stop.setEnabled(True)
-        central_segment_path, central_date_rule = fetch_central_folder_structure(self._segment_path)
-        headless = self.chk_headless.isChecked()
-        self.worker = DownloadThread(
-            selected,
-            headless,
-            output_base,
-            start_dt,
-            end_dt,
-            include_emitidas,
-            include_recebidas,
-            self.folder_structure,
-            central_segment_path,
-            central_date_rule,
-            segment_path_from_dashboard=self._segment_path,
-        )
-        self.worker.log.connect(self._log)
-        self.worker.summary_ready.connect(self._on_summary_ready)
-        self.worker.finished.connect(self._on_finished)
-        self.worker.start()
-        self._log(f"[Agendador] Iniciando job para {len(selected)} empresa(s), periodo {start_dt:%d/%m/%Y} a {end_dt:%d/%m/%Y}")
+            self.worker.log.connect(self._log)
+            self.worker.summary_ready.connect(self._on_summary_ready)
+            self.worker.finished.connect(self._on_finished)
+            self.worker.start()
+            self._log(f"[Agendador] Iniciando job para {len(selected)} empresa(s), periodo {start_dt:%d/%m/%Y} a {end_dt:%d/%m/%Y}")
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"[ERRO] Falha ao preparar job do agendador: {exc}")
+            complete_execution_request(
+                self._robot_supabase_url,
+                self._robot_supabase_key,
+                job["id"],
+                False,
+                f"Falha ao preparar job: {exc}",
+            )
+            self._current_job_id = None
+            self._current_job = None
+            self.worker = None
+            if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+                update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
 
     def closeEvent(self, event) -> None:
         if self.worker and self.worker.isRunning():

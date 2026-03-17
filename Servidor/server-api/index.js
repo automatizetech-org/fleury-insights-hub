@@ -786,7 +786,7 @@ app.get("/health", (req, res) => res.json({ ok: true }));
  * Path na VM: BASE_PATH/EMPRESAS/{nome_empresa}/{segmentos do nó}
  * Leitura pública (anon) para robôs sem JWT.
  */
-app.get("/api/folder-structure", requireBearer, validateSupabaseJwt, async (req, res) => {
+app.get("/api/folder-structure", async (req, res) => {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseKey) {
@@ -811,7 +811,7 @@ app.get("/api/folder-structure", requireBearer, validateSupabaseJwt, async (req,
  * Retorna configuração para o robô na VM: base_path (global), segment_path e date_rule do robô.
  * Robôs usam isso em vez de BASE_PATH e ROBOT_SEGMENT_PATH no .env (que passam a ser opcionais).
  */
-app.get("/api/robot-config", requireBearer, validateSupabaseJwt, async (req, res) => {
+app.get("/api/robot-config", async (req, res) => {
   const technicalId = (req.query.technical_id || "").toString().trim();
   if (!technicalId) {
     return res.status(400).json({ error: "technical_id é obrigatório" });
