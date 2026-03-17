@@ -1,4 +1,4 @@
-import os, sys, json, re, unicodedata, base64, shutil
+import os, sys, json, re, unicodedata, base64, shutil, tempfile, uuid, socket
 import math
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -186,6 +186,10 @@ PORTAL_TIMEOUT = 90000
 CDP_PORT = 9222
 CHROME_EXE = DATA_DIR / "Chrome" / "chrome.exe"
 PROFILE_DIR = DATA_DIR / "chrome_cdp_profile"
+# CDP / Chrome portátil:
+# - Por padrão, usa o Chrome portátil em data/Chrome/chrome.exe e o perfil persistente em PROFILE_DIR.
+# - Você pode sobrescrever o executável via env CERTIDOES_CHROME_EXE (útil para testes locais).
+CHROME_CDP_PORT = int((os.environ.get("CERTIDOES_CDP_PORT") or str(CDP_PORT)).strip() or CDP_PORT)
 ROBOT_TECHNICAL_ID = "certidoes_fiscal"
 ROBOT_DISPLAY_NAME_DEFAULT = "Certidoes Fiscal"
 ROBOT_SEGMENT_PATH_DEFAULT = "FISCAL/CERTIDOES"
@@ -1850,6 +1854,19 @@ class AutomationThread(QThread):
         self.started_at: Optional[datetime] = None
         self.finished_at: Optional[datetime] = None
         self._minimize_log_sent = False
+        self._chrome_proc: Optional[subprocess.Popen] = None
+        self._stop_requested = False
+
+    def stop(self) -> None:
+        # Parada cooperativa (evita deixar Chrome/processos/perfil órfãos).
+        try:
+            self._stop_requested = True
+        except Exception:
+            pass
+        try:
+            self.requestInterruption()
+        except Exception:
+            pass
 
     # ---------- Playwright helpers ----------
     def _minimize_browser_window(self, ctx, page, log_errors: bool = False, log_once: bool = True) -> bool:
@@ -1904,58 +1921,131 @@ class AutomationThread(QThread):
 
     def _start_playwright_cdp(self, max_wait: int = 60):
         self.log.emit("🌐 🚀 Preparando ambiente de automação (Playwright + Chrome)...")
-        browsers_path = DATA_DIR / "ms-playright"
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_path)
-        try:
-            browsers_path.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
 
-        chrome_candidates = [
-            CHROME_EXE if isinstance(CHROME_EXE, Path) else Path(CHROME_EXE),
-            Path(INTERNAL_DIR) / "Chrome" / "chrome.exe",
-        ]
+        # 1) Executável: obrigatoriamente o Chrome portátil em data/Chrome/chrome.exe
+        # (com override opcional apenas para testes locais via CERTIDOES_CHROME_EXE).
+        exe_override = (os.environ.get("CERTIDOES_CHROME_EXE") or "").strip()
+        chrome_candidates: List[Path] = []
+        if exe_override:
+            chrome_candidates.append(Path(exe_override))
+        chrome_candidates.extend(
+            [
+                CHROME_EXE if isinstance(CHROME_EXE, Path) else Path(CHROME_EXE),
+                Path(INTERNAL_DIR) / "Chrome" / "chrome.exe",
+            ]
+        )
         exe = None
         for cand in chrome_candidates:
-            if cand.exists():
-                exe = str(cand)
-                break
-        if not exe:
             try:
-                for cand in browsers_path.glob("chromium-*/chrome-win64/chrome.exe"):
+                if cand and cand.exists():
                     exe = str(cand)
                     break
             except Exception:
-                exe = None
+                continue
+        if not exe:
+            raise RuntimeError("Chrome portátil não encontrado em data/Chrome/chrome.exe.")
 
+        # 2) Perfil: sempre o mesmo (persistente)
         profile_dir = PROFILE_DIR if isinstance(PROFILE_DIR, Path) else Path(PROFILE_DIR)
         try:
             profile_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
 
-        pw = sync_playwright().start()
-        kwargs = {
-            # headless sempre False; minimização será aplicada após a abertura via CDP
-            "headless": False,
-            "args": [
+        # 3) CDP: 1 Chrome só. Se já existir escutando na porta, só conecta.
+        port = int(CHROME_CDP_PORT)
+        cdp_url = f"http://127.0.0.1:{port}"
+
+        def _cdp_ready() -> bool:
+            try:
+                r = requests.get(f"{cdp_url}/json/version", timeout=0.6)
+                if r.status_code != 200:
+                    return False
+                try:
+                    data = r.json() or {}
+                except Exception:
+                    data = {}
+                return bool(data.get("webSocketDebuggerUrl"))
+            except Exception:
+                return False
+
+        if not _cdp_ready():
+            chrome_args = [
+                f"--remote-debugging-port={port}",
+                "--remote-debugging-address=127.0.0.1",
+                f"--user-data-dir={str(profile_dir)}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--remote-allow-origins=*",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=IsolateOrigins,site-per-process",
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
                 "--disable-gpu",
-            ],
-        }
-        if exe:
-            kwargs["executable_path"] = exe
-        ctx = pw.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            ignore_https_errors=True,
-            **kwargs,
-        )
-        browser = ctx.browser if hasattr(ctx, "browser") else None
-        page = ctx.pages[0] if getattr(ctx, "pages", None) else None
-        if not page or page.is_closed():
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ]
+            try:
+                self._chrome_proc = subprocess.Popen(
+                    [exe, *chrome_args],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    cwd=str(Path(exe).parent),
+                )
+            except Exception as e:
+                raise RuntimeError(f"Falha ao iniciar o Chrome portátil ({exe}): {e}")
+
+            deadline = time.monotonic() + max(1.0, float(max_wait))
+            while time.monotonic() < deadline:
+                try:
+                    if self._chrome_proc and self._chrome_proc.poll() is not None:
+                        break
+                except Exception:
+                    pass
+                if _cdp_ready():
+                    break
+                try:
+                    time.sleep(0.25)
+                except Exception:
+                    pass
+
+            if not _cdp_ready():
+                try:
+                    if self._chrome_proc:
+                        self._chrome_proc.terminate()
+                except Exception:
+                    pass
+                raise TimeoutError(f"Timeout ao aguardar CDP em {cdp_url}.")
+
+        pw = sync_playwright().start()
+        browser = pw.chromium.connect_over_cdp(cdp_url, timeout=max(1, int(max_wait * 1000)))
+        contexts = getattr(browser, "contexts", []) or []
+        if not contexts:
+            # alguns casos raros podem vir sem contexto inicial; tenta abrir um
+            try:
+                ctx = browser.new_context(ignore_https_errors=True)
+            except Exception:
+                ctx = None
+            if not ctx:
+                raise RuntimeError("Conectou via CDP, mas não conseguiu obter um contexto do navegador.")
+        else:
+            ctx = contexts[0]
+            try:
+                ctx.set_default_timeout(PORTAL_TIMEOUT)
+            except Exception:
+                pass
+            try:
+                ctx.set_default_navigation_timeout(PORTAL_TIMEOUT)
+            except Exception:
+                pass
+
+        page = None
+        try:
+            pages = [p for p in ctx.pages if p and not p.is_closed()]
+            if pages:
+                page = pages[0]
+        except Exception:
+            page = None
+        if not page:
             page = ctx.new_page()
 
         def minimize_if_needed(target_page=None, log_errors: bool = False):
@@ -1982,7 +2072,7 @@ class AutomationThread(QThread):
         except Exception:
             pass
         self.log.emit("📗 📗 Playwright/Chrome inicializados com sucesso.")
-        return pw, browser, ctx, page, None
+        return pw, browser, ctx, page, self._chrome_proc
 
     def _download_pdf_viewer_by_text(self, pdf_page, dest_path: Path, label: str = "PDF", timeout_ms: int = 2200) -> bool:
         """
@@ -2884,10 +2974,17 @@ class AutomationThread(QThread):
             attempt = 1
             max_attempts = 3
             while remaining and attempt <= max_attempts:
+                if self.isInterruptionRequested() or self._stop_requested:
+                    self.log.emit("⛔ Interrupção solicitada. Encerrando com limpeza...")
+                    break
                 if attempt > 1:
                     self.log.emit(f"🔁 Tentativa {attempt} para {len(remaining)} empresa(s) com erro/pendência.")
                 next_round = []
                 for comp, prev_detail in remaining:
+                    if self.isInterruptionRequested() or self._stop_requested:
+                        self.log.emit("⛔ Interrupção solicitada. Parando a iteração...")
+                        next_round = []
+                        break
                     detail = process_company(comp, attempt, prev_detail)
                     if not detail:
                         continue
@@ -2928,6 +3025,7 @@ class AutomationThread(QThread):
                     proc.kill()
             except Exception:
                 pass
+            self._chrome_proc = None
         self.finished.emit(self.results)
         self.finished_at = datetime.now()
 # =============================================================================
@@ -3169,8 +3267,15 @@ class MainWindow(QMainWindow):
 
     def _quit_from_tray(self):
         if self.thread and self.thread.isRunning():
-            self.thread.terminate()
-            self.thread.wait(2000)
+            try:
+                if hasattr(self.thread, "stop"):
+                    self.thread.stop()
+            except Exception:
+                pass
+            self.thread.wait(15000)
+            if self.thread.isRunning():
+                self.thread.terminate()
+                self.thread.wait(2000)
         if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "inactive")
         self.heartbeat_timer.stop()
@@ -3944,8 +4049,15 @@ class MainWindow(QMainWindow):
             return
         stopped_job = self._active_job
         if self.thread and self.thread.isRunning():
-            self.thread.terminate()
-            self.thread.wait(2000)
+            try:
+                if hasattr(self.thread, "stop"):
+                    self.thread.stop()
+            except Exception:
+                pass
+            self.thread.wait(15000)
+            if self.thread.isRunning():
+                self.thread.terminate()
+                self.thread.wait(2000)
         if stopped_job and self._robot_supabase_url and self._robot_supabase_key:
             complete_execution_request(
                 self._robot_supabase_url,
