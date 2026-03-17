@@ -7,7 +7,12 @@
 import JSZip from "jszip";
 import { supabase } from "./supabaseClient";
 
-const SERVER_API_URL = import.meta.env.SERVER_API_URL?.replace(/\/$/, "") ?? "";
+// Normaliza: remove trailing "/" e também um "/api" no final se o usuário configurou assim.
+const SERVER_API_URL = (import.meta.env.SERVER_API_URL ?? "")
+  .toString()
+  .trim()
+  .replace(/\/$/, "")
+  .replace(/\/api$/i, "");
 
 export function getServerApiUrl(): string {
   return SERVER_API_URL;
@@ -103,25 +108,83 @@ export async function downloadServerFilesZip(filePaths: string[], suggestedName 
   }
 
   const zip = new JSZip();
-  const usedNames = new Set<string>();
-  const makeUniqueName = (name: string) => {
-    let candidate = name;
+  const usedPaths = new Set<string>();
+  const makeUniqueZipPath = (zipPath: string) => {
+    let candidate = zipPath;
     let i = 0;
-    while (usedNames.has(candidate)) {
+    while (usedPaths.has(candidate)) {
       i += 1;
-      const dotIndex = name.lastIndexOf(".");
-      const base = dotIndex >= 0 ? name.slice(0, dotIndex) : name;
-      const ext = dotIndex >= 0 ? name.slice(dotIndex) : "";
+      const dotIndex = zipPath.lastIndexOf(".");
+      const base = dotIndex >= 0 ? zipPath.slice(0, dotIndex) : zipPath;
+      const ext = dotIndex >= 0 ? zipPath.slice(dotIndex) : "";
       candidate = `${base} (${i})${ext}`;
     }
-    usedNames.add(candidate);
+    usedPaths.add(candidate);
     return candidate;
   };
 
   await Promise.all(
     paths.map(async (filePath) => {
       const { blob, filename } = await fetchServerFileByPath(filePath);
-      zip.file(makeUniqueName(filename), blob);
+      const normalized = String(filePath || "").replace(/\\/g, "/").replace(/^\/+/, "");
+      const parts = normalized.split("/").filter(Boolean);
+      let company = "EMPRESA";
+      let restParts: string[] = [];
+      if (parts.length >= 2 && parts[0].toLowerCase() === "empresas") {
+        company = parts[1] || company;
+        restParts = parts.slice(2);
+      } else if (parts.length >= 1) {
+        company = parts[0] || company;
+        restParts = parts.slice(1);
+      }
+      // Regra do produto: dentro da pasta da empresa ficam os arquivos (sem replicar árvore da VM).
+      const zipPath = `${company}/${filename}`;
+      zip.file(makeUniqueZipPath(zipPath), blob);
+    })
+  );
+
+  const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+  triggerBlobDownload(zipBlob, `${suggestedName}.zip`);
+}
+
+/** ZIP no browser com subpasta por empresa + categoria (não depende do server). */
+export async function downloadListedFilesZipWithCategory(
+  items: Array<{ companyName: string; category: string; filePath: string }>,
+  suggestedName = "documentos"
+): Promise<void> {
+  const normalizedItems = items
+    .map((it) => ({
+      companyName: String(it.companyName || "EMPRESA").trim() || "EMPRESA",
+      category: String(it.category || "outros").trim() || "outros",
+      filePath: String(it.filePath || "").trim(),
+    }))
+    .filter((it) => it.filePath.length > 0);
+  if (normalizedItems.length === 0) {
+    throw new Error("Nenhum arquivo selecionado para baixar.");
+  }
+
+  const zip = new JSZip();
+  const usedPaths = new Set<string>();
+  const makeUniqueZipPath = (zipPath: string) => {
+    let candidate = zipPath;
+    let i = 0;
+    while (usedPaths.has(candidate)) {
+      i += 1;
+      const dotIndex = zipPath.lastIndexOf(".");
+      const base = dotIndex >= 0 ? zipPath.slice(0, dotIndex) : zipPath;
+      const ext = dotIndex >= 0 ? zipPath.slice(dotIndex) : "";
+      candidate = `${base} (${i})${ext}`;
+    }
+    usedPaths.add(candidate);
+    return candidate;
+  };
+
+  await Promise.all(
+    normalizedItems.map(async ({ companyName, category, filePath }) => {
+      const { blob, filename } = await fetchServerFileByPath(filePath);
+      const safeCompany = companyName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "").replace(/\s+/g, " ").trim() || "EMPRESA";
+      const safeCategory = category.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "").replace(/\s+/g, " ").trim() || "outros";
+      zip.file(makeUniqueZipPath(`${safeCompany}/${safeCategory}/${filename}`), blob);
     })
   );
 
@@ -167,7 +230,7 @@ export async function downloadFiscalDocumentsZip(ids: string[], filenameSuffix?:
   const res = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify({ ids: idsFiltered }),
+    body: JSON.stringify({ ids: idsFiltered, filename_suffix: filenameSuffix ?? "" }),
   });
 
   const contentType = res.headers.get("content-type") || "";
@@ -204,6 +267,121 @@ export async function downloadFiscalDocumentsZip(ids: string[], filenameSuffix?:
   for (const id of idsFiltered) {
     markFiscalDocumentDownloaded(id).catch(() => {});
   }
+}
+
+/**
+ * Baixa todos os documentos fiscais de uma lista de empresas em um único ZIP.
+ * Isso evita payload gigante com milhares de IDs de documentos.
+ */
+export async function downloadFiscalCompaniesZip(companyIds: string[], filenameSuffix?: string, types?: string[]): Promise<void> {
+  if (!SERVER_API_URL) {
+    throw new Error("SERVER_API_URL não configurada.");
+  }
+  const companyIdsFiltered = [...new Set(companyIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (companyIdsFiltered.length === 0) {
+    throw new Error("Nenhuma empresa selecionada para baixar.");
+  }
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error("Faça login para baixar.");
+  }
+  const url = `${SERVER_API_URL}/api/fiscal-documents/download-zip`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${session.access_token}`,
+  };
+  if (SERVER_API_URL.toLowerCase().includes("ngrok")) {
+    headers["ngrok-skip-browser-warning"] = "true";
+  }
+  const typesFiltered = Array.isArray(types)
+    ? [...new Set(types.map((t) => String(t || "").trim().toUpperCase()).filter(Boolean))]
+    : [];
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      company_ids: companyIdsFiltered,
+      types: typesFiltered,
+      filename_suffix: filenameSuffix ?? "",
+    }),
+  });
+
+  const contentType = res.headers.get("content-type") || "";
+  if (!res.ok) {
+    let message = `Erro ${res.status} ao baixar ZIP`;
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      if (json && typeof json.error === "string") message = json.error;
+    } catch {
+      if (text && !text.startsWith("<")) message = text.slice(0, 150);
+    }
+    throw new Error(message);
+  }
+  if (!contentType.includes("application/zip") && !contentType.includes("application/octet-stream")) {
+    throw new Error("Resposta não é um ZIP (content-type: " + contentType + "). Verifique SERVER_API_URL.");
+  }
+  const safeSuffix = filenameSuffix && /^[a-z0-9-]+$/i.test(filenameSuffix) ? filenameSuffix : "";
+  const zipFilename = safeSuffix ? `documentos-fiscais-${safeSuffix}.zip` : "documentos-fiscais.zip";
+  const blob = await res.blob();
+  triggerBlobDownload(blob, zipFilename);
+}
+
+/** Baixa ZIP unificado do Hub (Empresa/<categoria>/<arquivo>). */
+export async function downloadHubCompaniesZip(companyIds: string[], filenameSuffix?: string, categories?: string[]): Promise<void> {
+  if (!SERVER_API_URL) {
+    throw new Error("SERVER_API_URL não configurada.");
+  }
+  const companyIdsFiltered = [...new Set(companyIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (companyIdsFiltered.length === 0) {
+    throw new Error("Nenhuma empresa selecionada para baixar.");
+  }
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error("Faça login para baixar.");
+  }
+  const url = `${SERVER_API_URL}/api/hub-documents/download-zip`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${session.access_token}`,
+  };
+  if (SERVER_API_URL.toLowerCase().includes("ngrok")) {
+    headers["ngrok-skip-browser-warning"] = "true";
+  }
+  const categoriesFiltered = Array.isArray(categories)
+    ? [...new Set(categories.map((c) => String(c || "").trim()).filter(Boolean))]
+    : [];
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      company_ids: companyIdsFiltered,
+      categories: categoriesFiltered,
+      filename_suffix: filenameSuffix ?? "",
+    }),
+  });
+
+  const contentType = res.headers.get("content-type") || "";
+  if (!res.ok) {
+    let message = `Erro ${res.status} ao baixar ZIP`;
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      if (json && typeof json.error === "string") message = json.error;
+    } catch {
+      if (text && !text.startsWith("<")) message = text.slice(0, 150);
+    }
+    throw new Error(message);
+  }
+  if (!contentType.includes("application/zip") && !contentType.includes("application/octet-stream")) {
+    throw new Error("Resposta não é um ZIP (content-type: " + contentType + "). Verifique SERVER_API_URL.");
+  }
+  const safeSuffix = filenameSuffix && /^[a-z0-9-]+$/i.test(filenameSuffix) ? filenameSuffix : "";
+  const zipFilename = safeSuffix ? `documentos-hub-${safeSuffix}.zip` : "documentos-hub.zip";
+  const blob = await res.blob();
+  triggerBlobDownload(blob, zipFilename);
 }
 
 /**

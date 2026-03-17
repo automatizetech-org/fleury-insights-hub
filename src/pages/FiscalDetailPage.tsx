@@ -9,7 +9,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getCertidoesDocuments, getFiscalDocumentsByType, getFiscalDocumentsNfeNfc, getNfsStatsByDateRange } from "@/services/dashboardService";
-import { downloadFiscalDocument, downloadServerFileByPath, hasServerApi, markFiscalDocumentDownloaded, downloadFiscalDocumentsZip } from "@/services/serverFileService";
+import { downloadFiscalCompaniesZip, downloadFiscalDocument, downloadServerFileByPath, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -870,15 +870,16 @@ export default function FiscalDetailPage() {
                   className="gap-1.5 text-xs"
                   disabled={downloadingZip || filteredDocuments.filter((d) => d.file_path).length === 0}
                   onClick={async () => {
-                    const ids = filteredDocuments.filter((d) => d.file_path && String(d.file_path).trim()).map((d) => d.id);
-                    if (ids.length === 0) {
+                    const companyIds = [...new Set(filteredDocuments.filter((d) => d.file_path && String(d.file_path).trim()).map((d) => d.company_id))];
+                    if (companyIds.length === 0) {
                       toast.error("Nenhum documento com arquivo disponível na lista.");
                       return;
                     }
                     setDownloadingZip(true);
                     try {
-                      await downloadFiscalDocumentsZip(ids, type ?? undefined);
-                      toast.success(`Download iniciado: ${ids.length} arquivo(s) (todos os listados).`);
+                      const types = type ? [typeToDb(type)] : [];
+                      await downloadFiscalCompaniesZip(companyIds, type ?? undefined, types);
+                      toast.success(`Download iniciado: ${companyIds.length} empresa(s) (documentos listados).`);
                     } catch (e) {
                       toast.error(e instanceof Error ? e.message : "Erro ao baixar ZIP.");
                     } finally {

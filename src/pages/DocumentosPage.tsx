@@ -1,16 +1,14 @@
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { FileText, Download, Filter, Search, FileArchive } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
-import { getAllFiscalDocuments } from "@/services/dashboardService";
-import { downloadFiscalDocument, downloadFiscalDocumentsZip, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
+import { getAllHubDocuments } from "@/services/dashboardService";
+import { downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi } from "@/services/serverFileService";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DataPagination } from "@/components/common/DataPagination";
-
-const tipoFilters = ["Todos", "NFS", "NFE", "NFC"];
 
 function exportToCsv(
   data: Array<{ empresa: string; cnpj: string | null; type: string; periodo: string; status: string; document_date: string | null; created_at: string }>
@@ -32,7 +30,8 @@ function exportToCsv(
 }
 
 export default function DocumentosPage() {
-  const [filterTipo, setFilterTipo] = useState("Todos");
+  const [filterFileKind, setFilterFileKind] = useState<"Todos" | "XML" | "PDF">("Todos");
+  const [filterCategory, setFilterCategory] = useState<string>("Todos");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -43,21 +42,95 @@ export default function DocumentosPage() {
   const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
 
   const { data: documents = [], isLoading } = useQuery({
-    queryKey: ["fiscal-documents-all", companyFilter],
-    queryFn: () => getAllFiscalDocuments(companyFilter),
+    queryKey: ["hub-documents-all", companyFilter],
+    queryFn: () => getAllHubDocuments(companyFilter),
   });
 
-  const filtered = documents.filter((doc) => {
-    const matchesTipo = filterTipo === "Todos" || doc.type === filterTipo;
+  const normalize = (v: unknown) =>
+    String(v ?? "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "");
+
+  const getCategoryKey = (doc: { source?: string; type?: string }) => {
+    const source = String(doc.source || "").toLowerCase();
+    const type = String(doc.type || "").toUpperCase();
+    if (source === "certidoes") return "certidoes";
+    if (source === "dp_guias" || source === "municipal_taxes") return "taxas_impostos";
+    if (source === "fiscal") {
+      if (type === "NFS") return "nfs";
+      if (type === "NFE" || type === "NFC") return "nfe_nfc";
+      return "fiscal_outros";
+    }
+    return "outros";
+  };
+
+  const categoryLabel: Record<string, string> = {
+    certidoes: "Certidões",
+    nfs: "NFS",
+    nfe_nfc: "NFE/NFC",
+    taxas_impostos: "Taxas e impostos",
+    fiscal_outros: "Fiscal (outros)",
+    outros: "Outros",
+  };
+
+  const getSubTypeLabel = (doc: { type?: string }) => {
+    const t = String(doc.type || "").trim();
+    const m = t.match(/-\s*(.+)$/);
+    if (m && m[1]) return m[1].trim();
+    return t;
+  };
+
+  const availableCategories = useMemo(() => {
+    const keys = new Set<string>();
+    for (const d of documents) keys.add(getCategoryKey(d as { source?: string; type?: string }));
+    const ordered = ["certidoes", "nfs", "nfe_nfc", "taxas_impostos", "fiscal_outros", "outros"].filter((k) => keys.has(k));
+    const remaining = [...keys].filter((k) => !ordered.includes(k)).sort((a, b) => a.localeCompare(b));
+    return ["Todos", ...ordered, ...remaining].map((k) => (k === "Todos" ? "Todos" : categoryLabel[k] ?? k));
+  }, [documents]);
+
+  const categoryKeyByLabel = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const [k, v] of Object.entries(categoryLabel)) m.set(v, k);
+    return m;
+  }, []);
+
+  const selectedCategoryKey = filterCategory === "Todos" ? "Todos" : (categoryKeyByLabel.get(filterCategory) ?? filterCategory);
+
+  const filtered = useMemo(() => documents.filter((doc) => {
+    const k = getCategoryKey(doc as { source?: string; type?: string });
+    const matchesCategory = selectedCategoryKey === "Todos" || k === selectedCategoryKey;
+    const sub = getSubTypeLabel(doc as { type?: string });
+    const filePath = String(doc.file_path ?? "");
+    const lowerPath = filePath.toLowerCase();
+    const fileKind = lowerPath.endsWith(".xml") ? "XML" : lowerPath.endsWith(".pdf") ? "PDF" : "OUTRO";
+    const matchesFileKind = filterFileKind === "Todos" || fileKind === filterFileKind;
     const docDate = String(doc.document_date ?? doc.created_at ?? "").slice(0, 10);
     const matchesDateFrom = !dateFrom || (docDate && docDate >= dateFrom);
     const matchesDateTo = !dateTo || (docDate && docDate <= dateTo);
+    const q = normalize(search);
+    const digitsQuery = String(search).replace(/\D/g, "");
+    const origin = String((doc as { origem?: string | null }).origem || "");
+    const status = String((doc as { status?: string | null }).status || "");
     const matchesSearch =
-      doc.empresa.toLowerCase().includes(search.toLowerCase()) ||
-      (doc.cnpj && doc.cnpj.replace(/\D/g, "").includes(search.replace(/\D/g, ""))) ||
-      (doc.chave && doc.chave.includes(search));
-    return matchesTipo && matchesSearch && matchesDateFrom && matchesDateTo;
-  });
+      !q ||
+      normalize(doc.empresa).includes(q) ||
+      normalize(doc.type).includes(q) ||
+      normalize(sub).includes(q) ||
+      normalize(status).includes(q) ||
+      normalize(origin).includes(q) ||
+      normalize(doc.periodo).includes(q) ||
+      normalize(filePath).includes(q) ||
+      (digitsQuery.length > 0 && doc.cnpj && String(doc.cnpj).replace(/\D/g, "").includes(digitsQuery)) ||
+      (doc.chave && normalize(doc.chave).includes(q));
+    return matchesCategory && matchesFileKind && matchesSearch && matchesDateFrom && matchesDateTo;
+  }), [documents, filterCategory, selectedCategoryKey, filterFileKind, search, dateFrom, dateTo]);
+
+  // Quando filtros mudam, volta para a primeira página (evita “parece que não filtrou”).
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterCategory, filterFileKind, search, dateFrom, dateTo, pageSize]);
 
   const pagination = useMemo(() => {
     const total = filtered.length;
@@ -78,11 +151,11 @@ export default function DocumentosPage() {
   const pageDocuments = pagination.list;
   const canDownload = hasServerApi();
 
-  const handleDownload = async (id: string, chave: string | null, filePath: string | null) => {
+  const handleDownload = async (filePath: string | null) => {
     try {
-      const suggestedName = filePath ? filePath.split("/").pop() ?? (chave ? `documento-${chave}` : undefined) : undefined;
-      await downloadFiscalDocument(id, suggestedName);
-      await markFiscalDocumentDownloaded(id);
+      if (!filePath) throw new Error("Arquivo indisponível.");
+      const suggestedName = filePath.split("/").pop() ?? "arquivo.pdf";
+      await downloadServerFileByPath(filePath, suggestedName);
       toast.success("Download iniciado.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao baixar.");
@@ -94,15 +167,34 @@ export default function DocumentosPage() {
       toast.error("Configure SERVER_API_URL para habilitar download em ZIP.");
       return;
     }
-    const ids = filtered.filter((doc) => doc.file_path && String(doc.file_path).trim()).map((doc) => doc.id);
-    if (ids.length === 0) {
+    const listWithFiles = filtered.filter((d) => d.file_path && String(d.file_path).trim());
+    if (listWithFiles.length === 0) {
       toast.error("Nenhum documento com arquivo disponível na lista.");
       return;
     }
     setDownloadingZip(true);
     try {
-      await downloadFiscalDocumentsZip(ids, "documentos");
-      toast.success(`Download em ZIP iniciado para ${ids.length} documento(s) (todos os listados).`);
+      // Regra: baixar APENAS o que está listado (respeita XML/PDF e filtros atuais).
+      const items = listWithFiles.map((d) => {
+        const k = getCategoryKey(d as { source?: string; type?: string });
+        const folder =
+          k === "certidoes"
+            ? "certidoes"
+            : k === "nfs"
+              ? "nfs"
+              : k === "nfe_nfc"
+                ? "nfe-nfc"
+                : k === "taxas_impostos"
+                  ? "taxas e impostos"
+                  : "outros";
+        return {
+          companyName: d.empresa || "EMPRESA",
+          category: folder,
+          filePath: String(d.file_path || ""),
+        };
+      });
+      await downloadListedFilesZipWithCategory(items, "documentos");
+      toast.success(`Download em ZIP iniciado para ${items.length} arquivo(s) (somente os listados).`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao gerar ZIP.");
     } finally {
@@ -133,19 +225,30 @@ export default function DocumentosPage() {
         <div className="p-3 sm:p-4 border-b border-border flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
-            {tipoFilters.map((tipo) => (
-              <button
-                key={tipo}
-                onClick={() => setFilterTipo(tipo)}
-                className={`rounded-xl px-4 py-2.5 text-sm font-medium transition-all touch-manipulation min-h-[44px] min-w-[64px] ${
-                  filterTipo === tipo
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "border border-border hover:bg-muted active:bg-muted/80"
-                }`}
-              >
-                {tipo}
-              </button>
-            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <select
+              value={filterCategory}
+              onChange={(e) => setFilterCategory(e.target.value)}
+              className="rounded-xl border border-border bg-background px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary-icon touch-manipulation min-h-[44px]"
+              title="Categoria"
+            >
+              {availableCategories.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <select
+              value={filterFileKind}
+              onChange={(e) => setFilterFileKind(e.target.value as "Todos" | "XML" | "PDF")}
+              className="rounded-xl border border-border bg-background px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary-icon touch-manipulation min-h-[44px]"
+              title="Tipo de arquivo"
+            >
+              <option value="Todos">XML e PDF</option>
+              <option value="XML">Somente XML</option>
+              <option value="PDF">Somente PDF</option>
+            </select>
           </div>
           <div className="flex flex-col sm:flex-row gap-2">
             <div className="relative min-w-0 flex-1">
@@ -223,7 +326,7 @@ export default function DocumentosPage() {
                     </td>
                     <td className="px-3 sm:px-4 py-3">{doc.periodo}</td>
                     <td className="px-3 sm:px-4 py-3">
-                      <StatusBadge status={doc.status as "validado" | "novo" | "divergente" | "processando" | "pendente"} />
+                      <StatusBadge status={doc.status} />
                     </td>
                     <td className="px-3 sm:px-4 py-3 text-muted-foreground">Automação</td>
                     <td className="px-3 sm:px-4 py-3 text-muted-foreground">{(doc.document_date ?? doc.created_at ?? "").toString().slice(0, 10)}</td>
@@ -231,7 +334,7 @@ export default function DocumentosPage() {
                       {doc.file_path ? (
                         <button
                           type="button"
-                          onClick={() => handleDownload(doc.id, doc.chave, doc.file_path)}
+                          onClick={() => handleDownload(doc.file_path)}
                           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium bg-primary/10 text-primary-icon hover:bg-primary/20 transition-colors"
                         >
                           <Download className="h-3 w-3" /> {getDownloadLabel(doc.file_path)}

@@ -414,12 +414,11 @@ export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFr
   }
 }
 
-/** Lista todos os documentos fiscais (NFS, NFE, NFC) para a página Documentos. */
+/** Lista todos os documentos (XML/PDF) para a página Documentos. */
 export async function getAllFiscalDocuments(companyIds: string[] | null) {
   let q = supabase
     .from("fiscal_documents")
     .select("id, company_id, type, chave, periodo, status, document_date, file_path, created_at")
-    .in("type", ["NFS", "NFE", "NFC"])
     .order("created_at", { ascending: false })
   if (companyIds && companyIds.length > 0) {
     q = q.in("company_id", companyIds)
@@ -438,6 +437,162 @@ export async function getAllFiscalDocuments(companyIds: string[] | null) {
     cnpj: documents.get(d.company_id) ?? "",
     file_path: (d as { file_path?: string | null }).file_path ?? null,
   }))
+}
+
+export type UnifiedDocumentRow = {
+  id: string
+  company_id: string
+  empresa: string
+  cnpj: string | null
+  source: "fiscal" | "certidoes" | "dp_guias" | "municipal_taxes"
+  type: string
+  origem: "recebidas" | "emitidas" | null
+  status: string | null
+  periodo: string | null
+  document_date: string | null
+  created_at: string
+  file_path: string | null
+  chave?: string | null
+}
+
+/** Lista unificada de TODOS os documentos do hub (XML/PDF): notas, certidões, guias/taxas e impostos. */
+export async function getAllHubDocuments(companyIds: string[] | null): Promise<UnifiedDocumentRow[]> {
+  const companyFilter = companyIds && companyIds.length > 0 ? companyIds : null
+
+  const [fiscalDocs, certidoes, dpGuiasRes, municipalRes] = await Promise.all([
+    getAllFiscalDocuments(companyFilter),
+    getCertidoesDocuments(companyFilter),
+    (async () => {
+      let q = supabase
+        .from("dp_guias")
+        .select("id, company_id, tipo, data, created_at, file_path")
+        .order("created_at", { ascending: false })
+      if (companyFilter) q = q.in("company_id", companyFilter)
+      const { data, error } = await q
+      if (error) throw error
+      return data ?? []
+    })(),
+    (async () => {
+      let q = supabase
+        .from("municipal_tax_debts")
+        .select("id, company_id, tributo, numero_documento, data_vencimento, valor, guia_pdf_path, fetched_at, created_at")
+        .order("created_at", { ascending: false })
+      if (companyFilter) q = q.in("company_id", companyFilter)
+      const { data, error } = await q
+      if (error) throw error
+      return data ?? []
+    })(),
+  ])
+
+  const companyIdsList = [
+    ...new Set(
+      [
+        ...fiscalDocs.map((d) => d.company_id),
+        ...certidoes.map((d) => d.company_id),
+        ...dpGuiasRes.map((d) => d.company_id),
+        ...municipalRes.map((d) => d.company_id),
+      ].filter(Boolean)
+    ),
+  ]
+  const { data: companies } = companyIdsList.length
+    ? await supabase.from("companies").select("id, name, document").in("id", companyIdsList)
+    : { data: [] as Array<{ id: string; name: string; document: string | null }> }
+  const names = new Map((companies ?? []).map((c) => [c.id, c.name]))
+  const documents = new Map((companies ?? []).map((c) => [c.id, c.document]))
+
+  const unified: UnifiedDocumentRow[] = []
+
+  for (const d of fiscalDocs) {
+    const fp = String((d as { file_path?: string | null }).file_path ?? "")
+    const origem = /\/Recebidas\//i.test(fp) ? "recebidas" : /\/Emitidas\//i.test(fp) ? "emitidas" : null
+    unified.push({
+      id: d.id,
+      company_id: d.company_id,
+      empresa: d.empresa ?? names.get(d.company_id) ?? "",
+      cnpj: d.cnpj ?? documents.get(d.company_id) ?? null,
+      source: "fiscal",
+      type: String(d.type || "NFS"),
+      origem,
+      status: String(d.status || "") || null,
+      periodo: String(d.periodo || "") || null,
+      document_date: String(d.document_date || "") || null,
+      created_at: String(d.created_at || ""),
+      file_path: d.file_path ?? null,
+      chave: (d as { chave?: string | null }).chave ?? null,
+    })
+  }
+
+  for (const d of certidoes) {
+    const rawStatus = String((d as { status?: string | null }).status || "").trim().toLowerCase()
+    const normalizedStatus = rawStatus === "regular" ? "negativa" : rawStatus
+    unified.push({
+      id: d.id,
+      company_id: d.company_id,
+      empresa: d.empresa ?? names.get(d.company_id) ?? "",
+      cnpj: d.cnpj ?? documents.get(d.company_id) ?? null,
+      source: "certidoes",
+      type: `CERTIDÃO - ${String((d as { tipo_certidao?: string }).tipo_certidao || "").trim() || "OUTRA"}`,
+      origem: null,
+      status: normalizedStatus || null,
+      periodo: String((d as { periodo?: string | null }).periodo || "") || null,
+      document_date: String((d as { document_date?: string | null }).document_date || "") || null,
+      created_at: String((d as { created_at?: string }).created_at || ""),
+      file_path: (d as { file_path?: string | null }).file_path ?? null,
+    })
+  }
+
+  for (const g of dpGuiasRes) {
+    unified.push({
+      id: g.id,
+      company_id: g.company_id,
+      empresa: names.get(g.company_id) ?? "",
+      cnpj: documents.get(g.company_id) ?? null,
+      source: "dp_guias",
+      type: `GUIA - ${String(g.tipo || "OUTROS")}`,
+      origem: null,
+      status: null,
+      periodo: String(g.data || "").slice(0, 7) || null,
+      document_date: String(g.data || "").slice(0, 10) || null,
+      created_at: String(g.created_at || ""),
+      file_path: (g as { file_path?: string | null }).file_path ?? null,
+    })
+  }
+
+  for (const m of municipalRes) {
+    const valorNum = Number((m as { valor?: unknown }).valor ?? 0)
+    const venc = String((m as { data_vencimento?: string | null }).data_vencimento || "").slice(0, 10)
+    const today = new Date()
+    const base = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
+    let statusClass: "vencido" | "a_vencer" | "regular" = "regular"
+    if (valorNum === 0) {
+      statusClass = "regular"
+    } else if (venc) {
+      const due = new Date(`${venc}T00:00:00`).getTime()
+      const diffDays = Math.ceil((due - base) / (24 * 60 * 60 * 1000))
+      if (diffDays < 0) statusClass = "vencido"
+      else if (diffDays <= 30) statusClass = "a_vencer"
+      else statusClass = "regular"
+    }
+    unified.push({
+      id: m.id,
+      company_id: m.company_id,
+      empresa: names.get(m.company_id) ?? "",
+      cnpj: documents.get(m.company_id) ?? null,
+      source: "municipal_taxes",
+      type: `IMPOSTO/TAXA - ${String(m.tributo || "OUTROS")}`,
+      origem: null,
+      status: statusClass,
+      periodo: String(m.data_vencimento || "").slice(0, 7) || null,
+      document_date: String(m.data_vencimento || "").slice(0, 10) || null,
+      created_at: String(m.fetched_at || m.created_at || ""),
+      file_path: String(m.guia_pdf_path || "") || null,
+    })
+  }
+
+  // Só mantém entradas com arquivo (objetivo da tela: XML/PDF no disco)
+  return unified
+    .filter((d) => d.file_path && String(d.file_path).trim())
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
 }
 
 export async function getFiscalOverviewAnalytics(companyIds: string[] | null, dateFrom: string, dateTo: string) {
