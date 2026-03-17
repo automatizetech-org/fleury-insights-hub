@@ -868,17 +868,17 @@ export default function FiscalDetailPage() {
                   variant="default"
                   size="sm"
                   className="gap-1.5 text-xs"
-                  disabled={downloadingZip || documentsToShow.filter((d) => d.file_path).length === 0}
+                  disabled={downloadingZip || filteredDocuments.filter((d) => d.file_path).length === 0}
                   onClick={async () => {
-                    const ids = documentsToShow.filter((d) => d.file_path && String(d.file_path).trim()).map((d) => d.id);
+                    const ids = filteredDocuments.filter((d) => d.file_path && String(d.file_path).trim()).map((d) => d.id);
                     if (ids.length === 0) {
-                      toast.error("Nenhum documento com arquivo disponível na página atual.");
+                      toast.error("Nenhum documento com arquivo disponível na lista.");
                       return;
                     }
                     setDownloadingZip(true);
                     try {
                       await downloadFiscalDocumentsZip(ids, type ?? undefined);
-                      toast.success(`Download iniciado: ${ids.length} arquivo(s) da página atual.`);
+                      toast.success(`Download iniciado: ${ids.length} arquivo(s) (todos os listados).`);
                     } catch (e) {
                       toast.error(e instanceof Error ? e.message : "Erro ao baixar ZIP.");
                     } finally {

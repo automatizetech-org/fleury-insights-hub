@@ -182,7 +182,10 @@ def _load_env():
 
 
 AUTOMATION_NAME = "CertidoesBot"
-PORTAL_TIMEOUT = 90000
+PORTAL_TIMEOUT = 90000  # navegação (goto)
+POPUP_TIMEOUT = 20000   # expect_popup — evita travar se popup não abrir
+STEP_TIMEOUT = 30000    # cliques, load_state, etc.
+MAX_SECONDS_PER_COMPANY = 300  # watchdog: máx 5 min por empresa, depois pula
 CDP_PORT = 9222
 CHROME_EXE = DATA_DIR / "Chrome" / "chrome.exe"
 PROFILE_DIR = DATA_DIR / "chrome_cdp_profile"
@@ -1977,7 +1980,7 @@ class AutomationThread(QThread):
         except Exception:
             pass
         try:
-            page.set_default_timeout(PORTAL_TIMEOUT)
+            page.set_default_timeout(STEP_TIMEOUT)
             ctx.set_default_navigation_timeout(PORTAL_TIMEOUT)
         except Exception:
             pass
@@ -2372,10 +2375,10 @@ class AutomationThread(QThread):
         page.goto(url, wait_until="domcontentloaded", timeout=90000)
         page.wait_for_timeout(800)
         try:
-            page.locator("#Certidao\\.TipoDocumentoCNPJ").check()
+            page.locator("#Certidao\\.TipoDocumentoCNPJ").check(timeout=STEP_TIMEOUT)
         except Exception:
             pass
-        page.locator("#Certidao\\.NumeroDocumentoCNPJ").fill(cnpj)
+        page.locator("#Certidao\\.NumeroDocumentoCNPJ").fill(cnpj, timeout=STEP_TIMEOUT)
         pdf_bytes: List[bytes] = []
         dest_path = out_dir / "estadual_go.pdf"
 
@@ -2388,10 +2391,10 @@ class AutomationThread(QThread):
                     pass
 
         page.on("response", on_resp)
-        with page.expect_popup() as pop_info:
-            page.locator('input[type=submit][value="Emitir"]').click()
+        with page.expect_popup(timeout=POPUP_TIMEOUT) as pop_info:
+            page.locator('input[type=submit][value="Emitir"]').click(timeout=STEP_TIMEOUT)
         pop = pop_info.value
-        pop.wait_for_load_state("domcontentloaded")
+        pop.wait_for_load_state("domcontentloaded", timeout=STEP_TIMEOUT)
         if "Acesso Negado" in (pop.title() or ""):
             self.log.emit("⚠️ Acesso negado na SEFAZ GO.")
             return None
@@ -2461,7 +2464,7 @@ class AutomationThread(QThread):
             self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
             return dest_path
         try:
-            container_html = pop.locator("#container").evaluate("el => el.outerHTML")
+            container_html = pop.locator("#container").evaluate("el => el.outerHTML", timeout=5000)
             fallback = out_dir / "estadual_go_container.html"
             fallback.write_text(container_html or "", encoding="utf-8")
             self.log.emit(f"💾 Container salvo em {fallback} (PDF não interceptado).")
@@ -2501,7 +2504,7 @@ class AutomationThread(QThread):
                 return None, f"Erro ao preencher CNPJ: {e}", False
 
             try:
-                pg.locator("button:has-text('Emitir Certidão')").click()
+                pg.locator("button:has-text('Emitir Certidão')").click(timeout=STEP_TIMEOUT)
             except Exception as e:
                 self.log.emit(f"⚠️ Falha ao clicar em Emitir Certidão: {e}")
 
@@ -2509,7 +2512,7 @@ class AutomationThread(QThread):
                 start_wait = time.time()
                 while time.time() - start_wait < 30:
                     loader = pg.locator(loader_selector)
-                    if loader.count() > 0 and loader.nth(0).is_visible():
+                    if loader.count() > 0 and loader.nth(0).is_visible(timeout=2000):
                         pg.wait_for_timeout(250)
                         continue
                     break
@@ -2521,7 +2524,7 @@ class AutomationThread(QThread):
             while time.time() - start < 60:
                 try:
                     loader = pg.locator(loader_selector)
-                    if loader.count() > 0 and loader.nth(0).is_visible():
+                    if loader.count() > 0 and loader.nth(0).is_visible(timeout=2000):
                         pg.wait_for_timeout(250)
                         continue
                 except Exception:
@@ -2532,7 +2535,7 @@ class AutomationThread(QThread):
                 try:
                     msg_el = pg.locator("div.msg-resultado, #alert-content .description")
                     if msg_el.count() > 0:
-                        msg_txt = (msg_el.inner_text() or "").strip()
+                        msg_txt = (msg_el.inner_text(timeout=2000) or "").strip()
                         if msg_txt and msg_txt != last_msg:
                             last_msg = msg_txt
                             self.log.emit(f"ℹ️ RFB retornou: {msg_txt}")
@@ -2548,7 +2551,7 @@ class AutomationThread(QThread):
                     pass
                 try:
                     link_download = pg.locator("a:has-text('download do documento PDF da certidão')")
-                    if link_download.count() > 0 and link_download.nth(0).is_visible():
+                    if link_download.count() > 0 and link_download.nth(0).is_visible(timeout=3000):
                         with pg.expect_download(timeout=15000) as dl_info:
                             link_download.nth(0).click()
                         download = dl_info.value
@@ -2578,7 +2581,7 @@ class AutomationThread(QThread):
                             try:
                                 msg_el = pg.locator("div.msg-resultado, #alert-content .description")
                                 if msg_el.count() > 0:
-                                    msg_txt = (msg_el.inner_text() or "").strip()
+                                    msg_txt = (msg_el.inner_text(timeout=2000) or "").strip()
                                     if msg_txt and msg_txt != last_msg:
                                         last_msg = msg_txt
                                         self.log.emit(f"ℹ️ RFB retornou: {msg_txt}")
@@ -2685,7 +2688,7 @@ class AutomationThread(QThread):
             page.fill("#mainForm\\:txtInscricao1", cnpj)
         except Exception:
             page.fill("input[id*='txtInscricao']", cnpj)
-        page.locator("#mainForm\\:btnConsultar, button[name='mainForm:btnConsultar']").click()
+        page.locator("#mainForm\\:btnConsultar, button[name='mainForm:btnConsultar']").click(timeout=STEP_TIMEOUT)
         page.wait_for_timeout(2000)
 
         detected_status = _detect_fgts_terminal_status()
@@ -2711,7 +2714,7 @@ class AutomationThread(QThread):
 
         # seguir para emissão do CRF
         try:
-            page.locator("#mainForm\\:j_id51").click()
+            page.locator("#mainForm\\:j_id51").click(timeout=STEP_TIMEOUT)
             page.wait_for_timeout(1500)
         except Exception:
             pass
@@ -2719,7 +2722,7 @@ class AutomationThread(QThread):
         if detected_status:
             return None, detected_status
         try:
-            page.locator("#mainForm\\:btnVisualizar").click()
+            page.locator("#mainForm\\:btnVisualizar").click(timeout=STEP_TIMEOUT)
             page.wait_for_timeout(1500)
         except Exception:
             self.log.emit("⚠️ Não consegui clicar em Visualizar antes de salvar a certidão FGTS.")
@@ -2745,7 +2748,7 @@ class AutomationThread(QThread):
             pw, browser, context, base_page, proc = self._start_playwright_cdp()
             try:
                 if hasattr(context, "set_default_timeout"):
-                    context.set_default_timeout(PORTAL_TIMEOUT)
+                    context.set_default_timeout(STEP_TIMEOUT)
             except Exception:
                 pass
             try:
@@ -2784,10 +2787,23 @@ class AutomationThread(QThread):
                 pdf_est = None
                 pdf_fed = None
                 pdf_fgts = None
+                company_start = time.time()
+
+                def _company_elapsed():
+                    return time.time() - company_start
+
+                def _check_watchdog(label: str, detail_key: str) -> bool:
+                    if _company_elapsed() > MAX_SECONDS_PER_COMPANY:
+                        msg = f"Erro: tempo máximo por empresa ({MAX_SECONDS_PER_COMPANY}s) — interrompido"
+                        detail[detail_key] = msg
+                        self.log.emit(f"⏱️ Watchdog: {msg}. Pulando {label} e seguindo.")
+                        return True
+                    return False
+
                 try:
                     current_page = self._ensure_single_tab(context)
                     # Estadual
-                    if _is_error_status(detail.get("Estadual", "")):
+                    if _is_error_status(detail.get("Estadual", "")) and not _check_watchdog("estadual", "Estadual"):
                         try:
                             pdf_est = self._certidao_estadual(context, cnpj_raw, out_dir, page=current_page)
                             if pdf_est and pdf_est.exists():
@@ -2797,7 +2813,7 @@ class AutomationThread(QThread):
                             detail["Estadual"] = f"Erro: {e}"
                             self.log.emit(f"⚠️ Erro na estadual ({name_disp}): {e}")
                     # Federal
-                    if _is_error_status(detail.get("Federal", "")):
+                    if _is_error_status(detail.get("Federal", "")) and not _check_watchdog("federal", "Federal"):
                         try:
                             current_page = self._ensure_single_tab(context)
                             pdf_fed, status_fed = self._certidao_federal(context, cnpj_raw, out_dir, page=current_page)
@@ -2812,7 +2828,7 @@ class AutomationThread(QThread):
                             detail["Federal"] = f"Erro: {e}"
                             self.log.emit(f"⚠️ Erro na federal ({name_disp}): {e}")
                     # FGTS
-                    if _is_error_status(detail.get("FGTS", "")):
+                    if _is_error_status(detail.get("FGTS", "")) and not _check_watchdog("FGTS", "FGTS"):
                         try:
                             current_page = self._ensure_single_tab(context)
                             pdf_fgts, status_fgts = self._certidao_fgts(context, cnpj_raw, out_dir, page=current_page)

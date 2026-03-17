@@ -569,13 +569,13 @@ function MunicipalTaxesPanel({
                 disabled={downloadingZip || listedGuidePaths.length === 0}
                 onClick={async () => {
                   if (listedGuidePaths.length === 0) {
-                    toast.error("Nenhum débito com guia disponível na página atual.")
+                    toast.error("Nenhum débito com guia disponível na lista.")
                     return
                   }
                   setDownloadingZip(true)
                   try {
                     await downloadServerFilesZip(listedGuidePaths, "guias-taxas-impostos")
-                    toast.success(`Download iniciado: ${listedGuidePaths.length} guia(s) da página atual.`)
+                    toast.success(`Download iniciado: ${listedGuidePaths.length} guia(s) (todos os listados).`)
                   } catch (e) {
                     toast.error(e instanceof Error ? e.message : "Erro ao baixar ZIP.")
                   } finally {

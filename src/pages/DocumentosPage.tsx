@@ -94,15 +94,15 @@ export default function DocumentosPage() {
       toast.error("Configure SERVER_API_URL para habilitar download em ZIP.");
       return;
     }
-    const ids = pageDocuments.filter((doc) => doc.file_path && String(doc.file_path).trim()).map((doc) => doc.id);
+    const ids = filtered.filter((doc) => doc.file_path && String(doc.file_path).trim()).map((doc) => doc.id);
     if (ids.length === 0) {
-      toast.error("Nenhum documento com arquivo disponível na página atual.");
+      toast.error("Nenhum documento com arquivo disponível na lista.");
       return;
     }
     setDownloadingZip(true);
     try {
       await downloadFiscalDocumentsZip(ids, "documentos");
-      toast.success(`Download em ZIP iniciado para ${ids.length} documento(s).`);
+      toast.success(`Download em ZIP iniciado para ${ids.length} documento(s) (todos os listados).`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao gerar ZIP.");
     } finally {
@@ -187,7 +187,7 @@ export default function DocumentosPage() {
             <Button
               type="button"
               onClick={handleZipDownload}
-              disabled={downloadingZip || !canDownload || pageDocuments.filter((doc) => doc.file_path).length === 0}
+              disabled={downloadingZip || !canDownload || filtered.filter((doc) => doc.file_path).length === 0}
               className="min-h-[44px] rounded-xl px-4 py-3 text-sm"
             >
               <FileArchive className="mr-2 h-4 w-4" />
