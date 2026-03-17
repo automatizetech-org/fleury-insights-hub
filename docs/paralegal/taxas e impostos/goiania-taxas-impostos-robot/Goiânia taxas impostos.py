@@ -154,7 +154,20 @@ def _update_proxy_list() -> int:
 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+def _get_supabase_service_role_key() -> str:
+    for env_name in (
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SERVICE_ROLE_KEY",
+        "SUPABASE_KEY",
+        "SUPABASE_SECRET_KEY",
+        "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY",
+    ):
+        value = (os.getenv(env_name) or "").strip()
+        if value:
+            return value
+    return ""
+
+SUPABASE_SERVICE_ROLE_KEY = _get_supabase_service_role_key()
 GOIANIA_PORTAL_CPF = os.getenv("GOIANIA_PORTAL_CPF", "")
 GOIANIA_PORTAL_PASSWORD = os.getenv("GOIANIA_PORTAL_PASSWORD", "")
 # URL do server-api (dashboard); base_path e estrutura de pastas (segment_path) vêm daqui.
@@ -248,7 +261,7 @@ _robot_api_config: dict[str, Any] | None = None
 
 def get_robot_supabase() -> tuple[str | None, str | None]:
     url = SUPABASE_URL.strip()
-    key = SUPABASE_ANON_KEY.strip()
+    key = SUPABASE_SERVICE_ROLE_KEY.strip()
     if url and key:
         return (url, key)
     return (None, None)
@@ -428,9 +441,9 @@ class RecaptchaTimeoutError(RuntimeError):
 
 class RobotBackend:
     def __init__(self) -> None:
-        if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-            raise RuntimeError("SUPABASE_URL e SUPABASE_ANON_KEY precisam estar definidos no .env do robô.")
-        self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+            raise RuntimeError("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY precisam estar definidos no .env do robô.")
+        self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
         self.playwright = None
         self.browser = None
         self.context: BrowserContext | None = None
@@ -486,7 +499,9 @@ class RobotBackend:
             self._log_cb(message)
 
     def _client(self) -> Client:
-        return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+            raise RuntimeError("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY precisam estar definidos no .env do robô.")
+        return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
     def fetch_robot_row(self) -> dict[str, Any] | None:
         try:

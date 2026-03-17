@@ -343,11 +343,24 @@ def attach_glow(widget, color: str = "#4da3ff", strength: int = 26) -> None:
     widget.installEventFilter(filt)
 
 # --------------------------------------------------------------------
-# Licenca (Supabase + armazenamento local)
+# Supabase (service role para o robô)
 # --------------------------------------------------------------------
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+def _get_supabase_service_role_key() -> str:
+    for env_name in (
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SERVICE_ROLE_KEY",
+        "SUPABASE_KEY",
+        "SUPABASE_SECRET_KEY",
+        "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY",
+    ):
+        value = (os.getenv(env_name) or "").strip()
+        if value:
+            return value
+    return ""
+
+SUPABASE_SERVICE_ROLE_KEY = _get_supabase_service_role_key()
 LICENSE_PATH = JSON_DIR / "license.json"
 
 AUTO_UPDATE_APP_VERSION = "1.0.0"
@@ -1383,7 +1396,7 @@ def fetch_central_folder_structure(path_logical: Optional[str] = None) -> Tuple[
 def get_robot_supabase(preferences: Optional[Dict[str, Any]] = None) -> Tuple[Optional[str], Optional[str]]:
     """Retorna (url, anon_key) do Supabase para o robô: apenas .env (config só no dashboard)."""
     url = os.environ.get("SUPABASE_URL", "").strip()
-    key = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+    key = _get_supabase_service_role_key()
     if url and key:
         return (url, key)
     return (None, None)
@@ -2125,7 +2138,20 @@ def cnpj_register_call() -> None:
 
 
 def _get_supabase_client():
-    return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise RuntimeError("Supabase não configurado. Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.")
+    return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+
+def _get_license_supabase_client():
+    """Cliente Supabase usado apenas para validar licença (projeto separado)."""
+    url = (os.environ.get("LICENSE_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or "").strip()
+    anon = (os.environ.get("LICENSE_SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_ANON_KEY") or "").strip()
+    if not url or not anon:
+        raise RuntimeError(
+            "Supabase (licenca) nao configurado. Defina LICENSE_SUPABASE_URL e LICENSE_SUPABASE_ANON_KEY."
+        )
+    return create_client(url, anon)
 
 
 def _load_license_local() -> Dict[str, Any]:
@@ -2160,7 +2186,7 @@ def check_license_with_supabase(key: str) -> Tuple[bool, str, Dict[str, Any]]:
     if not key:
         return False, "Informe a chave de licenca.", {}
     try:
-        client = _get_supabase_client()
+        client = _get_license_supabase_client()
         res = client.rpc("verify_license", {"p_key": key}).execute()
         rows = res.data if hasattr(res, "data") else []
     except Exception as exc:  # noqa: BLE001
@@ -3402,7 +3428,7 @@ class PathDialog(QDialog):
         self.le_supabase_url.setPlaceholderText("SUPABASE_URL (ex: https://xxx.supabase.co)")
         self.le_supabase_url.setStyleSheet("background:#34495E;color:#ECF0F1;border-radius:6px;padding:6px;font:9pt Verdana;")
         self.le_supabase_anon_key = QLineEdit(prefs.get("supabase_anon_key", ""))
-        self.le_supabase_anon_key.setPlaceholderText("SUPABASE_ANON_KEY")
+        self.le_supabase_anon_key.setPlaceholderText("SUPABASE_SERVICE_ROLE_KEY")
         self.le_supabase_anon_key.setEchoMode(QLineEdit.Password)
         self.le_supabase_anon_key.setStyleSheet("background:#34495E;color:#ECF0F1;border-radius:6px;padding:6px;font:9pt Verdana;")
 
@@ -3410,7 +3436,7 @@ class PathDialog(QDialog):
         server_layout.setSpacing(4)
         server_layout.addWidget(QLabel("SUPABASE_URL"))
         server_layout.addWidget(self.le_supabase_url)
-        server_layout.addWidget(QLabel("SUPABASE_ANON_KEY"))
+        server_layout.addWidget(QLabel("SUPABASE_SERVICE_ROLE_KEY"))
         server_layout.addWidget(self.le_supabase_anon_key)
         self.server_container = QWidget()
         self.server_container.setLayout(server_layout)
@@ -4645,7 +4671,7 @@ class MainWindow(QMainWindow):
             print("[Robô] Conectado ao painel. Status: ativo.", file=sys.stderr)
 
         if not url or not key:
-            print("[Robô] SUPABASE_URL ou SUPABASE_ANON_KEY não definidos. Coloque no .env em C:\\Users\\ROBO\\Documents\\ROBOS ou na pasta do bot.", file=sys.stderr)
+            print("[Robô] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não definidos. Coloque no .env em C:\\Users\\ROBO\\Documents\\ROBOS ou na pasta do bot.", file=sys.stderr)
         elif not self._robot_id:
             print("[Robô] Não foi possível registrar no painel. Veja a mensagem de erro acima.", file=sys.stderr)
 

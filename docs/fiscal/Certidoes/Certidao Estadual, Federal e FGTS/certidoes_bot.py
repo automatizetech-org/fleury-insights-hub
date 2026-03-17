@@ -250,20 +250,44 @@ def button_style(base: str, hover: str, pressed: str, text_color: str = "#E8F4FF
     """
 
 # =============================================================================
-# Licença (Supabase)
+# Supabase (service role para o robô)
 # =============================================================================
 from supabase import create_client
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+def _get_supabase_service_role_key() -> str:
+    for env_name in (
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SERVICE_ROLE_KEY",
+        "SUPABASE_KEY",
+        "SUPABASE_SECRET_KEY",
+        "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY",
+    ):
+        value = (os.getenv(env_name) or "").strip()
+        if value:
+            return value
+    return ""
+
+SUPABASE_SERVICE_ROLE_KEY = _get_supabase_service_role_key()
+
+
+def _get_license_supabase_client():
+    """Cliente Supabase usado apenas para validar licença (projeto separado)."""
+    url = (os.environ.get("LICENSE_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or "").strip()
+    anon = (os.environ.get("LICENSE_SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_ANON_KEY") or "").strip()
+    if not url or not anon:
+        raise RuntimeError(
+            "Supabase (licença) não configurado. Defina LICENSE_SUPABASE_URL e LICENSE_SUPABASE_ANON_KEY."
+        )
+    return create_client(url, anon)
 
 
 def _get_supabase_client():
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         raise RuntimeError(
-            "Supabase não configurado. Defina as variáveis de ambiente SUPABASE_URL e SUPABASE_ANON_KEY."
+            "Supabase não configurado. Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no ambiente da VM."
         )
-    return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 LICENSE_PATH = os.path.join(CONFIG_DIR, "license.json")
@@ -302,7 +326,7 @@ def check_license_with_supabase(key: str) -> tuple[bool, str, dict]:
     if not key:
         return (False, "Informe a chave de licença.", {})
     try:
-        client = _get_supabase_client()
+        client = _get_license_supabase_client()
         res = client.rpc("verify_license", {"p_key": key}).execute()
         rows = res.data if hasattr(res, "data") else []
     except Exception as e:
@@ -668,7 +692,7 @@ def _robot_log(message: str) -> None:
 
 def get_robot_supabase(preferences: Optional[Dict[str, Any]] = None) -> Tuple[Optional[str], Optional[str]]:
     url = os.environ.get("SUPABASE_URL", "").strip()
-    key = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+    key = _get_supabase_service_role_key()
     if url and key:
         return (url, key)
     return (None, None)
@@ -3140,7 +3164,7 @@ class MainWindow(QMainWindow):
             else:
                 self._log("[Robô] Supabase encontrado, mas falhou ao registrar em robots.")
         else:
-            self._log("[Robô] SUPABASE_URL ou SUPABASE_ANON_KEY não definidos.")
+            self._log("[Robô] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não definidos.")
         self._reload_company_list()
 
     def _refresh_companies_from_supabase(self):
