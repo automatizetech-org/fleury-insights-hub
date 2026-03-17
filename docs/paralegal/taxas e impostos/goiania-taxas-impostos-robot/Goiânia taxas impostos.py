@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import socket
+import time
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -393,6 +394,30 @@ class DebtRow:
     detalhes: dict[str, Any] = field(default_factory=dict)
 
 
+def _is_iss_tributo(tributo: str) -> bool:
+    """True se o tributo for ISS (ex.: ISS, 1759 - ISS RETIDO NA FONTE). Usado quando robot_goiania_skip_iss está ativo."""
+    if not tributo or not str(tributo).strip():
+        return False
+    n = tributo.strip().upper()
+    if n == "ISS" or n.startswith("ISS ") or n.startswith("ISS-") or n.endswith(" ISS"):
+        return True
+    if " ISS " in f" {n} ":
+        return True
+    return bool(re.search(r"\bISS\b", n))
+
+
+def _debt_is_iss(debt: DebtRow) -> bool:
+    """True se o débito for de ISS (tributo ou qualquer campo em linha_portal)."""
+    if _is_iss_tributo(debt.tributo):
+        return True
+    linha = (debt.detalhes or {}).get("linha_portal") or {}
+    if isinstance(linha, dict):
+        for v in linha.values():
+            if v and isinstance(v, str) and re.search(r"\bISS\b", v.upper()):
+                return True
+    return False
+
+
 class StopRequested(RuntimeError):
     pass
 
@@ -697,6 +722,19 @@ class RobotBackend:
         except APIError as exc:
             if exc.code != "PGRST205":
                 raise
+
+    def _get_skip_iss_config(self) -> bool:
+        """Lê admin_settings.robot_goiania_skip_iss (dashboard: Não capturar débitos de ISS)."""
+        try:
+            r = self.supabase.table("admin_settings").select("value").eq("key", "robot_goiania_skip_iss").limit(1).execute()
+            row = (r.data or [None])[0]
+            val = str((row or {}).get("value") or "").strip().lower() == "true"
+            if not val and (not r.data or len(r.data) == 0):
+                self._log("[Config] Chave robot_goiania_skip_iss não encontrada em admin_settings; débitos de ISS serão capturados. Crie a chave no dashboard (Editar robô Taxas e Impostos) ou aplique a migration 20260316120000.")
+            return val
+        except Exception as e:
+            self._log(f"[Config] Erro ao ler robot_goiania_skip_iss: {e}. Débitos de ISS serão capturados. Verifique se anon pode SELECT em admin_settings.")
+            return False
 
     def _clear_company_debts(self, company_id: str) -> None:
         try:
@@ -1106,7 +1144,6 @@ class RobotBackend:
                 self.portal_home_page = self.page
                 self.page.set_default_timeout(90000)
                 self.context.set_default_navigation_timeout(90000)
-                self._snapshot_profile_backup(profile_dir, backup_dir)
                 return
             except Exception as exc:
                 last_error = exc
@@ -1159,11 +1196,11 @@ class RobotBackend:
             self.playwright = None
             self._stop_mitmdump()
             try:
-                self._snapshot_profile_backup(_get_chrome_profile_dir(), CHROME_PROFILE_BACKUP_DIR)
+                await asyncio.sleep(2.5)
             except Exception:
                 pass
             try:
-                await asyncio.sleep(1.0)
+                self._snapshot_profile_backup(_get_chrome_profile_dir(), CHROME_PROFILE_BACKUP_DIR)
             except Exception:
                 pass
 
@@ -1332,12 +1369,17 @@ class RobotBackend:
             return False
 
     def _snapshot_profile_backup(self, profile_dir: Path, backup_dir: Path) -> None:
+        """Atualiza o backup do perfil apenas quando seguro (Chrome já fechado). Falhas são silenciosas."""
         if not self._is_profile_healthy(profile_dir):
             return
-        try:
-            self._copy_profile_tree(profile_dir, backup_dir)
-        except Exception as exc:
-            self._log(f"Aviso: falha ao atualizar backup do perfil Chrome: {exc}")
+        for attempt in range(3):
+            try:
+                self._copy_profile_tree(profile_dir, backup_dir)
+                return
+            except Exception:
+                if attempt < 2:
+                    time.sleep(1.5)
+        return
 
     async def _wait_for_cdp(self, timeout_seconds: int = 60) -> None:
         deadline = asyncio.get_running_loop().time() + timeout_seconds
@@ -1552,6 +1594,7 @@ class RobotBackend:
         log: callable,
         status_cb: callable,
     ) -> list[DebtRow]:
+        self._skip_iss = self._get_skip_iss_config()
         await self.ensure_login(log, company.selected_login_cpf)
         await self.ensure_company_selection_screen()
         stop_cb()
@@ -2055,6 +2098,11 @@ class RobotBackend:
                 },
             )
             debts.append(debt)
+        if getattr(self, "_skip_iss", False):
+            before = len(debts)
+            debts = [d for d in debts if not _debt_is_iss(d)]
+            if log and before != len(debts):
+                log(f"{company.name}: excluídos {before - len(debts)} débito(s) de ISS (opção ativa no dashboard).")
         try:
             self.replace_company_debts_rpc(company.id, debts)
         except Exception as e:

@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS public.admin_settings (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT admin_settings_pkey PRIMARY KEY (key)
 );
+-- RLS: anon SELECT (robô Goiânia lê robot_goiania_skip_iss); authenticated ALL (dashboard).
+ALTER TABLE public.admin_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "admin_settings_anon_select" ON public.admin_settings;
+CREATE POLICY "admin_settings_anon_select" ON public.admin_settings FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS "admin_settings_authenticated_all" ON public.admin_settings;
+CREATE POLICY "admin_settings_authenticated_all" ON public.admin_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 CREATE TABLE IF NOT EXISTS public.client_branding_settings (
   id uuid NOT NULL DEFAULT gen_random_uuid(),

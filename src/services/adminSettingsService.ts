@@ -7,6 +7,7 @@ import { supabase } from "./supabaseClient"
 
 const KEY_FILE_RETENTION_DAYS = "file_retention_days"
 const KEY_BASE_PATH = "base_path"
+const KEY_ROBOT_GOIANIA_SKIP_ISS = "robot_goiania_skip_iss"
 
 /** 0 = nunca excluir; 30, 60, 90, 120 = dias desde o último download */
 export type FileRetentionDays = 0 | 30 | 60 | 90 | 120
@@ -50,6 +51,27 @@ export async function setFileRetentionDays(days: FileRetentionDays): Promise<voi
     .from("admin_settings")
     .upsert(
       { key: KEY_FILE_RETENTION_DAYS, value: String(days), updated_at: new Date().toISOString() },
+      { onConflict: "key" }
+    )
+  if (error) throw error
+}
+
+/** Robô Goiânia Taxas e Impostos: se true, não captura nem seleciona débitos de ISS. */
+export async function getRobotGoianiaSkipIss(): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("admin_settings")
+    .select("value")
+    .eq("key", KEY_ROBOT_GOIANIA_SKIP_ISS)
+    .maybeSingle()
+  if (error) throw error
+  return String(data?.value ?? "").trim().toLowerCase() === "true"
+}
+
+export async function setRobotGoianiaSkipIss(skip: boolean): Promise<void> {
+  const { error } = await supabase
+    .from("admin_settings")
+    .upsert(
+      { key: KEY_ROBOT_GOIANIA_SKIP_ISS, value: skip ? "true" : "false", updated_at: new Date().toISOString() },
       { onConflict: "key" }
     )
   if (error) throw error

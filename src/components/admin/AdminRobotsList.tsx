@@ -1,6 +1,7 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getRobots, updateRobot } from "@/services/robotsService"
+import { getRobotGoianiaSkipIss, setRobotGoianiaSkipIss } from "@/services/adminSettingsService"
 import type { Robot } from "@/services/robotsService"
 import {
   getFolderStructureFlat,
@@ -148,7 +149,18 @@ export function AdminRobotsList({
   const [initialPeriodEnd, setInitialPeriodEnd] = useState("")
   const [globalLogins, setGlobalLogins] = useState<CompanySefazLogin[]>([])
   const [useGoianiaPortalLogin, setUseGoianiaPortalLogin] = useState(false)
+  const [skipIssDebts, setSkipIssDebts] = useState(false)
   const [saving, setSaving] = useState(false)
+
+  const isGoianiaTaxasImpostos = editing?.technical_id === "goiania_taxas_impostos"
+
+  useEffect(() => {
+    if (!isGoianiaTaxasImpostos) {
+      setSkipIssDebts(false)
+      return
+    }
+    getRobotGoianiaSkipIss().then(setSkipIssDebts).catch(() => setSkipIssDebts(false))
+  }, [isGoianiaTaxasImpostos, editing?.id])
 
   const { data: queriedRobots = [], isLoading } = useQuery({
     queryKey: ["admin-robots"],
@@ -182,6 +194,9 @@ export function AdminRobotsList({
         initial_period_end: dateExecutionMode === "interval" && initialPeriodEnd ? initialPeriodEnd : null,
         global_logins: !useGoianiaPortalLogin ? [] : sanitizeSefazLogins(globalLogins),
       })
+      if (isGoianiaTaxasImpostos) {
+        await setRobotGoianiaSkipIss(skipIssDebts)
+      }
       queryClient.invalidateQueries({ queryKey: ["admin-robots"] })
       setEditing(null)
       toast.success("Robô atualizado")
@@ -446,6 +461,22 @@ export function AdminRobotsList({
                     </p>
                   </div>
                 </div>
+                {isGoianiaTaxasImpostos && (
+                  <div className="flex items-start gap-3 pt-1 border-t border-border/50">
+                    <Checkbox
+                      checked={skipIssDebts}
+                      onCheckedChange={(checked) => setSkipIssDebts(checked === true)}
+                      disabled={saving}
+                      id="goiania-skip-iss"
+                    />
+                    <div className="space-y-1">
+                      <Label htmlFor="goiania-skip-iss">Não capturar débitos de ISS</Label>
+                      <p className="text-[10px] text-muted-foreground">
+                        Se marcado, o robô não captura débitos de ISS e não os seleciona para baixar guias. Desmarque para manter o comportamento atual (captura todos).
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             }
             {(isSefazXmlRobot || useGoianiaPortalLogin) && (

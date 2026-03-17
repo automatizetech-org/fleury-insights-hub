@@ -1125,14 +1125,17 @@ def ensure_report_in_vm_base(config: Dict[str, Any], pdf_path: Path, reference_d
 
 def normalize_result_status(status_text: str) -> str:
     norm = _normalize_status_text(status_text)
+    # Impedimento da Caixa tem prioridade: se a página pede consulta manual, é irregular (não negativa).
     if (
         "informacoes disponiveis nao sao suficientes" in norm
         and "comprovacao automatica da regularidade do empregador perante o fgts" in norm
     ) or "conectividade social" in norm:
         return "irregular"
+    if "irregular" in norm:
+        return "irregular"
     if "positiva com efeito de negativa" in norm or "positiva com efeitos de negativa" in norm:
         return "regular"
-    if "regular" in norm:
+    if "regular" in norm and "irregular" not in norm:
         return "regular"
     if "negativa" in norm:
         return "negativa"
@@ -1804,6 +1807,7 @@ def _is_error_status(val: str) -> bool:
 
 
 def _is_fgts_irregular_message(val: str) -> bool:
+    """True quando a página da Caixa indica impedimento/consulta manual (FGTS irregular)."""
     norm = _normalize_status_text(val)
     if not norm:
         return False
