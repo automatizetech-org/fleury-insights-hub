@@ -3800,7 +3800,23 @@ class DownloadThread(QThread):
                 for company in self.companies:
                     if self._stop_requested or self.isInterruptionRequested():
                         break
-                    self._run_company(p, company)
+                    try:
+                        self._run_company(p, company)
+                    except Exception as exc:  # noqa: BLE001
+                        folder_label = safe_folder_name(company.name or company.doc or "sem_nome")
+                        summary = self._init_company_summary(company, folder_label)
+                        summary["errors"].append(str(exc))
+                        summary["status"] = "error"
+                        summary["finished_at"] = datetime.now().isoformat()
+                        for key in ("emitidas", "recebidas"):
+                            if summary[key].get("status") == "pending":
+                                summary[key]["status"] = "error"
+                        self.summary_data["companies"].append(summary)
+                        msg_lower = str(exc).lower()
+                        if "certificate" in msg_lower or "mac verify" in msg_lower or "client certificate" in msg_lower:
+                            self.log.emit(f"[ERRO] {company.name}: falha ao carregar certificado digital ({exc}). Verifique o arquivo/senha do certificado ou use login por senha.")
+                        else:
+                            self.log.emit(f"[ERRO] {company.name}: falha inesperada - {exc}")
         except Exception as exc:  # noqa: BLE001
             self.log.emit(f"[ERRO] Falha geral: {exc}")
         finally:

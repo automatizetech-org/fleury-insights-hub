@@ -756,8 +756,15 @@ class RobotBackend:
         }
 
     def replace_company_debts_rpc(self, company_id: str, debts: list[DebtRow]) -> int:
-        """Substitui todos os débitos da empresa pelos novos (uma operação atômica no Supabase)."""
-        payload = [self._debt_to_json_item(d) for d in debts]
+        """Substitui todos os débitos da empresa pelos novos (uma operação atômica no Supabase).
+        Deduplica por (tributo, numero_documento, data_vencimento) para evitar violar municipal_tax_debts_dedupe_unique."""
+        def _key(d: DebtRow) -> tuple[str, str, str]:
+            return (d.tributo or "", d.numero_documento or "", d.data_vencimento or "")
+        seen: dict[tuple[str, str, str], DebtRow] = {}
+        for d in debts:
+            seen[_key(d)] = d
+        deduped = list(seen.values())
+        payload = [self._debt_to_json_item(d) for d in deduped]
         result = self.supabase.rpc(
             "replace_company_municipal_tax_debts",
             {"p_company_id": company_id, "p_debts": payload},

@@ -160,6 +160,11 @@ export function AdminScheduler({
   const [countdownMs, setCountdownMs] = useState<number>(0)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const lastNextRunAtRef = useRef<Date | null>(null)
+  /** Ref para garantir que o modo de execução usado ao clicar "Executar agora" seja o atual (evita estado desatualizado). */
+  const executionModeRef = useRef<RobotExecutionMode>(executionMode)
+  useEffect(() => {
+    executionModeRef.current = executionMode
+  }, [executionMode])
 
   const { data: companies = [] } = useQuery({
     queryKey: ["admin-companies-scheduler"],
@@ -400,6 +405,7 @@ export function AdminScheduler({
     try {
       if (runDaily) {
         const executionGroupId = crypto.randomUUID()
+        const modeToUse = executionModeRef.current ?? executionMode
         const payload = {
           companyIds: Array.from(companyIds),
           robotTechnicalIds: robotIdsOrdered.length > 0 ? robotIdsOrdered : ["all"],
@@ -407,7 +413,7 @@ export function AdminScheduler({
           runAtDate,
           runAtTime: runAtTime.slice(0, 5),
           runDaily: true,
-          executionMode,
+          executionMode: modeToUse,
         }
         let ruleId: string
         if (scheduleRules.length > 0) {
@@ -446,7 +452,7 @@ export function AdminScheduler({
               periodEnd,
               notesMode: getRobotNotesMode(robot) ?? undefined,
               scheduleRuleId: ruleId,
-              executionMode,
+              executionMode: modeToUse,
               executionGroupId,
               executionOrder: index,
             })
@@ -474,6 +480,7 @@ export function AdminScheduler({
         queryClient.invalidateQueries({ queryKey: ["schedule-rules"] })
         queryClient.invalidateQueries({ queryKey: ["schedule-rules-active"] })
       } else {
+        const modeToUse = executionModeRef.current ?? executionMode
         const executionGroupId = crypto.randomUUID()
         const list = robotIdsOrdered
           .map((id) => robots.find((r) => r.technical_id === id))
@@ -487,7 +494,7 @@ export function AdminScheduler({
             periodStart,
             periodEnd,
             notesMode: getRobotNotesMode(robot) ?? undefined,
-            executionMode,
+            executionMode: modeToUse,
             executionGroupId,
             executionOrder: index,
           })
@@ -727,7 +734,10 @@ export function AdminScheduler({
               type="radio"
               name="execution-mode"
               checked={executionMode === "sequential"}
-              onChange={() => setExecutionMode("sequential")}
+              onChange={() => {
+                executionModeRef.current = "sequential"
+                setExecutionMode("sequential")
+              }}
               className="rounded-full border-input"
             />
             <span className="text-xs">Um por vez, respeitando a ordem da lista</span>
@@ -737,7 +747,10 @@ export function AdminScheduler({
               type="radio"
               name="execution-mode"
               checked={executionMode === "parallel"}
-              onChange={() => setExecutionMode("parallel")}
+              onChange={() => {
+                executionModeRef.current = "parallel"
+                setExecutionMode("parallel")
+              }}
               className="rounded-full border-input"
             />
             <span className="text-xs">Todos os robôs selecionados de uma vez</span>
